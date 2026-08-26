@@ -3409,7 +3409,7 @@ dependencies = [
  "ignore",
  "image",
  "insta",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "lazy_static",
  "libc",
  "parking_lot",
