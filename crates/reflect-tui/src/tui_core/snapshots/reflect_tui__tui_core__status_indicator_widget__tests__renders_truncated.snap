@@ -1,0 +1,6 @@
+---
+source: crates/reflect-tui/src/tui_core/status_indicator_widget.rs
+expression: terminal.backend()
+---
+"• Working (0s • esc…"
+"                    "

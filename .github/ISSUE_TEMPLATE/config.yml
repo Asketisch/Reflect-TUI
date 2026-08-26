@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 提问与讨论
+    url: https://github.com/Asketisch/Reflect-TUI/discussions
+    about: 一般问题请在 Discussions 提问,本仓库 issue 仅用于明确的 bug 报告与功能请求
+  - name: 漏洞披露
+    url: https://github.com/Asketisch/Reflect-TUI/security/advisories/new
+    about: 安全相关问题请通过 Security Advisories 私密提交,不要在公开 issue 披露

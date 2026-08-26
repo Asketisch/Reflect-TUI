@@ -1,0 +1,5 @@
+---
+source: crates/reflect-tui/src/tui_core/bottom_pane/footer.rs
+expression: terminal.backend()
+---
+"  ? for shortcuts · Plan mode                                                                        100% context left  "

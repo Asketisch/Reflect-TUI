@@ -1,0 +1,10 @@
+---
+source: crates/reflect-tui/src/tui_core/keymap_setup/tests.rs
+expression: rendered
+---
+Keypress Inspector
+Press any key to see what Reflect receives. Esc is inspected; Ctrl+C closes.
+Still waiting? If nothing changes when you press a key, your terminal is not sending that key to
+Reflect. Only received keys can be assigned as shortcuts.
+
+Waiting for a keypress...

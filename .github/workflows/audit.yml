@@ -1,0 +1,73 @@
+# Reflect-TUI 依赖漏洞扫描。
+#
+# 每周一 + PR 触发,跑 cargo-audit(RustSec Advisory Database)。
+# 结果上传到 GitHub Security tab(Code Scanning)。
+#
+# 注意:[patch.crates-io] 中 ratatui/crossterm fork 的漏洞需额外检查
+# nornagon/ratatui 与 nornagon/crossterm 的 GitHub Security Advisories
+# —— cargo-audit 不扫描 git 依赖。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 每周一 UTC 06:00(避开周末,便于维护者及时处理)
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # SARIF 上传到 Code Scanning 需要
+  security-events: write
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --version "^0.21"
+
+      - name: Run cargo audit
+        run: cargo audit --format json --deny warnings > audit.json || AUDIT_EXIT=$?
+        continue-on-error: true
+        env:
+          AUDIT_EXIT: "0"
+
+      - name: Convert to SARIF
+        if: always()
+        run: |
+          cargo install sarif-fmt --locked --version "^0.4" || true
+          if [ -s audit.json ]; then
+            cat audit.json | sarif-fmt > audit.sarif || echo '{}' > audit.sarif
+          else
+            echo '{}' > audit.sarif
+          fi
+
+      - name: Upload SARIF to Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: audit.sarif
+          category: cargo-audit
+
+      - name: Annotate audit failure
+        if: env.AUDIT_EXIT != '0'
+        run: |
+          echo "::error::cargo-audit 检测到漏洞,详见 Security tab。"
+          exit 1

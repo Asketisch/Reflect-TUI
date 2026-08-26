@@ -1,0 +1,29 @@
+---
+source: crates/reflect-tui/src/tui_core/markdown_render/markdown_render_tests.rs
+expression: "plain_lines(&text).join(\"\\n\")"
+---
+ Key
+  firstlongid
+ Notes
+  A readable
+  explanatory
+  sentence for
+  this row.
+─────────────────
+ Key
+  secondlongid
+ Notes
+  Another
+  readable
+  explanatory
+  sentence for
+  this row.
+─────────────────
+ Key
+  short
+ Notes
+  A final
+  readable
+  explanatory
+  sentence for
+  this row.

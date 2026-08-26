@@ -1,0 +1,700 @@
+use crate::app_server_protocol::McpServerElicitationAction;
+use crate::app_server_protocol::RequestId as AppServerRequestId;
+use crate::protocol_compat::ThreadId;
+#[cfg(test)]
+use crate::tui_core::app_command::AppCommand as Op;
+use crossterm::event::KeyCode;
+use crossterm::event::KeyEvent;
+use crossterm::event::KeyModifiers;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Constraint;
+use ratatui::layout::Layout;
+use ratatui::layout::Rect;
+use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::widgets::Block;
+use ratatui::widgets::Paragraph;
+use ratatui::widgets::Widget;
+use ratatui::widgets::Wrap;
+use textwrap::wrap;
+use url::Url;
+
+use super::CancellationEvent;
+use super::bottom_pane_view::BottomPaneView;
+use super::scroll_state::ScrollState;
+use super::selection_popup_common::GenericDisplayRow;
+use super::selection_popup_common::measure_rows_height;
+use super::selection_popup_common::render_rows;
+use crate::tui_core::app::app_server_requests::ResolvedAppServerRequest;
+use crate::tui_core::app_event::AppEvent;
+use crate::tui_core::app_event_sender::AppEventSender;
+use crate::tui_core::key_hint;
+use crate::tui_core::key_hint::KeyBindingListExt;
+use crate::tui_core::keymap::ListKeymap;
+use crate::tui_core::render::Insets;
+use crate::tui_core::render::RectExt as _;
+use crate::tui_core::style::user_message_style;
+use crate::tui_core::wrapping::RtOptions;
+use crate::tui_core::wrapping::adaptive_wrap_lines;
+
+const MCP_REFLECT_APPS_SERVER_NAME: &str = "reflect_apps";
+const MCP_TOOL_REFLECT_APPS_META_KEY: &str = "_reflect_apps";
+const CONNECTOR_AUTH_FAILURE_META_KEY: &str = "connector_auth_failure";
+const CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY: &str = "is_auth_failure";
+const CONNECTOR_AUTH_FAILURE_CONNECTOR_ID_KEY: &str = "connector_id";
+const CONNECTOR_AUTH_FAILURE_CONNECTOR_NAME_KEY: &str = "connector_name";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AppLinkScreen {
+    Link,
+    InstallConfirmation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AppLinkSuggestionType {
+    Install,
+    Enable,
+    Auth,
+    ExternalAction,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AppLinkElicitationTarget {
+    pub(crate) thread_id: ThreadId,
+    pub(crate) server_name: String,
+    pub(crate) request_id: AppServerRequestId,
+}
+
+// ── 参数结构（外移子模块） ──
+mod params;
+pub(crate) use params::*;
+
+// ── URL/host 校验辅助（外移子模块） ──
+mod validation;
+use validation::*;
+
+pub(crate) struct AppLinkView {
+    app_id: String,
+    title: String,
+    description: Option<String>,
+    instructions: String,
+    url: String,
+    is_installed: bool,
+    is_enabled: bool,
+    suggest_reason: Option<String>,
+    suggestion_type: Option<AppLinkSuggestionType>,
+    elicitation_target: Option<AppLinkElicitationTarget>,
+    app_event_tx: AppEventSender,
+    screen: AppLinkScreen,
+    selected_action: usize,
+    complete: bool,
+    list_keymap: ListKeymap,
+}
+
+impl AppLinkView {
+    #[cfg(test)]
+    pub(crate) fn new(params: AppLinkViewParams, app_event_tx: AppEventSender) -> Self {
+        Self::new_with_keymap(
+            params,
+            app_event_tx,
+            crate::tui_core::keymap::RuntimeKeymap::defaults().list,
+        )
+    }
+
+    pub(crate) fn new_with_keymap(
+        params: AppLinkViewParams,
+        app_event_tx: AppEventSender,
+        list_keymap: ListKeymap,
+    ) -> Self {
+        let AppLinkViewParams {
+            app_id,
+            title,
+            description,
+            instructions,
+            url,
+            is_installed,
+            is_enabled,
+            suggest_reason,
+            suggestion_type,
+            elicitation_target,
+        } = params;
+        Self {
+            app_id,
+            title,
+            description,
+            instructions,
+            url,
+            is_installed,
+            is_enabled,
+            suggest_reason,
+            suggestion_type,
+            elicitation_target,
+            app_event_tx,
+            screen: AppLinkScreen::Link,
+            selected_action: 0,
+            complete: false,
+            list_keymap,
+        }
+    }
+
+    fn action_labels(&self) -> Vec<&'static str> {
+        if self.is_auth_suggestion() {
+            return match self.screen {
+                AppLinkScreen::Link => vec!["Open sign-in URL", "Back"],
+                AppLinkScreen::InstallConfirmation => vec!["I already signed in", "Back"],
+            };
+        }
+        if self.is_external_action_suggestion() {
+            return match self.screen {
+                AppLinkScreen::Link => vec!["Open link", "Back"],
+                AppLinkScreen::InstallConfirmation => vec!["I finished", "Back"],
+            };
+        }
+
+        match self.screen {
+            AppLinkScreen::Link => {
+                if self.is_installed {
+                    vec![
+                        "Manage on Reflect",
+                        if self.is_enabled {
+                            "Disable app"
+                        } else {
+                            "Enable app"
+                        },
+                        "Back",
+                    ]
+                } else {
+                    vec!["Install on Reflect", "Back"]
+                }
+            }
+            AppLinkScreen::InstallConfirmation => vec!["I already Installed it", "Back"],
+        }
+    }
+
+    fn move_selection_prev(&mut self) {
+        self.selected_action = self.selected_action.saturating_sub(1);
+    }
+
+    fn move_selection_next(&mut self) {
+        self.selected_action = (self.selected_action + 1).min(self.action_labels().len() - 1);
+    }
+
+    fn is_tool_suggestion(&self) -> bool {
+        self.elicitation_target.is_some()
+    }
+
+    fn is_auth_suggestion(&self) -> bool {
+        self.is_tool_suggestion() && self.suggestion_type == Some(AppLinkSuggestionType::Auth)
+    }
+
+    fn is_external_action_suggestion(&self) -> bool {
+        self.is_tool_suggestion()
+            && self.suggestion_type == Some(AppLinkSuggestionType::ExternalAction)
+    }
+
+    fn is_browser_action_suggestion(&self) -> bool {
+        self.is_auth_suggestion() || self.is_external_action_suggestion()
+    }
+
+    fn resolve_elicitation(&self, decision: McpServerElicitationAction) {
+        let Some(target) = self.elicitation_target.as_ref() else {
+            return;
+        };
+        self.app_event_tx.resolve_elicitation(
+            target.thread_id,
+            target.server_name.clone(),
+            target.request_id.clone(),
+            decision,
+            /*content*/ None,
+            /*meta*/ None,
+        );
+    }
+
+    fn decline_tool_suggestion(&mut self) {
+        self.resolve_elicitation(McpServerElicitationAction::Decline);
+        self.complete = true;
+    }
+
+    fn open_external_url(&mut self) {
+        self.app_event_tx.send(AppEvent::OpenUrlInBrowser {
+            url: self.url.clone(),
+        });
+        if !self.is_installed || self.is_browser_action_suggestion() {
+            self.screen = AppLinkScreen::InstallConfirmation;
+            self.selected_action = 0;
+        }
+    }
+
+    fn complete_external_flow_and_close(&mut self) {
+        let should_refresh_connectors = self
+            .elicitation_target
+            .as_ref()
+            .is_none_or(|target| target.server_name == MCP_REFLECT_APPS_SERVER_NAME);
+        if should_refresh_connectors {
+            self.app_event_tx.send(AppEvent::RefreshConnectors {
+                force_refetch: true,
+            });
+        }
+        if self.is_tool_suggestion() {
+            self.resolve_elicitation(McpServerElicitationAction::Accept);
+        }
+        self.complete = true;
+    }
+
+    fn back_to_link_screen(&mut self) {
+        self.screen = AppLinkScreen::Link;
+        self.selected_action = 0;
+    }
+
+    fn toggle_enabled(&mut self) {
+        self.is_enabled = !self.is_enabled;
+        self.app_event_tx.send(AppEvent::SetAppEnabled {
+            id: self.app_id.clone(),
+            enabled: self.is_enabled,
+        });
+        if self.is_tool_suggestion() {
+            self.resolve_elicitation(McpServerElicitationAction::Accept);
+            self.complete = true;
+        }
+    }
+
+    fn activate_selected_action(&mut self) {
+        if self.is_tool_suggestion() {
+            match self.suggestion_type {
+                Some(AppLinkSuggestionType::Enable) => match self.screen {
+                    AppLinkScreen::Link => match self.selected_action {
+                        0 => self.open_external_url(),
+                        1 if self.is_installed => self.toggle_enabled(),
+                        _ => self.decline_tool_suggestion(),
+                    },
+                    AppLinkScreen::InstallConfirmation => match self.selected_action {
+                        0 => self.complete_external_flow_and_close(),
+                        _ => self.decline_tool_suggestion(),
+                    },
+                },
+                Some(AppLinkSuggestionType::Auth) => match self.screen {
+                    AppLinkScreen::Link => match self.selected_action {
+                        0 => self.open_external_url(),
+                        _ => self.decline_tool_suggestion(),
+                    },
+                    AppLinkScreen::InstallConfirmation => match self.selected_action {
+                        0 => self.complete_external_flow_and_close(),
+                        _ => self.decline_tool_suggestion(),
+                    },
+                },
+                Some(AppLinkSuggestionType::ExternalAction) => match self.screen {
+                    AppLinkScreen::Link => match self.selected_action {
+                        0 => self.open_external_url(),
+                        _ => self.decline_tool_suggestion(),
+                    },
+                    AppLinkScreen::InstallConfirmation => match self.selected_action {
+                        0 => self.complete_external_flow_and_close(),
+                        _ => self.decline_tool_suggestion(),
+                    },
+                },
+                Some(AppLinkSuggestionType::Install) | None => match self.screen {
+                    AppLinkScreen::Link => match self.selected_action {
+                        0 => self.open_external_url(),
+                        _ => self.decline_tool_suggestion(),
+                    },
+                    AppLinkScreen::InstallConfirmation => match self.selected_action {
+                        0 => self.complete_external_flow_and_close(),
+                        _ => self.decline_tool_suggestion(),
+                    },
+                },
+            }
+            return;
+        }
+
+        match self.screen {
+            AppLinkScreen::Link => match self.selected_action {
+                0 => self.open_external_url(),
+                1 if self.is_installed => self.toggle_enabled(),
+                _ => self.complete = true,
+            },
+            AppLinkScreen::InstallConfirmation => match self.selected_action {
+                0 => self.complete_external_flow_and_close(),
+                _ => self.back_to_link_screen(),
+            },
+        }
+    }
+
+    fn content_lines(&self, width: u16) -> Vec<Line<'static>> {
+        match self.screen {
+            AppLinkScreen::Link => self.link_content_lines(width),
+            AppLinkScreen::InstallConfirmation => self.install_confirmation_lines(width),
+        }
+    }
+
+    fn link_content_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let usable_width = width.max(1) as usize;
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        lines.push(Line::from(self.title.clone().bold()));
+        if let Some(description) = self
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|description| !description.is_empty())
+        {
+            for line in wrap(description, usable_width) {
+                lines.push(Line::from(line.into_owned().dim()));
+            }
+        }
+
+        lines.push(Line::from(""));
+        if let Some(suggest_reason) = self
+            .suggest_reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|suggest_reason| !suggest_reason.is_empty())
+        {
+            for line in wrap(suggest_reason, usable_width) {
+                lines.push(Line::from(line.into_owned().italic()));
+            }
+            lines.push(Line::from(""));
+        }
+        let is_browser_action_suggestion = self.is_browser_action_suggestion();
+        if self.is_installed && !is_browser_action_suggestion {
+            for line in wrap("Use $ to insert this app into the prompt.", usable_width) {
+                lines.push(Line::from(line.into_owned()));
+            }
+            lines.push(Line::from(""));
+        }
+
+        if is_browser_action_suggestion {
+            lines.push(Line::from("URL".dim()));
+            for line in wrap(&self.url, usable_width) {
+                lines.push(Line::from(line.into_owned()));
+            }
+            lines.push(Line::from(""));
+        }
+
+        let instructions = self.instructions.trim();
+        if !instructions.is_empty() {
+            for line in wrap(instructions, usable_width) {
+                lines.push(Line::from(line.into_owned()));
+            }
+            if !is_browser_action_suggestion {
+                for line in wrap(
+                    "Newly installed apps can take a few minutes to appear in /apps.",
+                    usable_width,
+                ) {
+                    lines.push(Line::from(line.into_owned()));
+                }
+                if !self.is_installed {
+                    for line in wrap(
+                        "After installed, use $ to insert this app into the prompt.",
+                        usable_width,
+                    ) {
+                        lines.push(Line::from(line.into_owned()));
+                    }
+                }
+            }
+            lines.push(Line::from(""));
+        }
+
+        lines
+    }
+
+    fn install_confirmation_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let usable_width = width.max(1) as usize;
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        let is_auth_suggestion = self.is_auth_suggestion();
+        let is_external_action_suggestion = self.is_external_action_suggestion();
+        let is_reflect_apps_auth = is_auth_suggestion
+            && self
+                .elicitation_target
+                .as_ref()
+                .is_some_and(|target| target.server_name == MCP_REFLECT_APPS_SERVER_NAME);
+        lines.push(Line::from(
+            if is_auth_suggestion {
+                if is_reflect_apps_auth {
+                    "Finish App Sign In"
+                } else {
+                    "Finish Authentication"
+                }
+            } else if is_external_action_suggestion {
+                "Finish in Browser"
+            } else {
+                "Finish App Setup"
+            }
+            .bold(),
+        ));
+        lines.push(Line::from(""));
+
+        if is_auth_suggestion {
+            for line in wrap(
+                if is_reflect_apps_auth {
+                    "Sign in to the app on Reflect in the browser window that just opened."
+                } else {
+                    "Complete authentication in the browser window that just opened."
+                },
+                usable_width,
+            ) {
+                lines.push(Line::from(line.into_owned()));
+            }
+            for line in wrap(
+                "Then return here and select \"I already signed in\".",
+                usable_width,
+            ) {
+                lines.push(Line::from(line.into_owned()));
+            }
+        } else if is_external_action_suggestion {
+            for line in wrap(
+                "Complete the requested action in the browser window that just opened.",
+                usable_width,
+            ) {
+                lines.push(Line::from(line.into_owned()));
+            }
+            for line in wrap("Then return here and select \"I finished\".", usable_width) {
+                lines.push(Line::from(line.into_owned()));
+            }
+        } else {
+            for line in wrap(
+                "Complete app setup on Reflect in the browser window that just opened.",
+                usable_width,
+            ) {
+                lines.push(Line::from(line.into_owned()));
+            }
+            for line in wrap(
+                "Sign in there if needed, then return here and select \"I already Installed it\".",
+                usable_width,
+            ) {
+                lines.push(Line::from(line.into_owned()));
+            }
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            if is_auth_suggestion {
+                "Sign-in URL:"
+            } else if is_external_action_suggestion {
+                "Link:"
+            } else {
+                "Setup URL:"
+            }
+            .dim(),
+        ]));
+        let url_line = Line::from(vec![self.url.clone().cyan().underlined()]);
+        lines.extend(adaptive_wrap_lines(
+            vec![url_line],
+            RtOptions::new(usable_width),
+        ));
+
+        lines
+    }
+
+    fn action_rows(&self) -> Vec<GenericDisplayRow> {
+        self.action_labels()
+            .into_iter()
+            .enumerate()
+            .map(|(index, label)| {
+                let prefix = if self.selected_action == index {
+                    '›'
+                } else {
+                    ' '
+                };
+                GenericDisplayRow {
+                    name: format!("{prefix} {}. {label}", index + 1),
+                    ..Default::default()
+                }
+            })
+            .collect()
+    }
+
+    fn action_state(&self) -> ScrollState {
+        let mut state = ScrollState::new();
+        state.selected_idx = Some(self.selected_action);
+        state
+    }
+
+    fn action_rows_height(&self, width: u16) -> u16 {
+        let rows = self.action_rows();
+        let state = self.action_state();
+        measure_rows_height(&rows, &state, rows.len().max(1), width.max(1))
+    }
+
+    fn hint_line(&self) -> Line<'static> {
+        Line::from(vec![
+            "Use ".into(),
+            key_hint::plain(KeyCode::Tab).into(),
+            " / ".into(),
+            key_hint::plain(KeyCode::Up).into(),
+            " ".into(),
+            key_hint::plain(KeyCode::Down).into(),
+            " to move, ".into(),
+            key_hint::plain(KeyCode::Enter).into(),
+            " to select, ".into(),
+            key_hint::plain(KeyCode::Esc).into(),
+            " to close".into(),
+        ])
+    }
+}
+
+impl BottomPaneView for AppLinkView {
+    fn handle_key_event(&mut self, key_event: KeyEvent) {
+        match key_event {
+            KeyEvent {
+                code: KeyCode::Esc, ..
+            } => {
+                self.on_ctrl_c();
+            }
+            KeyEvent {
+                code: KeyCode::Up, ..
+            }
+            | KeyEvent {
+                code: KeyCode::BackTab,
+                ..
+            }
+            | KeyEvent {
+                code: KeyCode::Char('k'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => self.move_selection_prev(),
+            _ if self.list_keymap.move_left.is_pressed(key_event) => self.move_selection_prev(),
+            KeyEvent {
+                code: KeyCode::Down,
+                ..
+            }
+            | KeyEvent {
+                code: KeyCode::Tab, ..
+            }
+            | KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => self.move_selection_next(),
+            _ if self.list_keymap.move_right.is_pressed(key_event) => self.move_selection_next(),
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                if let Some(index) = c
+                    .to_digit(10)
+                    .and_then(|digit| digit.checked_sub(1))
+                    .map(|index| index as usize)
+                    && index < self.action_labels().len()
+                {
+                    self.selected_action = index;
+                    self.activate_selected_action();
+                }
+            }
+            KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => self.activate_selected_action(),
+            _ => {}
+        }
+    }
+
+    fn on_ctrl_c(&mut self) -> CancellationEvent {
+        if self.is_tool_suggestion() {
+            self.resolve_elicitation(McpServerElicitationAction::Decline);
+        }
+        self.complete = true;
+        CancellationEvent::Handled
+    }
+
+    fn is_complete(&self) -> bool {
+        self.complete
+    }
+
+    fn dismiss_app_server_request(&mut self, request: &ResolvedAppServerRequest) -> bool {
+        let ResolvedAppServerRequest::McpElicitation {
+            server_name,
+            request_id,
+        } = request
+        else {
+            return false;
+        };
+        let Some(target) = self.elicitation_target.as_ref() else {
+            return false;
+        };
+        if target.server_name != *server_name || target.request_id != *request_id {
+            return false;
+        }
+
+        self.complete = true;
+        true
+    }
+
+    fn terminal_title_requires_action(&self) -> bool {
+        self.is_tool_suggestion()
+    }
+}
+
+impl crate::tui_core::render::renderable::Renderable for AppLinkView {
+    fn desired_height(&self, width: u16) -> u16 {
+        let content_width = width.saturating_sub(4).max(1);
+        let content_lines = self.content_lines(content_width);
+        let content_rows = Paragraph::new(content_lines)
+            .wrap(Wrap { trim: false })
+            .line_count(content_width)
+            .max(1) as u16;
+        let action_rows_height = self.action_rows_height(content_width);
+        content_rows + action_rows_height + 3
+    }
+
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        if area.height == 0 || area.width == 0 {
+            return;
+        }
+
+        Block::default()
+            .style(user_message_style())
+            .render(area, buf);
+
+        let actions_height = self.action_rows_height(area.width.saturating_sub(4));
+        let [content_area, actions_area, hint_area] = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(actions_height),
+            Constraint::Length(1),
+        ])
+        .areas(area);
+
+        let inner = content_area.inset(Insets::vh(/*v*/ 1, /*h*/ 2));
+        let content_width = inner.width.max(1);
+        let lines = self.content_lines(content_width);
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(inner, buf);
+        crate::tui_core::terminal_hyperlinks::mark_url_hyperlink(buf, inner, &self.url);
+
+        if actions_area.height > 0 {
+            let actions_area = Rect {
+                x: actions_area.x.saturating_add(2),
+                y: actions_area.y,
+                width: actions_area.width.saturating_sub(2),
+                height: actions_area.height,
+            };
+            let action_rows = self.action_rows();
+            let action_state = self.action_state();
+            render_rows(
+                actions_area,
+                buf,
+                &action_rows,
+                &action_state,
+                action_rows.len().max(1),
+                "No actions",
+            );
+        }
+
+        if hint_area.height > 0 {
+            let hint_area = Rect {
+                x: hint_area.x.saturating_add(2),
+                y: hint_area.y,
+                width: hint_area.width.saturating_sub(2),
+                height: hint_area.height,
+            };
+            self.hint_line().dim().render(hint_area, buf);
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg(test)]
+mod tests;

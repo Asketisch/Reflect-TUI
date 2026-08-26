@@ -1,0 +1,134 @@
+name: Bug 报告
+description: 报告 Reflect-TUI 的 bug
+title: "[Bug]: "
+labels: ["bug"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      content: |
+        感谢你提交 bug 报告!请尽量填写以下信息,帮助维护者快速定位与修复。
+        ⚠️ 安全相关问题请勿在此公开披露,见 [SECURITY.md](../blob/main/SECURITY.md)。
+
+  - type: input
+    id: version
+    attributes:
+      label: reflect-tui 版本
+      description: '运行 `reflect-tui --version` 的输出,或 commit SHA'
+      placeholder: 例如 0.1.0 或 a353f2a
+    validations:
+      required: true
+
+  - type: input
+    id: submodule
+    attributes:
+      label: reflect-agent submodule 指针
+      description: '运行 `git submodule status reflect-agent` 的输出'
+      placeholder: '例如 d1372cfe598590d9190f8c9a75f5e65d0ba23de2 reflect-agent (main)'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+        - Windows
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: terminal
+    attributes:
+      label: 终端
+      description: '终端类型 + 版本(iTerm2 / Terminal.app / WezTerm / Windows Terminal 等)'
+      placeholder: '例如 WezTerm 20240203-110809-e6b87e1f'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: LLM provider
+      options:
+        - Anthropic
+        - OpenAI
+        - Ollama(本地)
+        - 其他 / 自定义
+        - 与 LLM 无关
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: 模型
+      description: '具体模型名(若知道)'
+      placeholder: '例如 claude-sonnet-4 / gpt-4o / qwen2.5-coder:32b'
+    validations:
+      required: false
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: '触发 bug 的最小步骤序列'
+      placeholder: |
+        1. 运行 `reflect-tui`
+        2. 输入 `/model claude-sonnet-4`
+        3. 在 chat composer 输入「...」
+        4. 观察到 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: '你期望发生什么'
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: '实际发生了什么(若控制台有报错或异常输出,请贴关键片段)'
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: ~/.reflect/config.toml(脱敏)
+      description: '贴出相关配置段(隐藏 API key),帮助复现'
+      placeholder: |
+        [active]
+        provider = "anthropic"
+
+        [anthropic]
+        # api_key 已隐藏
+        model = "claude-sonnet-4"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志 / trace
+      description: '若启用了 tracing,贴 `~/.reflect/traces/` 下相关 .jsonl 摘要;或 `RUST_LOG=debug reflect-tui 2>&1 | tail -200` 的输出'
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 其他上下文
+      description: '截图、相关 issue/PR 链接、workaround 等等'
+    validations:
+      required: false

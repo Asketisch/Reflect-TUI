@@ -1,0 +1,15 @@
+# ── Reflect-TUI cargo 配置 ──────────────────────────────────────────
+# 关键:insta snapshot 与 git submodule 嵌套 workspace 的兼容修复。
+#
+# reflect-* 核心 crate 通过 `reflect-agent/` submodule 引入,insta 默认通过
+# `cargo metadata` 发现 workspace_root,在嵌套场景下会误算 snapshot 文件路径
+# (把 submodule 根再拼一层 `reflect-agent/...`,产生 `reflect-agent/reflect-agent/...`
+# 双层嵌套路径导致 `.snap` 文件匹配失败)。
+#
+# `INSTA_WORKSPACE_ROOT` 强制 insta 用本仓库根(Reflect-TUI)做路径基准,
+# submodule 内 crate 的 `.snap` 文件相对本根的路径(`reflect-agent/crates/...`)
+# 正好与 `file!()` 编译时给出的相对路径一致,snapshot 正常匹配。
+#
+# 见 https://insta.rs/docs/pokemon/snapshots/#workspace-root(强制 workspace_root)。
+[env]
+INSTA_WORKSPACE_ROOT = { value = "", relative = true }

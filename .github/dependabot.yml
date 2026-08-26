@@ -1,0 +1,43 @@
+# GitHub Dependabot 配置。
+#
+# 监控 cargo 依赖与 GitHub Actions 版本,每周一自动提 PR。
+# 注意:[patch.crates-io] 中 ratatui/crossterm fork 不在 crates.io 索引里,
+# dependabot 无法升级这两项 —— 由人工定期检查 fork upstream。
+
+version: 2
+
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    # 自动 rebase Dependabot PR,减少维护负担
+    rebase-strategy: "auto"
+    # 大量 PR 时静默关闭
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "cargo"
+    # 跳过 ratatui/crossterm fork patch 目录
+    ignore:
+      - dependency-name: "ratatui"
+      - dependency-name: "crossterm"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    rebase-strategy: "auto"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"

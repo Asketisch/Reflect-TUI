@@ -1,0 +1,10 @@
+---
+source: crates/reflect-tui/src/tui_core/insert_history.rs
+expression: "rows.join(\"\\n\")"
+---
+
+
+
+raw-start-aaaaaaaaaa
+aaaaaaaaaaaaaa-tail-
+must-remain

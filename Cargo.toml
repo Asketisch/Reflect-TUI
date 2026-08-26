@@ -1,0 +1,136 @@
+[workspace]
+resolver = "2"
+members = ["crates/reflect-tui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+authors = ["宋新亮 <songxinliang@hungrystudio.com>"]
+repository = "https://github.com/Asketisch/Reflect-TUI"
+homepage = "https://github.com/Asketisch/Reflect-TUI"
+
+# ── 核心依赖:从 reflect-agent submodule 通过 path 引用 ──
+# 注意:Cargo 不支持嵌套 workspace,这里只用 path 依赖,不把核心 crate 列入 members。
+# 核心 crate 仍属于 reflect-agent 自己的 workspace,通过 path 被本仓库消费。
+[workspace.dependencies]
+# protocol 层
+reflect-protocol = { path = "reflect-agent/crates/protocol/reflect-protocol" }
+
+# abilities 层
+reflect-llm        = { path = "reflect-agent/crates/abilities/reflect-llm" }
+reflect-tools      = { path = "reflect-agent/crates/abilities/reflect-tools" }
+reflect-hooks      = { path = "reflect-agent/crates/abilities/reflect-hooks" }
+reflect-skills     = { path = "reflect-agent/crates/abilities/reflect-skills" }
+reflect-memory     = { path = "reflect-agent/crates/abilities/reflect-memory" }
+reflect-agent-def  = { path = "reflect-agent/crates/abilities/reflect-agent-def" }
+reflect-prompt     = { path = "reflect-agent/crates/abilities/reflect-prompt" }
+reflect-compact    = { path = "reflect-agent/crates/abilities/reflect-compact" }
+reflect-recovery   = { path = "reflect-agent/crates/abilities/reflect-recovery" }
+reflect-notes      = { path = "reflect-agent/crates/abilities/reflect-notes" }
+reflect-sanitize   = { path = "reflect-agent/crates/abilities/reflect-sanitize" }
+
+# resources 层
+reflect-config      = { path = "reflect-agent/crates/resources/reflect-config" }
+reflect-permissions = { path = "reflect-agent/crates/resources/reflect-permissions" }
+reflect-plugin      = { path = "reflect-agent/crates/resources/reflect-plugin" }
+reflect-rollout     = { path = "reflect-agent/crates/resources/reflect-rollout" }
+reflect-telemetry   = { path = "reflect-agent/crates/resources/reflect-telemetry" }
+reflect-sandbox     = { path = "reflect-agent/crates/resources/reflect-sandbox" }
+reflect-ast         = { path = "reflect-agent/crates/resources/reflect-ast" }
+
+# integrations 层
+reflect-mcp         = { path = "reflect-agent/crates/integrations/reflect-mcp" }
+reflect-lsp         = { path = "reflect-agent/crates/integrations/reflect-lsp" }
+reflect-stream      = { path = "reflect-agent/crates/integrations/reflect-stream" }
+reflect-integration = { path = "reflect-agent/crates/integrations/reflect-integration" }
+
+# orchestration 层
+# 注:reflect-goal 是 reflect-core 的传递依赖(core Cargo.toml 引用),必须声明;
+# reflect-task/subagent 被 TUI 直接依赖。reflect-discussion/pipeline 仅 facade/cli 用,此处不需要。
+reflect-task        = { path = "reflect-agent/crates/orchestration/reflect-task" }
+reflect-subagent    = { path = "reflect-agent/crates/orchestration/reflect-subagent" }
+reflect-goal        = { path = "reflect-agent/crates/orchestration/reflect-goal" }
+
+# runtime 层(核心引擎)
+reflect-core = { path = "reflect-agent/crates/runtime/reflect-core" }
+
+# ── 通用外部依赖(与核心 workspace 对齐版本)──
+tokio              = { version = "1", features = ["full"] }
+tokio-util         = "0.7"
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+serde_yaml         = "0.9"
+toml               = "0.8"
+async-trait        = "0.1"
+anyhow             = "1"
+thiserror          = "1"
+clap               = { version = "4", features = ["derive"] }
+pollster           = "0.4"
+reqwest            = { version = "0.12", features = ["json", "stream", "rustls-tls"] }
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+futures            = "0.3"
+rmcp               = { version = "=1.7.0", features = [
+    "client",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+] }
+lsp-types         = { version = "=0.97", default-features = false }
+globset           = "0.4"
+url               = "2"
+schemars = "0.8"
+uuid     = { version = "1", features = ["v4", "v7", "serde"] }
+eventsource-stream = "0.2"
+walkdir = "2"
+ignore  = "0.4"
+similar = "2"
+regex   = "1"
+rankfns = "0.1"
+htmd        = "0.5"
+once_cell   = "1"
+minijinja = "2"
+chrono = { version = "0.4", features = ["serde"] }
+sled = "0.34"
+parking_lot = "0.12"
+filetime    = "0.2"
+opentelemetry         = "0.27"
+opentelemetry_sdk     = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp    = { version = "0.27", features = ["http-proto", "reqwest-client", "trace"] }
+tracing-opentelemetry = "0.28"
+wiremock = "0.6"
+insta    = { version = "1", features = ["yaml"] }
+
+# ── TUI 专属外部依赖 ──
+ratatui   = "0.29"
+crossterm = "0.28"
+color-eyre = "0.6"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+# Fast development profile: no LTO, high parallelism.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+opt-level = 2
+incremental = true
+
+[profile.dev]
+incremental = false
+
+[profile.test]
+debug = 1
+codegen-units = 256
+
+# TUI 专属 patch —— nornagon fork 暴露 ratatui/crossterm 的 unstable features
+# (WidgetRef / rendered-line-info / scrolling-regions / backend-writer),
+# 被 custom_terminal.rs / insert_history.rs 深度使用。
+# 从 Reflect-Agent 根 Cargo.toml 迁移而来(TUI 是唯一消费者)。
+[patch.crates-io]
+crossterm = { git = "https://github.com/nornagon/crossterm", rev = "87db8bfa6dc99427fd3b071681b07fc31c6ce995" }
+ratatui = { git = "https://github.com/nornagon/ratatui", rev = "9b2ad1298408c45918ee9f8241a6f95498cdbed2" }

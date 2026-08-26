@@ -1,0 +1,9 @@
+---
+source: crates/reflect-tui/src/tui_core/markdown_render/markdown_render_tests.rs
+expression: "lines.join(\"\\n\")"
+---
+1. First:
+
+   fn first() {}
+
+2. Second:

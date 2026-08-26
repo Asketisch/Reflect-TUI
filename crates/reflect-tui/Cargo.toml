@@ -1,0 +1,146 @@
+[package]
+name = "reflect-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Reflect-TUI: 终端交互界面(ratatui),核心引擎由 reflect-agent submodule 提供"
+keywords = ["tui", "ratatui", "ai-agent", "agent-workflow", "developer-tools", "terminal"]
+categories = ["command-line-utilities", "development-tools"]
+# 暂不发布到 crates.io:核心依赖走 git submodule path,直接 cargo install 不可行。
+# 待未来把核心依赖切到 crates.io 版本后再考虑 publish = true。
+publish = false
+
+[features]
+# Gate 上游 vendored 的 TUI 测试 fixtures(debug_config / status/tests /
+# chat_composer 等)—— 它们跑的是 stubbed 子系统,不针对 Reflect adapter
+# 的简化类型编译。默认关闭以保持 `cargo test` 绿。
+default = []
+tui-upstream-tests = []
+
+[lib]
+name = "reflect_tui"
+path = "src/lib.rs"
+
+# TUI 独立二进制入口。原 Reflect-Agent 里由顶层 `reflect` 二进制进程内转发,
+# 拆仓后 TUI 自带 thin binary(仅 clap 路由 + 调 `reflect_tui::run`)。
+[[bin]]
+name = "reflect-tui"
+path = "src/bin/main.rs"
+
+[dependencies]
+anyhow       = { workspace = true }
+clap         = { workspace = true }
+tokio        = { workspace = true }
+tokio-util   = { workspace = true }
+futures      = { workspace = true }
+parking_lot  = { workspace = true }
+tracing      = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+uuid         = { workspace = true }
+# 批次二十三(#9):session overlay 的 `SessionInfo.started_at` 是 chrono 时间,
+# 用于渲染「N 分钟前」。此前 TUI 不直接用 chrono。
+chrono       = { workspace = true }
+ratatui      = { workspace = true, features = ["scrolling-regions", "unstable-backend-writer", "unstable-rendered-line-info", "unstable-widget-ref"] }
+crossterm    = { workspace = true, features = ["event-stream", "bracketed-paste"] }
+color-eyre   = { workspace = true }
+# Upstream-vendored stability primitives (live_wrap / frame / terminal):
+#  - `unicode-width` for cell-width math that respects CJK / emoji / ZWJ
+#    sequences when incrementally wrapping streaming fragments.
+#  - `tokio-stream` for the broadcast-channel frame-draw subscription stream
+#    emitted by `FrameRequester` (mirrors the upstream tui::event_stream shape).
+unicode-width = "0.1"
+tokio-stream  = "0.1"
+textwrap = "0.16"
+regex-lite = "0.1"
+url = "2"
+urlencoding = "2"
+dirs = "5"
+derive_more = { version = "0.99", features = ["is_variant"] }
+two-face = "0.5"
+unicode-segmentation = "1"
+itertools = "0.13"
+supports-color = "3"
+reflect-core     = { workspace = true }
+reflect-protocol = { workspace = true }
+reflect-llm      = { workspace = true }
+reflect-tools    = { workspace = true }
+reflect-config   = { workspace = true }
+reflect-stream      = { workspace = true }
+reflect-sandbox     = { workspace = true }
+reflect-mcp         = { workspace = true }
+reflect-rollout  = { workspace = true }
+reflect-telemetry = { workspace = true }
+reflect-agent-def = { workspace = true }
+reflect-plugin   = { workspace = true }
+reflect-ast      = { workspace = true }
+# v1.1.0 Phase 6:任务面板 + 团队胶囊 —— 镜像 `reflect_task` 的 `TaskStatus`
+# 枚举与 `TodoRow`(避免 TUI 反向依赖整个 reflect_task store 层)。
+reflect-task     = { workspace = true }
+# v1.x:接入 SubAgentFactory —— 让 TUI agent 也能派发子 agent (call_<role>)。
+# 此前仅 headless (reflect-exec) 注册了 SubAgentFactory，TUI agent 工具表
+# 里没有 call_explorer，导致用户要求"派发 subagent"时模型反馈"无此工具"。
+reflect-subagent = { workspace = true }
+# Inline visualization requires base64 encoding and random ID generation.
+base64     = "0.22"
+rand       = "0.8"
+# Upstream TUI full port: additional rendering / path / image dependencies.
+dunce         = "1"
+image         = { version = "0.25", default-features = false, features = ["png", "webp"] }
+ratatui-macros = "0.7"
+rmcp          = { workspace = true }
+diffy         = "0.4"
+shlex         = "1"
+strum         = { version = "0.26", features = ["derive"] }
+strum_macros  = "0.26"
+webbrowser    = "1"
+pathdiff      = "0.2"
+arboard       = { version = "3", default-features = false, features = ["image-data"] }
+lazy_static   = "1"
+libc          = "0.2"
+thiserror     = { workspace = true }
+sha2          = "0.10"
+async-trait   = { workspace = true }
+# Slash 命令 v1.x:`/skills` 反射 `SkillsCatalog::names()`,由 reflect-exec bootstrap
+# 期通过 `App::install_services` 注入(见 `slash.rs` 与 `app.rs`)。
+reflect-skills   = { workspace = true }
+# S2:`/memory ls/show/edit/add/remove` 反射 `MemoryStore::list_agent_types`。
+# 用 trait object,因为 `InMemoryStore` / `FileMemoryStore` / `CompositeMemoryStore`
+# 三个 impl 都要塞进同一个字段。
+reflect-memory   = { workspace = true }
+# S2:`/tasks ls/show/clear` 反射 `TaskManager::list_tasks`(async),通过
+# `pollster::block_on` 在 sync App 方法里 block 调用。
+pollster         = { workspace = true }
+# S5a:`/permissions ls/allow/deny` 反射 `PermissionResolver` + `PermissionStore`。
+reflect-permissions = { workspace = true }
+reflect-hooks       = { workspace = true }
+syntect             = "5"
+# v0.4.x markdown 渲染:把 Agent/User 文本的 CommonMark 结构(标题/强调/
+# 列表/引用/表格/代码块)渲染成带样式的 ratatui `Line`。代码块仍走 syntect。
+pulldown-cmark      = { version = "0.10", default-features = false }
+toml                = { workspace = true }
+# v1.x #2:`@` 文件选择器枚举 workspace(尊重 .gitignore,与 reflect-tools 同款)。
+ignore              = { workspace = true }
+# 批次四:外部编辑器(Ctrl+G)用 tempfile 建 `.md` 种子文件给 $EDITOR 编辑。
+tempfile            = "3"
+# P2 更新检查:启动期后台 GET GitHub releases/latest,解析 tag_name 比版本。
+reqwest            = { workspace = true }
+
+[dev-dependencies]
+insta    = { workspace = true }
+tempfile = "3"
+# `test-util` enables `tokio::time::advance` / `start_paused` for deterministic
+# `FrameRequester` scheduling tests (mirrors the upstream `#[tokio::test(start_paused)]`
+# suite). `time` on tokio-util pulls in `FutureExt::timeout` for the same suite.
+tokio        = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tokio-util   = { version = "0.7", features = ["time"] }
+# Upstream test suite uses `pretty_assertions` for snapshot-friendly diff output
+# on `Row` / `FrameRequester` assertions. Pin the same major used upstream.
+pretty_assertions = "1"
+# Upstream `test_backend.rs` (VT100Backend) drives VT100 emulation for snapshot
+# tests of `custom_terminal` / `insert_history`. Required by the vendored tests.
+vt100 = "0.15"

@@ -1,0 +1,28 @@
+---
+source: crates/reflect-tui/src/tui_core/markdown_render/markdown_render_tests.rs
+assertion_line: 1697
+expression: "plain_lines(&text).join(\"\\n\")"
+---
+ Unit                                                Files    Adds    Removes    What It Adds
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━  ━━━━━━  ━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Suggestion engine and unit coverage        reflect-agent/     704          0    Sampling workflow, stable-history
+                                                 core/src/                       checks, tool-flow suppression, fast
+                                          next_prompt_sugg                       reasoning profile, filtering rules,
+                                              estion.rs:1,                       cancellation and timeout.
+                                            reflect-agent/
+                                                 core/src/
+                                          next_prompt_sugg
+                                          estion_tests.rs:
+                                                         1
+───────────────────────────────────────  ──────────────────  ──────  ─────────  ────────────────────────────────────────
+ Model instruction fragment and             reflect-agent/      54          0    Synthetic suggestion prompt and an
+ contextual isolation                            core/src/                       isolation test for ordinary user text.
+                                                  context/
+                                          next_prompt_sugg
+                                              estion.rs:1,
+                                            reflect-agent/
+                                                 core/src/
+                                                  context/
+                                          contextual_user_
+                                          message_tests.rs
+                                                        :1

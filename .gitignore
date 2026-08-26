@@ -1,0 +1,51 @@
+# ── Rust ──
+/target/
+**/target/
+Cargo.lock.bak
+
+# ── 构建产物 ──
+/dist/
+**/dist/
+
+# ── IDE ──
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── Local config / runtime ──
+.reflect/
+*.local.toml
+
+# ── Coverage / profiling ──
+*.profraw
+lcov.info
+
+# ── 工具产物 / 本地环境 ──
+# AI 规划会话
+.zcode/
+__pycache__/
+*.pyc
+
+# ── 临时文件 ──
+*.log
+*.pid
+*.bak
+*.partial
+
+# ── 密钥与凭据(防御性,本项目不存,但避免误提交) ──
+*.env
+*.env.*
+*.pem
+*.key
+*.crt
+secrets/
+credentials*
+*.credentials
+service-account*.json
+gha-creds-*.json

@@ -1,0 +1,6 @@
+---
+source: crates/reflect-tui/src/tui_core/diff_render.rs
+expression: snapshot
+---
+insert=Some(Rgb(12, 34, 56))
+delete=Some(Rgb(74, 34, 29))

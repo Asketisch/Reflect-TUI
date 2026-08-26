@@ -1,0 +1,14 @@
+---
+source: crates/reflect-tui/src/tui_core/diff_render.rs
+expression: terminal.backend()
+---
+"• Added new_file.txt (+2 -0)                                                    "
+"    1 +alpha                                                                    "
+"    2 +beta                                                                     "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "

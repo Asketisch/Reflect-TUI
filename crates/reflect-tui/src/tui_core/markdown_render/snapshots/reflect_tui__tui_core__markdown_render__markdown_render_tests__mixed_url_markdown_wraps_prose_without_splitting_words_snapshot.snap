@@ -1,0 +1,7 @@
+---
+source: crates/reflect-tui/src/tui_core/markdown_render/markdown_render_tests.rs
+expression: "plain_lines(&text).join(\"\\n\")"
+---
+This paragraph keeps strikethrough intact near a
+link (https://example.com/path) while enough
+surrounding prose forces wrapping.

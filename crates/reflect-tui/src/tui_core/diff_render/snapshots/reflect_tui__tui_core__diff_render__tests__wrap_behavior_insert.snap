@@ -1,0 +1,12 @@
+---
+source: crates/reflect-tui/src/tui_core/diff_render.rs
+expression: terminal.backend()
+---
+"1 +this is a very long line that should wrap across multiple terminal columns an          "
+"   d continue                                                                             "
+"                                                                                          "
+"                                                                                          "
+"                                                                                          "
+"                                                                                          "
+"                                                                                          "
+"                                                                                          "
