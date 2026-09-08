@@ -43,31 +43,111 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked --version "^0.21"
 
+      # 检出漏洞时 cargo-audit 以非零码退出;用 continue-on-error 保证
+      # SARIF 仍然生成并上传,是否让 job 失败由最后一步决定。
       - name: Run cargo audit
-        run: cargo audit --format json --deny warnings > audit.json || AUDIT_EXIT=$?
+        id: audit
         continue-on-error: true
-        env:
-          AUDIT_EXIT: "0"
+        run: cargo audit --format json --deny warnings > audit.json
 
-      - name: Convert to SARIF
+      # cargo-audit 的 JSON 输出不是 SARIF,内联脚本转成 SARIF 2.1.0。
+      # audit.json 缺失或损坏时输出 0 结果的合法 SARIF,上传步骤不会因此失败。
+      - name: Convert JSON to SARIF
         if: always()
         run: |
-          cargo install sarif-fmt --locked --version "^0.4" || true
-          if [ -s audit.json ]; then
-            cat audit.json | sarif-fmt > audit.sarif || echo '{}' > audit.sarif
-          else
-            echo '{}' > audit.sarif
-          fi
+          python3 <<'PYEOF'
+          import json
+
+          def emit(rules, results):
+              sarif = {
+                  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+                  "version": "2.1.0",
+                  "runs": [
+                      {
+                          "tool": {
+                              "driver": {
+                                  "name": "cargo-audit",
+                                  "informationUri": "https://github.com/RustSec/cargo-audit",
+                                  "rules": rules,
+                              }
+                          },
+                          "results": results,
+                      }
+                  ],
+              }
+              with open("audit.sarif", "w") as f:
+                  json.dump(sarif, f, ensure_ascii=False)
+
+          try:
+              with open("audit.json") as f:
+                  report = json.load(f)
+          except Exception:
+              emit([], [])
+          else:
+              rules = {}
+              results = []
+
+              def add(entry, level):
+                  advisory = entry.get("advisory") or {}
+                  package = entry.get("package") or {}
+                  adv_id = advisory.get("id")
+                  if not adv_id:
+                      return
+                  name = package.get("name") or advisory.get("package") or "?"
+                  version = package.get("version") or "?"
+                  patched = (entry.get("versions") or {}).get("patched") or advisory.get("patched") or []
+                  url = advisory.get("url") or f"https://rustsec.org/advisories/{adv_id}.html"
+                  text = f"{name}@{version}:{adv_id} {advisory.get('title') or ''}".strip()
+                  if patched:
+                      text += f"(已修复版本: {', '.join(map(str, patched))})"
+                  text += f" {url}"
+                  if adv_id not in rules:
+                      rules[adv_id] = {
+                          "id": adv_id,
+                          "shortDescription": {"text": advisory.get("title") or adv_id},
+                          "helpUri": url,
+                      }
+                  results.append(
+                      {
+                          "ruleId": adv_id,
+                          "level": level,
+                          "message": {"text": text},
+                          "locations": [
+                              {
+                                  "physicalLocation": {
+                                      "artifactLocation": {"uri": "Cargo.lock"},
+                                      "region": {"startLine": 1},
+                                  }
+                              }
+                          ],
+                      }
+                  )
+
+              # 漏洞 → error;未维护/yanked → warning;信息类 → note
+              for entry in (report.get("vulnerabilities") or {}).get("list") or []:
+                  add(entry, "error")
+              warnings = report.get("warnings") or {}
+              for key, level in (
+                  ("unmaintained", "warning"),
+                  ("yanked", "warning"),
+                  ("informational", "note"),
+              ):
+                  for entry in warnings.get(key) or []:
+                      add(entry, level)
+
+              emit(list(rules.values()), results)
+          PYEOF
 
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: audit.sarif
           category: cargo-audit
 
+      # steps.audit.outcome 保存的是 continue-on-error 之前的真实结果
       - name: Annotate audit failure
-        if: env.AUDIT_EXIT != '0'
+        if: steps.audit.outcome == 'failure'
         run: |
           echo "::error::cargo-audit 检测到漏洞,详见 Security tab。"
           exit 1
