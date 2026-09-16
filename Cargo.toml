@@ -23,6 +23,7 @@ reflect-llm        = { path = "reflect-agent/crates/abilities/reflect-llm" }
 reflect-tools      = { path = "reflect-agent/crates/abilities/reflect-tools" }
 reflect-hooks      = { path = "reflect-agent/crates/abilities/reflect-hooks" }
 reflect-skills     = { path = "reflect-agent/crates/abilities/reflect-skills" }
+reflect-bm25       = { path = "reflect-agent/crates/abilities/reflect-bm25" }
 reflect-memory     = { path = "reflect-agent/crates/abilities/reflect-memory" }
 reflect-agent-def  = { path = "reflect-agent/crates/abilities/reflect-agent-def" }
 reflect-prompt     = { path = "reflect-agent/crates/abilities/reflect-prompt" }
@@ -48,13 +49,19 @@ reflect-integration = { path = "reflect-agent/crates/integrations/reflect-integr
 
 # orchestration 层
 # 注:reflect-goal 是 reflect-core 的传递依赖(core Cargo.toml 引用),必须声明;
-# reflect-task/subagent 被 TUI 直接依赖。reflect-discussion/pipeline 仅 facade/cli 用,此处不需要。
+# reflect-task/subagent 被 TUI 直接依赖。v1.x 起 submodule 的 facade/CLI crate
+# (reflect/reflect-exec)以 workspace 继承方式引用 discussion/pipeline,
+# 因此镜像必须列全,否则外层解析继承时缺表报错。
 reflect-task        = { path = "reflect-agent/crates/orchestration/reflect-task" }
 reflect-subagent    = { path = "reflect-agent/crates/orchestration/reflect-subagent" }
 reflect-goal        = { path = "reflect-agent/crates/orchestration/reflect-goal" }
+reflect-discussion  = { path = "reflect-agent/crates/orchestration/reflect-discussion" }
+reflect-pipeline    = { path = "reflect-agent/crates/orchestration/reflect-pipeline" }
 
 # runtime 层(核心引擎)
 reflect-core = { path = "reflect-agent/crates/runtime/reflect-core" }
+reflect      = { path = "reflect-agent/crates/runtime/reflect" }
+reflect-exec = { path = "reflect-agent/crates/runtime/reflect-exec" }
 
 # ── 通用外部依赖(与核心 workspace 对齐版本)──
 tokio              = { version = "1", features = ["full"] }
@@ -89,6 +96,8 @@ similar = "2"
 regex   = "1"
 rankfns = "0.1"
 htmd        = "0.5"
+tiktoken-rs = "0.12"
+pyo3        = "0.23"
 once_cell   = "1"
 minijinja = "2"
 chrono = { version = "0.4", features = ["serde"] }

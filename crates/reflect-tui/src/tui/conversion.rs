@@ -102,6 +102,28 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
             outcome: cf.outcome,
             rounds: cf.rounds,
         },
+        // v1.4 子代理可观测(推送通道):父代理转发子代理中间进度,
+        // 以 Notice 行实时进对话流(每个子代理的分组视图留待后续迭代)。
+        // Message 直接展示文本;ToolBegin/End 的 text 已是工具名,
+        // 补省略号/完成标记区分方向。
+        SubagentProgress(sp) => {
+            let text = match sp.kind {
+                reflect_protocol::event_msg::SubagentProgressKind::Message => sp.text,
+                reflect_protocol::event_msg::SubagentProgressKind::ToolBegin => {
+                    format!("{} …", sp.text)
+                }
+                reflect_protocol::event_msg::SubagentProgressKind::ToolEnd => {
+                    format!("{} ✓", sp.text)
+                }
+            };
+            UiEventKind::Notice(format!("[子代理 {}] {}", sp.role, text))
+        }
+        // v1.4 子代理可观测(查询通道):`Op::QuerySubagents` 的状态回执。
+        // TUI 内嵌运行不发起该查询,按构造收不到,忽略。
+        SubagentStatus(_) => return None,
+        // v1.4 工具输出流式增量:TUI 暂不做工具输出增量渲染,
+        // ToolCallEnd 携带的完整输出已覆盖展示,忽略避免重复。
+        ToolCallOutputDelta(_) => return None,
         // v1.3 SDK 远程工具执行请求仅存在于 serve 模式(SDK 客户端经
         // Op::RegisterTools 注册远程工具后,core 请客户端本地执行并等回执)。
         // TUI 内置运行 agent、不注册远程工具,此事件按构造不可能出现,忽略。

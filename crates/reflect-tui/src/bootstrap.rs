@@ -51,7 +51,14 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
              或设置 OPENAI_API_KEY / ANTHROPIC_API_KEY 环境变量"
         )
     })?;
-    let model = format!("{}/{}", provider, reflect_cfg.model_for(provider));
+    // v1.3 model 解析诚实化:不再回落内置默认,缺配置时如实报错。
+    let model_name = reflect_cfg.resolve_model(&provider).ok_or_else(|| {
+        anyhow::anyhow!(
+            "provider `{provider}` 未配置 model:请在 ~/.reflect/config.toml \
+             设置 [active].model 或 [{provider}].model,或设置 REFLECT_MODEL 环境变量"
+        )
+    })?;
+    let model = format!("{}/{}", provider, model_name);
 
     // 2. 注册内置工具的 Tool registry（与 reflect-exec 同集合）。
     let tools = Arc::new(ToolRegistry::default());
