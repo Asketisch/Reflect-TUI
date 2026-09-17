@@ -103,7 +103,7 @@ arboard       = { version = "3", default-features = false, features = ["image-da
 lazy_static   = "1"
 libc          = "0.2"
 thiserror     = { workspace = true }
-sha2          = "0.10"
+sha2          = "0.11"
 async-trait   = { workspace = true }
 # Slash 命令 v1.x:`/skills` 反射 `SkillsCatalog::names()`,由 reflect-exec bootstrap
 # 期通过 `App::install_services` 注入(见 `slash.rs` 与 `app.rs`)。
