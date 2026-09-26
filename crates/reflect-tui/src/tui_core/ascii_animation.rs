@@ -4,22 +4,22 @@ pub struct AsciiAnimation;
 
 impl AsciiAnimation {
     pub fn new(_request_frame: crate::tui_core::tui::FrameRequester) -> Self {
-        Self::default()
+        Self
     }
 
     pub fn with_variants(
         _variants: Vec<Vec<&'static str>>,
         _request_frame: crate::tui_core::tui::FrameRequester,
     ) -> Self {
-        Self::default()
+        Self
     }
 
-    pub fn pick_random_variant(&self) -> () {}
+    pub fn pick_random_variant(&self) {}
 }
 
 impl AsciiAnimation {
     pub fn current_frame(&self) -> String {
         String::new()
     }
-    pub fn schedule_next_frame(&self) -> () {}
+    pub fn schedule_next_frame(&self) {}
 }

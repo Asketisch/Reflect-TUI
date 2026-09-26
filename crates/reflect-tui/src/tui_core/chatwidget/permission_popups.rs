@@ -19,8 +19,7 @@ impl ChatWidget {
         }
 
         let include_read_only = cfg!(target_os = "windows");
-        let current_approval =
-            AskForApproval::from(*self.config.permissions.approval_policy.value());
+        let current_approval = *self.config.permissions.approval_policy.value();
         let current_permission_profile = self.config.permissions.permission_profile().clone();
         let guardian_approval_enabled = self.config.features.enabled(Feature::GuardianApproval);
         let current_review_policy = self.config.approvals_reviewer;
@@ -295,7 +294,7 @@ impl ChatWidget {
             profile_selection.clone().map_or_else(
                 || {
                     Self::approval_preset_actions(
-                        AskForApproval::from(preset.approval),
+                        preset.approval,
                         preset.permission_profile.clone(),
                         preset
                             .active_permission_profile
@@ -371,7 +370,7 @@ impl ChatWidget {
         cwd: &std::path::Path,
         preset: &ApprovalPreset,
     ) -> bool {
-        let preset_approval = AskForApproval::from(preset.approval);
+        let preset_approval = preset.approval;
         if current_approval != preset_approval {
             return false;
         }
@@ -411,7 +410,7 @@ impl ChatWidget {
         profile_selection: Option<PermissionProfileSelection>,
     ) {
         let selected_name = preset.label.to_string();
-        let approval = AskForApproval::from(preset.approval);
+        let approval = preset.approval;
         let mut header_children: Vec<Box<dyn Renderable>> = Vec::new();
         let title_line = Line::from("Enable full access?").bold();
         let info_line = Line::from(vec![

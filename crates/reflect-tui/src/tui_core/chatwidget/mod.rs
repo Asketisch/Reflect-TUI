@@ -107,8 +107,6 @@ use crate::protocol_compat::config_types::CollaborationModeMask;
 use crate::protocol_compat::config_types::ModeKind;
 use crate::protocol_compat::config_types::Personality;
 use crate::protocol_compat::config_types::Settings;
-#[cfg(any(target_os = "windows", test))]
-use crate::protocol_compat::config_types::WindowsSandboxLevel;
 use crate::protocol_compat::items::AgentMessageContent;
 use crate::protocol_compat::items::AgentMessageItem;
 use crate::protocol_compat::models::MessagePhase;
@@ -286,8 +284,6 @@ use self::exec_state::is_standard_tool_call;
 use self::exec_state::is_unified_exec_source;
 mod goal_status;
 use self::goal_status::GoalStatusState;
-#[cfg(test)]
-use self::goal_status::goal_status_indicator_from_app_goal;
 mod goal_menu;
 mod ide_context;
 use self::ide_context::IdeContextState;
@@ -343,8 +339,6 @@ mod replay;
 mod review;
 mod review_popups;
 use self::review::ReviewState;
-#[cfg(test)]
-pub(crate) use self::review_popups::show_review_commit_picker_with_entries;
 mod safety_buffering;
 mod service_tiers;
 mod settings;
@@ -380,15 +374,11 @@ pub(crate) use self::user_messages::ThreadInputState;
 pub(crate) use self::user_messages::ThreadInputStateRestoreMode;
 pub(crate) use self::user_messages::UserMessage;
 use self::user_messages::UserMessageDisplay;
-#[cfg(test)]
-use self::user_messages::UserMessageHistoryOverride;
 use self::user_messages::UserMessageHistoryRecord;
 use self::user_messages::app_server_text_elements;
 pub(crate) use self::user_messages::mention_bindings_from_user_inputs;
 use self::user_messages::merge_user_messages;
 use self::user_messages::merge_user_messages_with_history_record;
-#[cfg(test)]
-use self::user_messages::remap_placeholders_for_message;
 use self::user_messages::user_message_display_for_history;
 use self::user_messages::user_message_for_restore;
 use self::user_messages::user_message_preview_text;

@@ -38,7 +38,13 @@ use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::{broadcast, mpsc};
 
-pub async fn run_async(args: TuiArgs, thread: Arc<AgentThread>) -> anyhow::Result<()> {
+use crate::tui_core::bottom_pane::slash_commands::PluginCommandEntry;
+
+pub async fn run_async(
+    args: TuiArgs,
+    thread: Arc<AgentThread>,
+    runtime: crate::bootstrap::TuiRuntimeHandles,
+) -> anyhow::Result<()> {
     // fullscreen 合并 --fullscreen 与 REFLECT_TUI_FULLSCREEN 环境变量。
     let fullscreen = args.fullscreen
         || std::env::var("REFLECT_TUI_FULLSCREEN")
@@ -73,6 +79,24 @@ pub async fn run_async(args: TuiArgs, thread: Arc<AgentThread>) -> anyhow::Resul
         });
     }
 
+    // MCP / LSP 生命周期事件(bootstrap 期起的连接管理器 → protocol Event):
+    // 走同一 conversion → event_tx 管道,让 /mcp 状态与 Notice 行进对话流。
+    {
+        let mut lifecycle_rx = runtime.lifecycle_rx;
+        let tx = event_tx.clone();
+        let tasks = Arc::clone(&state.background_tasks);
+        let mut s = tasks.lock().unwrap();
+        s.spawn(async move {
+            while let Some(protocol_event) = lifecycle_rx.recv().await {
+                if let Some(ui_event) = conversion::convert_event(protocol_event) {
+                    if tx.send(ui_event).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     // 从 AgentConfig 直接读取模型名(启动期 SessionConfigured 还未发出,
     // 先写入 state.status_model 让第一帧状态栏就显示正确的模型)。
     // SessionConfigured 事件到达后会覆盖此值(保持一致)。
@@ -92,6 +116,29 @@ pub async fn run_async(args: TuiArgs, thread: Arc<AgentThread>) -> anyhow::Resul
     // v1.x fork 接线:从 AgentConfig 读当前 session 的 ThreadId,供 fork overlay
     // 作 fork_with_history 的 parent_id。bootstrap 期已 with_session_id 注入。
     state.session_id = thread.config().session_id;
+    // M3:注入 /model 切换校验(registry + config)与 always-allow 持久化
+    // 目标(文件权限存储)。运行时句柄在 bootstrap 装配,这里只借用。
+    state.model_registry = Some(runtime.registry.clone());
+    state.reflect_config = Some(runtime.config.clone());
+    state.persistent_permissions = runtime.persistent_permissions.clone();
+    // 插件 slash 命令展开句柄(SubmitAsUser / /loop 提交前消费)。
+    state.plugin_runtime = runtime.plugin_runtime.clone();
+    // 插件命令快照 → composer slash 弹窗补全 + 提交校验白名单。
+    // bootstrap 挂载一次,会话内不变(TUI 当前不接 [plugins] 热重载)。
+    let plugin_command_entries: Vec<PluginCommandEntry> = {
+        let guard = runtime.plugin_runtime.lock().await;
+        guard
+            .as_ref()
+            .map(|rt| rt.commands().list())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|cmd| PluginCommandEntry {
+                name: cmd.name,
+                description: cmd.description.unwrap_or_default(),
+            })
+            .collect()
+    };
+    state.composer.set_plugin_commands(plugin_command_entries);
     sync_plan_mode_visuals(&mut state);
     let status_cwd = env::current_dir()
         .ok()
@@ -108,6 +155,55 @@ pub async fn run_async(args: TuiArgs, thread: Arc<AgentThread>) -> anyhow::Resul
         format!("Reflect · {}", status_model)
     };
     crate::terminal::set_terminal_title(&initial_title);
+
+    // M2:resume 历史回填 —— 恢复的既往对话先于 banner 进 scrollback,
+    // 让 `-c` / `--resume` 启动即有连续的视觉上下文。工具调用对只渲染
+    // 轻量 Notice 行(完整对话正文在 User/Agent 项)。
+    if !runtime.prior_messages.is_empty() {
+        let mut restored = 0usize;
+        for msg in &runtime.prior_messages {
+            match msg {
+                reflect_llm::ChatMessage::User(um) => {
+                    let text = um
+                        .blocks
+                        .iter()
+                        .filter_map(|b| match b {
+                            reflect_llm::ContentBlock::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if !text.trim().is_empty() {
+                        state.history.push(adapter::UiHistoryItem::User(text));
+                        restored += 1;
+                    }
+                }
+                reflect_llm::ChatMessage::Assistant(am) => {
+                    if let Some(t) = am.text.as_deref() {
+                        if !t.trim().is_empty() {
+                            state
+                                .history
+                                .push(adapter::UiHistoryItem::Agent(t.to_string()));
+                            restored += 1;
+                        }
+                    }
+                    for tc in &am.tool_calls {
+                        state
+                            .history
+                            .push(adapter::UiHistoryItem::Notice(format!("⚒ {}", tc.name)));
+                    }
+                }
+                reflect_llm::ChatMessage::Tool(_) | reflect_llm::ChatMessage::System(_) => {}
+            }
+        }
+        let resumed_id = state
+            .session_id
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "?".into());
+        state.history.push(adapter::UiHistoryItem::Notice(format!(
+            "↩ 已恢复历史会话 {resumed_id} · 回放 {restored} 条消息"
+        )));
+    }
 
     // 启动 banner:REFLECT 块字形 + braille 装饰 + 双轴渐变 24-bit,作为 history
     // 首条 push 进去,跟随原生 scrollback 自然滚出,被 Ctrl-T transcript 收录。
@@ -186,8 +282,11 @@ pub async fn run_async(args: TuiArgs, thread: Arc<AgentThread>) -> anyhow::Resul
                 // drop 自然终止。
                 let thread = Arc::clone(&thread);
                 let tx = event_tx.clone();
+                let plugin_runtime = state.plugin_runtime.clone();
                 tokio::spawn(async move {
-                    let sub = Submission::user_input(command);
+                    // 插件命令展开:与 SubmitAsUser 同语义,`/loop` 触发的
+                    // slash 文本如果是插件命令,提交前同样替换为命令正文。
+                    let sub = expand_plugin_submission(&plugin_runtime, command).await;
                     let mut handle = thread.submit(sub).await;
                     while let Some(protocol_event) = handle.next().await {
                         if let Some(ui_event) = conversion::convert_event(protocol_event) {
@@ -319,7 +418,9 @@ pub async fn run_async(args: TuiArgs, thread: Arc<AgentThread>) -> anyhow::Resul
                     // 注:本闭包之外已完成 `history_tail = 0` + 清空
                     // `pending_history_lines`,让 pending 用新宽度从头生成。
                     if state.needs_terminal_reflow {
-                        guard.terminal().clear_scrollback_and_visible_screen_ansi()?;
+                        guard
+                            .terminal()
+                            .clear_scrollback_and_visible_screen_ansi()?;
                         // 屏已空,`set_viewport_area` 内的 width-change reset 已
                         // 让 buffer 与清屏后的实际终端状态一致。
                         state.needs_terminal_reflow = false;
@@ -332,9 +433,9 @@ pub async fn run_async(args: TuiArgs, thread: Arc<AgentThread>) -> anyhow::Resul
                         insert_history_lines(guard.terminal(), lines)?;
                     }
 
-                    guard.terminal().draw(|frame| {
-                        draw(frame, &mut state, height, &live_text_lines, live_h)
-                    })?;
+                    guard
+                        .terminal()
+                        .draw(|frame| draw(frame, &mut state, height, &live_text_lines, live_h))?;
                     Ok(())
                 })?;
                 draw_result?;
@@ -395,7 +496,32 @@ pub async fn run_async(args: TuiArgs, thread: Arc<AgentThread>) -> anyhow::Resul
             }
         }
     }
-    // TUI 退出时 abort 所有后台任务，防止事件丢失。
+    // M2:/archive /delete 的落盘动作在主循环退出后执行 —— 此时 recorder
+    // 已停止写 JSONL,文件可安全改名/删除。结果打回真实终端(scrollback 已交还)。
+    if state.archive_session_on_exit {
+        if let Some(tid) = state.session_id {
+            let base = reflect_rollout::path::default_base();
+            let cur = reflect_rollout::index::read_session_name(&base, tid)
+                .ok()
+                .flatten();
+            let new_name = format!("[archived] {}", cur.as_deref().unwrap_or("session"));
+            match reflect_rollout::index::rename_session(&base, tid, &new_name) {
+                Ok(()) => println!("archived session {tid} → \"{new_name}\""),
+                Err(e) => eprintln!("archive failed: {e}"),
+            }
+        }
+    }
+    if state.delete_session_on_exit {
+        if let Some(tid) = state.session_id {
+            match delete_session_files(&tid) {
+                Ok(n) => println!("deleted session {tid} ({n} files)"),
+                Err(e) => eprintln!("delete failed: {e}"),
+            }
+        }
+    }
+    // TUI 退出时级联取消会话令牌:在飞子代理的 child_token 挂在它之下,
+    // 关窗不留后台残任务;随后 abort 本地后台 pump 任务,防止事件丢失。
+    runtime.cancel.cancel();
     state.background_tasks.lock().unwrap().abort_all();
     Ok(())
 }
@@ -413,33 +539,30 @@ fn handle_event(
 ) -> anyhow::Result<bool> {
     // v1.x Tier 5: checkpoint rewind 确认 modal 独占键位(最高优先级)。
     if state.checkpoint_rewind_sha.is_some() {
-        match &event {
-            Event::Key(key) => {
-                let is_cancel = matches!(
-                    key.code,
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc
-                ) || (key.code == KeyCode::Char('c')
-                    && key.modifiers.contains(KeyModifiers::CONTROL));
-                if is_cancel {
-                    state.checkpoint_rewind_sha = None;
-                    return Ok(false);
-                }
-                let confirm = matches!(
-                    key.code,
-                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter
-                );
-                if confirm {
-                    let sha = state.checkpoint_rewind_sha.take().unwrap();
-                    let short: String = sha.chars().take(8).collect();
-                    // git reset --hard 在稳定 TUI 中通过 emit_op 触发。
-                    // 目前作为占位通知,留待后续接 git 工具路径。
-                    state.history.push(adapter::UiHistoryItem::Notice(format!(
-                        "⚠ rewind to {short}: git reset --hard not yet wired (sha saved)."
-                    )));
-                }
+        if let Event::Key(key) = &event {
+            let is_cancel = matches!(
+                key.code,
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc
+            ) || (key.code == KeyCode::Char('c')
+                && key.modifiers.contains(KeyModifiers::CONTROL));
+            if is_cancel {
+                state.checkpoint_rewind_sha = None;
                 return Ok(false);
             }
-            _ => {}
+            let confirm = matches!(
+                key.code,
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter
+            );
+            if confirm {
+                let sha = state.checkpoint_rewind_sha.take().unwrap();
+                let short: String = sha.chars().take(8).collect();
+                // git reset --hard 在稳定 TUI 中通过 emit_op 触发。
+                // 目前作为占位通知,留待后续接 git 工具路径。
+                state.history.push(adapter::UiHistoryItem::Notice(format!(
+                    "⚠ rewind to {short}: git reset --hard not yet wired (sha saved)."
+                )));
+            }
+            return Ok(false);
         }
     }
 
@@ -466,10 +589,8 @@ fn handle_event(
             Event::Key(key) => {
                 let page = 10usize;
                 // transcript/diff 用 TranscriptPager;tasks 用 TasksPager。
-                if let Some(ref mut pager) = state
-                    .transcript
-                    .as_mut()
-                    .or_else(|| state.diff_overlay.as_mut())
+                if let Some(ref mut pager) =
+                    state.transcript.as_mut().or(state.diff_overlay.as_mut())
                 {
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => pager.scroll_up(1),
@@ -483,7 +604,7 @@ fn handle_event(
                 } else if let Some(ref mut pager) = state
                     .tasks_overlay
                     .as_mut()
-                    .or_else(|| state.session_overlay.as_mut())
+                    .or(state.session_overlay.as_mut())
                 {
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => pager.page_up(1),
@@ -690,6 +811,38 @@ fn emit_op(
     });
 }
 
+/// 插件 slash 命令展开(镜像 reflect-exec serve 的 `expand_plugin_submission`):
+/// 仅处理以 `/` 开头的文本 —— 命中已挂载插件命令时替换为命令 md 正文并
+/// 标注 `source_command`;未命中任何命令原样提交;命中但命令文件不可读时
+/// warn 后原样提交(交互式 TUI 不吞用户输入,与 serve 的降级语义一致)。
+async fn expand_plugin_submission(
+    plugin_runtime: &reflect_plugin::runtime::SharedPluginRuntime,
+    text: String,
+) -> Submission {
+    if !text.starts_with('/') {
+        return Submission::user_input(text);
+    }
+    // 先快照命令注册表并尽快释放 runtime 锁 —— 展开期间的文件 IO 不占锁。
+    let registry = {
+        let guard = plugin_runtime.lock().await;
+        match guard.as_ref() {
+            Some(rt) => rt.commands(),
+            None => return Submission::user_input(text),
+        }
+    };
+    match reflect_plugin::expand_user_input(&text, &registry) {
+        None => Submission::user_input(text),
+        Some(Ok(expanded)) => {
+            tracing::info!(command = %expanded.name, "tui: plugin command expanded");
+            Submission::user_input(expanded.body).with_source_command(expanded.name)
+        }
+        Some(Err(e)) => {
+            tracing::warn!(error = %e, "tui: 插件命令展开失败,原样提交");
+            Submission::user_input(text)
+        }
+    }
+}
+
 /// 同步 plan 模式的可见反馈:composer 占位符。
 ///
 /// Plan 模式时占位符改为「describe the task or /exit-plan …」,其余模式还原默认。
@@ -766,7 +919,7 @@ fn open_external_editor(
 
     // 3. restore terminal:raw mode + alt-screen,下一帧重绘。
     let _ = crossterm::terminal::enable_raw_mode();
-    let _ = frame_requester.schedule_frame();
+    frame_requester.schedule_frame();
 
     match result {
         Ok(edited) if edited == draft => {
@@ -1158,7 +1311,9 @@ fn format_configured_mcp_servers() -> String {
         out.push_str(&format!("  • {s}\n"));
     }
     out.push_str(&format!("\n  配置文件: {}", path.display()));
-    out.push_str("\n  提示: 连接状态与工具清单由后端 agent 运行时管理；用 /debug-config 查看完整配置层。");
+    out.push_str(
+        "\n  提示: 连接状态与工具清单由后端 agent 运行时管理；用 /debug-config 查看完整配置层。",
+    );
     out
 }
 
@@ -1185,6 +1340,15 @@ fn dispatch_slash_command(
             state.history.push(UiHistoryItem::Notice(
                 "/compact: Context compaction requested. Next turn will compact.".into(),
             ));
+        }
+        SlashCommand::Rewind => {
+            // v1.5:popup 路径与文本路径(/rewind → SlashOutcome::OpenRewindSelect)
+            // 同权 —— 打开 rewind 选择器,由用户挑要回退到的 prompt;
+            // 确认后发送 `Op::Rewind { to_turn_id: None }`(引擎每轮从 rollout
+            // 回放重建历史,writer 截断前写 `.bak` 备份,TurnRewound 事件
+            // 回报丢弃数)。文件回滚(git checkpoint)由 agent 侧 `rewind`
+            // 工具负责,两者可组合。
+            open_rewind_select(state);
         }
         SlashCommand::Vim => {
             let now_enabled = state.composer.toggle_vim_enabled();
@@ -1308,6 +1472,10 @@ fn dispatch_slash_command(
             state
                 .history
                 .push(UiHistoryItem::Notice(format_configured_mcp_servers()));
+        }
+        SlashCommand::Plugins => {
+            // /plugin — 打开插件 overlay(真实已装插件 + enabled 标志)。
+            open_plugin_overlay(state);
         }
         SlashCommand::Side | SlashCommand::Btw => {
             // /side、/btw 需要带消息内容发起临时侧边对话。
@@ -1442,10 +1610,11 @@ fn dispatch_slash_command_with_args(
                 return;
             }
             let next_fire = Instant::now() + Duration::from_secs(secs);
-            if let Some(prev) = state
-                .loop_state
-                .replace(LoopState { interval_secs: secs, command: rest_after.to_string(), next_fire })
-            {
+            if let Some(prev) = state.loop_state.replace(LoopState {
+                interval_secs: secs,
+                command: rest_after.to_string(),
+                next_fire,
+            }) {
                 state.history.push(UiHistoryItem::Notice(format!(
                     "/loop: replaced previous ({} every {}s) with new ({} every {}s)",
                     prev.command, prev.interval_secs, rest_after, secs
@@ -1473,9 +1642,9 @@ fn dispatch_slash_command_with_args(
         SlashCommand::Side | SlashCommand::Btw => {
             let msg = args.trim().to_string();
             if msg.is_empty() {
-                state.history.push(UiHistoryItem::Notice(
-                    "/side: 用法 /side <message>".into(),
-                ));
+                state
+                    .history
+                    .push(UiHistoryItem::Notice("/side: 用法 /side <message>".into()));
             } else {
                 // 后端 StartSide 事件尚未在 reflect_protocol::Op 暴露，
                 // 当前仅回显，避免静默丢弃用户输入（此前会落到误导兜底）。
@@ -1566,6 +1735,23 @@ fn open_tasks_overlay(state: &mut UiState) {
     state.tasks_overlay = Some(crate::tasks_pager::TasksPager::default());
 }
 
+/// 打开 plugin overlay:展示真实已装插件(PluginManager 读盘),
+/// enabled 标志来自 config `[plugins].enabled_plugins`(TUI 无热重载,
+/// 与运行时挂载状态一致)。
+fn open_plugin_overlay(state: &mut UiState) {
+    let enabled = state
+        .reflect_config
+        .as_ref()
+        .map(|c| c.plugins.enabled_plugins.clone())
+        .unwrap_or_default();
+    let lines = crate::picker::plugin_overlay::load_plugins(&enabled);
+    // TranscriptPager 默认初始滚到末行(适配长 transcript);插件列表是
+    // 短内容,从头读更自然,显式归零。
+    let mut pager = TranscriptPager::new(lines);
+    pager.scroll_offset = 0;
+    state.transcript = Some(pager);
+}
+
 /// v1.x Tier 4.5:打开 session overlay(alt-screen 双栏,复用 TasksPager 渲染)。
 /// 左 message_list + 右 session list(/resume /fork /rename 入口)。
 fn open_session_overlay(state: &mut UiState) {
@@ -1628,25 +1814,104 @@ fn open_rewind_select(state: &mut UiState) {
     state.fork_rewind = Some(overlay);
 }
 
-/// v1.x Tier 4.5:填充 `state.session_entries`(best-effort 占位数据,供 picker 演示)。
-///
-/// 真实实现需要从 `~/.reflect/sessions/*.jsonl` 或 runtime API 拉取;本阶段给 1 条
-/// 「current session」占位,避免空列表。失败不报错。
+/// 填充 `state.session_entries`:读 rollout 索引的真实会话列表
+/// (`~/.reflect/sessions/**` 按 session_id 去重,最新在前),名字优先
+/// 用户 `/rename` 设置的 `.name` 文件,回退 `SessionMeta.title`。
+/// 每次打开 overlay 都刷新(会话文件可能新增/删除)。失败静默(空列表)。
 fn seed_session_entries(state: &mut UiState) {
-    if !state.session_entries.is_empty() {
-        return; // 已 seed 过,避免重复
+    state.session_entries.clear();
+    let base = reflect_rollout::path::default_base();
+    let sessions = match reflect_rollout::index::list_sessions(&base) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "list_sessions 失败,session overlay 置空");
+            return;
+        }
+    };
+    let current = state.session_id.map(|t| t.to_string());
+    let now = chrono::Utc::now();
+    for s in sessions.iter().take(50) {
+        let id = s.session_id.to_string();
+        let name = reflect_rollout::index::read_session_name(&base, s.session_id)
+            .ok()
+            .flatten()
+            .or_else(|| s.title.clone())
+            .unwrap_or_else(|| format!("Session {}", &id[..id.len().min(8)]));
+        // 相对时间:"now" / "Nm ago" / "Nh ago" / "Nd ago" / 绝对日期。
+        let elapsed = now.signed_duration_since(s.started_at);
+        let last_active = if elapsed < chrono::Duration::minutes(1) {
+            "now".to_string()
+        } else if elapsed < chrono::Duration::hours(1) {
+            format!("{}m ago", elapsed.num_minutes())
+        } else if elapsed < chrono::Duration::hours(24) {
+            format!("{}h ago", elapsed.num_hours())
+        } else if elapsed < chrono::Duration::days(7) {
+            format!("{}d ago", elapsed.num_days())
+        } else {
+            s.started_at.format("%Y-%m-%d").to_string()
+        };
+        state.session_entries.push(crate::events::SessionEntry {
+            is_current: current.as_deref() == Some(id.as_str()),
+            id,
+            name,
+            created_at: s.started_at.format("%Y-%m-%d %H:%M").to_string(),
+            last_active,
+        });
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    state.session_entries.push(crate::events::SessionEntry {
-        id: "current".into(),
-        name: "Current session".into(),
-        created_at: format!("{now}"),
-        last_active: "now".into(),
-        is_current: true,
-    });
+}
+
+/// M2:删除一个 session 的全部落盘文件 —— JSONL 主文件 + 轮转副本
+/// (`<uuid>[.N].jsonl`)+ `<base>/_names/<uuid>.name`。
+/// 仅在主循环退出后调用(recorder 已停写,无写竞争)。
+fn delete_session_files(tid: &reflect_protocol::ThreadId) -> anyhow::Result<usize> {
+    let base = reflect_rollout::path::default_base();
+    let path = reflect_rollout::index::find_session_path(&base, *tid)
+        .ok_or_else(|| anyhow::anyhow!("session file not found for {tid}"))?;
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_string();
+    let dir = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("session file has no parent dir"))?;
+    let mut removed = 0usize;
+    for entry in std::fs::read_dir(dir)? {
+        let p = entry?.path();
+        let Some(name) = p.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let is_session_file = name == format!("{stem}.jsonl")
+            || (name.starts_with(&stem) && name.ends_with(".jsonl"));
+        if is_session_file {
+            std::fs::remove_file(&p)?;
+            removed += 1;
+        }
+    }
+    let name_file = base.join("_names").join(format!("{tid}.name"));
+    if name_file.exists() {
+        std::fs::remove_file(&name_file)?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
+/// M3:`/model` 输入 → 完整 `provider/model` spec 并经 registry 校验。
+/// 输入含 `/` 视为完整 spec;否则按 active provider 拼接。校验失败 → None
+/// (保持当前模型)。
+fn resolve_model_switch(
+    registry: &reflect_llm::ModelRegistry,
+    cfg: &reflect_config::ReflectConfig,
+    input: &str,
+) -> Option<String> {
+    let spec = if input.contains('/') {
+        input.to_string()
+    } else {
+        let provider = cfg.active_provider()?;
+        format!("{provider}/{input}")
+    };
+    // next_for 与引擎走同一 spec→credential 解析;拿得到客户端即视为可用。
+    registry.next_for(&spec, &[]).map(|_| spec)
 }
 
 fn handle_key(
@@ -1706,9 +1971,9 @@ fn handle_key(
             // 乐观关闭;Revise 时 core 会留在当前模式,无需重开。
             state.plan_enter_request = None;
             if matches!(choice, reflect_protocol::PlanApprovalChoice::AutoMode) {
-                state.history.push(UiHistoryItem::Notice(
-                    "✓ Entering plan mode…".into(),
-                ));
+                state
+                    .history
+                    .push(UiHistoryItem::Notice("✓ Entering plan mode…".into()));
             }
             return Ok(false);
         }
@@ -1733,6 +1998,11 @@ fn handle_key(
             _ => None,
         };
         if let Some(decision) = decision {
+            // M3:decision 会 move 进 Op,是否 always-allow 先行判定。
+            let always_allow = matches!(
+                decision,
+                reflect_protocol::ReviewDecision::ApproveForSession
+            );
             // Plan 审批走 Op::PlanApproval（由 plan_approval 弹窗处理），
             // 不应触达此分支；防御性只记 Notice。
             let label = match decision {
@@ -1769,7 +2039,36 @@ fn handle_key(
                     // plan 审批由 plan_approval 弹窗处理；此处仅清空本地状态。
                 }
             }
-            // TODO:持久化 always-allow 规则到 config.toml [permissions] 段。
+            // M3:always-allow 持久化 —— ApproveForSession 时把 Allow 规则
+            // 写入文件权限存储(~/.reflect/permissions.toml),重启后同类
+            // 工具调用继续免审批。add 是 async trait 方法,挂后台任务执行。
+            if always_allow {
+                let tool_name = match &pending.kind {
+                    reflect_protocol::ApprovalKind::Tool { tool_name, .. } => {
+                        Some(tool_name.clone())
+                    }
+                    _ => None,
+                };
+                if let (Some(store), Some(tool)) = (state.persistent_permissions.clone(), tool_name)
+                {
+                    state.background_tasks.lock().unwrap().spawn(async move {
+                        if let Err(e) = store
+                            .add(reflect_permissions::PermissionRule {
+                                tool: tool.clone(),
+                                action: reflect_permissions::PermissionAction::Allow,
+                                tool_glob: None,
+                                shell_pattern: None,
+                            })
+                            .await
+                        {
+                            tracing::warn!(error = %e, tool = %tool, "always-allow 规则持久化失败");
+                        }
+                    });
+                    state.history.push(adapter::UiHistoryItem::Notice(
+                        "always-allow: rule persisted to ~/.reflect/permissions.toml".into(),
+                    ));
+                }
+            }
             state.pending_approval = None;
             return Ok(false);
         }
@@ -1799,6 +2098,38 @@ fn handle_key(
                 return Ok(false);
             }
             _ => {}
+        }
+    }
+
+    // /archive /delete 二次确认:y/n 优先(与 /clear 同款交互)。
+    if state.pending_archive_confirm || state.pending_delete_confirm {
+        let archive = state.pending_archive_confirm;
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                state.pending_archive_confirm = false;
+                state.pending_delete_confirm = false;
+                // 落盘动作延后到主循环退出(recorder 停写),这里置位并退出。
+                if archive {
+                    state.archive_session_on_exit = true;
+                } else {
+                    state.delete_session_on_exit = true;
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                state.pending_archive_confirm = false;
+                state.pending_delete_confirm = false;
+                state.history.push(adapter::UiHistoryItem::Notice(
+                    if archive {
+                        "Archive cancelled."
+                    } else {
+                        "Delete cancelled."
+                    }
+                    .into(),
+                ));
+                return Ok(false);
+            }
+            _ => return Ok(false),
         }
     }
 
@@ -2222,12 +2553,26 @@ fn handle_key(
                     return Ok(false);
                 }
                 SlashOutcome::SetModel { model } => {
-                    // /model <name> 切换模型。当前仅更新状态栏显示的模型名。
-                    // TODO: 通过 config.toml 或 agent API 真正切换模型。
-                    state.history.push(adapter::UiHistoryItem::Notice(format!(
-                        "/model: Model changed to '{}' (display only — full model switching pending).",
-                        model
-                    )));
+                    // M3:真切换 —— 解析/校验 spec 后 thread.config().set_model()
+                    // (引擎共享 Arc<RwLock>,下一轮 model_call 即生效)。
+                    // 校验失败仅提示,保持当前模型。
+                    let outcome = match (
+                        state.model_registry.as_ref(),
+                        state.reflect_config.as_ref(),
+                    ) {
+                        (Some(reg), Some(cfg)) => match resolve_model_switch(reg, cfg, &model) {
+                            Some(spec) => {
+                                thread.config().set_model(spec.clone());
+                                state.status_model = Some(spec.clone());
+                                format!("/model: switched to '{spec}' (effective next turn).")
+                            }
+                            None => format!(
+                                "/model: '{model}' not available in model registry — keeping current model."
+                            ),
+                        },
+                        _ => "/model: runtime handles unavailable (cannot switch).".to_string(),
+                    };
+                    state.history.push(adapter::UiHistoryItem::Notice(outcome));
                     return Ok(false);
                 }
                 SlashOutcome::EnterPlan { task } => {
@@ -2338,7 +2683,10 @@ fn handle_key(
                     ));
                     return Ok(false);
                 }
-                SlashOutcome::Loop { interval_secs, command } => {
+                SlashOutcome::Loop {
+                    interval_secs,
+                    command,
+                } => {
                     // 本地调度:不向 agent 发请求,只是把 loop 状态塞到 state,
                     // 由 tui/mod.rs 的事件循环每 tick 推进。
                     if interval_secs == 0 {
@@ -2424,45 +2772,49 @@ fn handle_key(
                     return Ok(false);
                 }
                 SlashOutcome::Archive => {
-                    // v1.x Tier 4.5:打开 session_overlay;archive 操作作用于选中的 session。
-                    open_session_overlay(state);
+                    // M2:归档当前会话 —— rollout 现有格式无独立归档存储,以
+                    // `[archived] ` 前缀重命名实现(可逆、诚实)。y/n 确认后
+                    // 主循环退出时执行(recorder 已停写才动文件)。
+                    state.pending_archive_confirm = true;
                     state.history.push(adapter::UiHistoryItem::Notice(
-                        "/archive: Open session overlay. Archive semantics pending.".into(),
+                        "Archive current session? Renames it with '[archived]' prefix, then exits. (y/n)"
+                            .into(),
                     ));
                     return Ok(false);
                 }
                 SlashOutcome::Delete => {
-                    // v1.x Tier 4.5:打开 session_overlay;delete 操作作用于选中的 session。
-                    open_session_overlay(state);
+                    // M2:删除当前会话全部落盘文件(JSONL + 轮转副本 + 名字
+                    // 文件),不可逆。y/n 确认后主循环退出时执行。
+                    state.pending_delete_confirm = true;
                     state.history.push(adapter::UiHistoryItem::Notice(
-                        "/delete: Open session overlay. Delete semantics pending.".into(),
+                        "Permanently delete current session files and exit? This cannot be undone. (y/n)"
+                            .into(),
                     ));
                     return Ok(false);
                 }
                 SlashOutcome::Resume { id } => {
-                    // v1.x Tier 4.5:打开 session_overlay;`/resume [id]` 时用 id 高亮/选中。
+                    // M2:session overlay 列真实会话(rollout 索引)。进程内
+                    // 热切换线程暂不支持,恢复走启动参数(--resume <id> / -c),
+                    // CLI 参数已接线,闭环成立。
                     seed_session_entries(state);
                     if let Some(target_id) = id.as_deref() {
                         // 选中和给定 id 匹配的 session(若有)。
-                        if let Some(_idx) =
-                            state.session_entries.iter().position(|s| s.id == target_id)
-                        {
-                            // pager 不需要 selected;通过推 Notice 反馈。
+                        if state.session_entries.iter().any(|s| s.id == target_id) {
                             state.history.push(adapter::UiHistoryItem::Notice(format!(
-                                "/resume: requested session '{target_id}'."
+                                "↩ To resume '{target_id}': exit and run `reflect-tui --resume {target_id}` (or `-c` for the latest session)."
                             )));
                         } else {
                             state.history.push(adapter::UiHistoryItem::Notice(format!(
-                                "/resume: session '{target_id}' not found in current entries (overlay opened)."
+                                "/resume: session '{target_id}' not found in rollout index (overlay opened)."
                             )));
                         }
-                    }
-                    open_session_overlay(state);
-                    if id.is_none() {
+                    } else {
                         state.history.push(adapter::UiHistoryItem::Notice(
-                            "/resume: Open session overlay.".into(),
+                            "/resume: listing sessions. Pick one, then exit and `reflect-tui --resume <id>`."
+                                .into(),
                         ));
                     }
+                    open_session_overlay(state);
                     return Ok(false);
                 }
                 SlashOutcome::Fork { name } => {
@@ -2673,8 +3025,7 @@ fn handle_key(
                     return Ok(false);
                 }
                 SlashOutcome::OpenPlugin => {
-                    let lines = crate::picker::plugin_overlay::load_plugins();
-                    state.transcript = Some(TranscriptPager::new(lines));
+                    open_plugin_overlay(state);
                     return Ok(false);
                 }
                 SlashOutcome::OpenMcp => {
@@ -2688,8 +3039,11 @@ fn handle_key(
                         .push(adapter::UiHistoryItem::User(text.clone()));
                     let thread = Arc::clone(thread);
                     let tx = event_tx.clone();
+                    let plugin_runtime = state.plugin_runtime.clone();
                     tokio::spawn(async move {
-                        let sub = Submission::user_input(text);
+                        // 插件命令展开(对齐 headless serve 的提交语义):
+                        // scrollback 已显示用户敲的原文,提交前替换为展开正文。
+                        let sub = expand_plugin_submission(&plugin_runtime, text).await;
                         let mut handle = thread.submit(sub).await;
                         while let Some(protocol_event) = handle.next().await {
                             if let Some(ui_event) = conversion::convert_event(protocol_event) {
@@ -2712,7 +3066,7 @@ fn handle_key(
         }
         ComposerAction::CommandWithArgs(cmd, args) => {
             dispatch_slash_command_with_args(cmd, args, state, thread, event_tx, history_tail);
-            return Ok(false);
+            Ok(false)
         }
         ComposerAction::None => Ok(false),
     }
@@ -2759,28 +3113,54 @@ fn compute_live_region(state: &mut UiState, width: u16) -> (Vec<Line<'static>>, 
     // `committed_live_len` 由 adapter 在每次 drain 后推进（已换行的前缀已流进滚屏）。
     // 先对原文切片（committed_live_len 按 live 原文计），再 sanitize，保证下标口径一致。
     // 直接赋值 `state.live`（无流式增量）的场景下 committed_live_len==0，整段都显示。
-    if state.live.is_empty() {
-        return (Vec::new(), 0);
+    if !state.live.is_empty() {
+        let bound = state.committed_live_len.min(state.live.len());
+        let uncommitted_raw = &state.live[bound..];
+        let display = history_render::sanitize_agent_display_text(uncommitted_raw);
+        let display = display.trim_end_matches('\n');
+        if !display.is_empty() {
+            let mut live_text = render_markdown_text(display);
+            let streaming_marker =
+                Line::from(Span::styled("○ ", Style::default().fg(Color::DarkGray)));
+            if let Some(first) = live_text.lines.first_mut() {
+                let mut spans = Vec::with_capacity(first.spans.len() + 1);
+                spans.push(streaming_marker.spans[0].clone());
+                spans.append(&mut first.spans);
+                first.spans = spans;
+            } else {
+                live_text.lines.push(streaming_marker);
+            }
+            let h = lines_height(&live_text.lines.to_vec(), width);
+            return (live_text.lines, h);
+        }
     }
-    let bound = state.committed_live_len.min(state.live.len());
-    let uncommitted_raw = &state.live[bound..];
-    let display = history_render::sanitize_agent_display_text(uncommitted_raw);
-    let display = display.trim_end_matches('\n');
-    if display.is_empty() {
-        return (Vec::new(), 0);
+
+    // M4:工具输出流式 tail —— agent 文字无未提交内容时,live 区显示
+    // 正在运行工具的输出尾部(bash / web_fetch 长输出逐段上屏,而非
+    // 结束后一次性出现)。最多 10 行,dim 样式,首行带工具名标记。
+    if let Some(tl) = &state.tool_live {
+        let tail = tl.tail.trim_end_matches('\n');
+        if !tail.is_empty() {
+            let owned: Vec<&str> = tail.lines().collect();
+            let skip = owned.len().saturating_sub(10);
+            let dim = Style::default().fg(Color::DarkGray);
+            let mut lines: Vec<Line<'static>> = Vec::with_capacity(owned.len() - skip);
+            for (i, l) in owned.iter().enumerate().skip(skip) {
+                if i == skip {
+                    lines.push(Line::from(Span::styled(
+                        format!("⚒ {} ▷ {}", tl.tool, l),
+                        dim,
+                    )));
+                } else {
+                    lines.push(Line::from(Span::styled((*l).to_string(), dim)));
+                }
+            }
+            let h = lines_height(&lines, width);
+            return (lines, h);
+        }
     }
-    let mut live_text = render_markdown_text(display);
-    let streaming_marker = Line::from(Span::styled("○ ", Style::default().fg(Color::DarkGray)));
-    if let Some(first) = live_text.lines.first_mut() {
-        let mut spans = Vec::with_capacity(first.spans.len() + 1);
-        spans.push(streaming_marker.spans[0].clone());
-        spans.append(&mut first.spans);
-        first.spans = spans;
-    } else {
-        live_text.lines.push(streaming_marker);
-    }
-    let h = lines_height(&live_text.lines.to_vec(), width);
-    (live_text.lines, h)
+
+    (Vec::new(), 0)
 }
 
 /// 按 `width` 折行估算一组行占用的屏幕行数（与 `live_region_height` 同口径）。
@@ -2914,8 +3294,7 @@ fn render_centered_overlays(frame: &mut Frame<'_>, state: &mut UiState, area: Re
         crate::picker::theme_picker::draw(frame, state, area);
     }
     // v1.x Tier 5: checkpoint overlay 居中覆盖层。
-    if state.checkpoint_overlay.is_some() {
-        let overlay = state.checkpoint_overlay.as_ref().unwrap();
+    if let Some(overlay) = state.checkpoint_overlay.as_ref() {
         crate::picker::checkpoint_overlay::draw(overlay, frame, area);
     }
     // checkpoint rewind 确认 modal(红色警告,优先级最高)。
@@ -2957,7 +3336,11 @@ fn draw_fullscreen(
 
     let composer_h = state.composer.desired_height(width);
     // 两种审批条高度：approval_block 带边框需 5 行，plan_approval_prompt 无边框 3 行。
-    let approval_h: u16 = if state.pending_approval.is_some() { 5 } else { 0 };
+    let approval_h: u16 = if state.pending_approval.is_some() {
+        5
+    } else {
+        0
+    };
     let plan_approval_h: u16 = if state.plan_approval.is_some() { 3 } else { 0 };
     let status_h: u16 = history_render::statusline::hud_height(screen_height);
 
@@ -3055,12 +3438,10 @@ fn plan_enter_request_block(
             .add_modifier(Modifier::BOLD),
     ));
 
-    let intro = Line::from(vec![
-        Span::styled(
-            "The agent wants to plan before making any code changes.",
-            Style::default().fg(Color::White),
-        ),
-    ]);
+    let intro = Line::from(vec![Span::styled(
+        "The agent wants to plan before making any code changes.",
+        Style::default().fg(Color::White),
+    )]);
     let task_line = Line::from(vec![
         Span::styled(" Task: ", Style::default().fg(Color::DarkGray)),
         Span::styled(
@@ -3071,11 +3452,10 @@ fn plan_enter_request_block(
         ),
     ]);
 
-    let mut rules = Vec::new();
-    rules.push(Line::from(Span::styled(
+    let mut rules = vec![Line::from(Span::styled(
         "In Plan mode the agent can:",
         Style::default().fg(Color::DarkGray),
-    )));
+    ))];
     rules.push(Line::from(vec![
         Span::styled("  - ", Style::default().fg(Color::Green)),
         Span::styled(
@@ -3120,10 +3500,7 @@ fn plan_enter_request_block(
         ),
     ]);
     let cancel = Line::from(vec![
-        Span::styled(
-            " [3] / [Esc] Cancel ",
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled(" [3] / [Esc] Cancel ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             "(stay in current mode, no plan)",
             Style::default().fg(Color::DarkGray),
@@ -3134,7 +3511,14 @@ fn plan_enter_request_block(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow));
 
-    let mut all = vec![title, Line::from(""), intro, Line::from(""), task_line, Line::from("")];
+    let mut all = vec![
+        title,
+        Line::from(""),
+        intro,
+        Line::from(""),
+        task_line,
+        Line::from(""),
+    ];
     all.extend(rules);
     all.push(Line::from(""));
     all.push(enter);
@@ -3172,7 +3556,7 @@ mod draw_tests {
     use super::*;
     use crate::tui_core::custom_terminal::Terminal as ReflectTerminal;
     use crate::tui_core::test_backend::VT100Backend;
-    use crate::viewport::{clear_for_viewport_change, prepare_bottom_viewport};
+    use crate::viewport::prepare_bottom_viewport;
     use reflect_protocol::EventMsg;
 
     #[test]
@@ -3313,9 +3697,9 @@ mod draw_tests {
         state
             .history
             .push(adapter::UiHistoryItem::User("hello".into()));
-        state.history.push(adapter::UiHistoryItem::Agent(
-            "hi there 你好".into(),
-        ));
+        state
+            .history
+            .push(adapter::UiHistoryItem::Agent("hi there 你好".into()));
         terminal
             .draw(|frame| draw_fullscreen(frame, &mut state, frame.area().height, &[], 0))
             .unwrap();
@@ -4338,18 +4722,9 @@ mod draw_tests {
         let text = terminal.backend().vt100().screen().contents();
         assert!(text.contains("Enter Plan Mode"), "标题应可见: {text}");
         assert!(text.contains("add login flow"), "task 摘要: {text}");
-        assert!(
-            text.contains("read / grep / glob"),
-            "规则说明: {text}"
-        );
-        assert!(
-            text.contains("[1] Enter plan mode"),
-            "进入键位提示: {text}"
-        );
-        assert!(
-            text.contains("[3] / [Esc] Cancel"),
-            "取消键位提示: {text}"
-        );
+        assert!(text.contains("read / grep / glob"), "规则说明: {text}");
+        assert!(text.contains("[1] Enter plan mode"), "进入键位提示: {text}");
+        assert!(text.contains("[3] / [Esc] Cancel"), "取消键位提示: {text}");
     }
 
     #[test]

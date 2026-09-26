@@ -346,7 +346,7 @@ pub enum SubAgentActivityKind {
     Interrupted,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum WebSearchAction {
     Search {
         query: Option<String>,
@@ -359,13 +359,8 @@ pub enum WebSearchAction {
         url: Option<String>,
         pattern: Option<String>,
     },
+    #[default]
     Other,
-}
-
-impl Default for WebSearchAction {
-    fn default() -> Self {
-        WebSearchAction::Other
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

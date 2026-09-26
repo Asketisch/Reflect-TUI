@@ -9,6 +9,20 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use std::io::Write;
 
+/// v1.4 子代理状态快照的 TUI 本地投影(UiEventKind 要求 PartialEq,
+/// protocol 的 `SubagentStatusSnapshot` 未实现,故不直接携带)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubagentView {
+    /// 子代理 id(`CallSubAgentTool` spawn 时的 child_id)。
+    pub id: String,
+    pub role: String,
+    /// true = Running;false = 终态(Completed / Failed / Cancelled)。
+    pub running: bool,
+    pub current_tool: Option<String>,
+    pub iteration: u32,
+    pub total_tokens: u64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiEventKind {
     /// 回合开始。携带 `turn_id`,供 fork overlay 建立 user prompt → turn 映射。
@@ -72,6 +86,18 @@ pub enum UiEventKind {
         to: reflect_protocol::PermissionMode,
     },
     Notice(String),
+    /// v1.4 子代理可观测(查询通道):引擎子代理状态中心的快照投影,
+    /// 用于 /tasks 面板 agents 列表的实时刷新(upsert by child_id)。
+    /// (本地投影 struct 而非 protocol 类型:UiEventKind 要求 PartialEq。)
+    SubagentStatusUpdate {
+        children: Vec<SubagentView>,
+    },
+    /// M4:v1.4 工具输出流式增量(单工具的进行中输出)。live 区渲染 tail,
+    /// 完整输出仍由 ToolCompleted 落 scrollback,二者互补不重复。
+    ToolOutputDelta {
+        call_id: String,
+        delta: String,
+    },
     /// 工具/Hook 审批请求。`kind` 保留原始 `ApprovalKind`，
     /// 回执时据此选 `Op::ToolApproval` / `Op::HookApproval`。
     ApprovalNeeded {
@@ -217,6 +243,8 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             state.had_tool_this_turn = false;
             state.seen_tool_calls.clear();
             state.segment_start = 0;
+            // M4:新回合开始,清掉上回合残留的工具输出流。
+            state.tool_live = None;
             // 新回合开始，清除上回合残留的审批 banner，避免跨回合 stale state。
             state.pending_approval = None;
             // v1.x fork 接线:记录本回合 turn_id。user prompt 在 emit_op 前
@@ -306,6 +334,14 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             diff,
         } => {
             state.had_tool_this_turn = true;
+            // M4:该工具的 live 输出流收尾(完整输出由本条 ToolCompleted 落 scrollback)。
+            if state
+                .tool_live
+                .as_ref()
+                .is_some_and(|t| t.call_id == call_id)
+            {
+                state.tool_live = None;
+            }
             // 优先用 begin 记下的 tool_name；取不到就退化为 call_id。
             let name = state
                 .tool_names
@@ -319,6 +355,35 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
                 elapsed_ms,
                 diff,
             });
+        }
+        UiEventKind::ToolOutputDelta { call_id, delta } => {
+            // M4:v1.4 工具输出流式增量 —— live 区 tail 渲染。工具名取
+            // begin 记录的映射(取不到退化 call_id);tail 截到 ~4KiB。
+            if !delta.is_empty()
+                && let Some(tl) = state.tool_live.as_mut()
+                && tl.call_id == call_id
+            {
+                tl.tail.push_str(&delta);
+                let overflow = tl.tail.len().saturating_sub(4096);
+                if overflow > 0 {
+                    // 按字符边界截掉头部(尾部才是当前输出)。
+                    let boundary = (overflow..tl.tail.len())
+                        .find(|i| tl.tail.is_char_boundary(*i))
+                        .unwrap_or(tl.tail.len());
+                    tl.tail.replace_range(..boundary, "");
+                }
+            } else if !delta.is_empty() {
+                let tool = state
+                    .tool_names
+                    .get(&call_id)
+                    .cloned()
+                    .unwrap_or_else(|| call_id.clone());
+                state.tool_live = Some(crate::events::ToolLiveStream {
+                    call_id,
+                    tool,
+                    tail: delta,
+                });
+            }
         }
         UiEventKind::Error(text) => state.history.push(UiHistoryItem::Error(text)),
         UiEventKind::PlanReady {
@@ -337,23 +402,17 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
                 .trim()
                 .to_string();
             state.plan_approval = Some(crate::events::PlanApprovalState::new(
-                plan_id,
-                task,
-                markdown,
-                path,
+                plan_id, task, markdown, path,
             ));
         }
         UiEventKind::PlanRequest { plan_id, task } => {
             // 进入 plan 模式的确认条:记录 task 供 PlanReady 摘要复用,
             // 并打开 plan_enter_request 让用户 1/3/Esc 确认。同时给一条
             // notice 让 scrollback 也有记录(overlay 关闭后仍可回看)。
-            state.history.push(UiHistoryItem::Notice(format!(
-                "Plan request: {task}"
-            )));
-            state.plan_enter_request = Some(crate::events::PlanEnterRequestState {
-                plan_id,
-                task,
-            });
+            state
+                .history
+                .push(UiHistoryItem::Notice(format!("Plan request: {task}")));
+            state.plan_enter_request = Some(crate::events::PlanEnterRequestState { plan_id, task });
         }
         UiEventKind::PlanApproved { plan_id: _ } => {
             state.plan_approval = None;
@@ -377,7 +436,11 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
         // **不**触发 approval modal。多次事件即多次覆盖式刷新。
         // 复用 UiHistoryItem::Plan 让 ProposedPlanCell 渲染(与 PlanReady 一致),
         // 但通过 Notice 前缀标识"草稿"以区分最终审批版。
-        UiEventKind::PlanDraftUpdated { markdown, path: _, draft_id: _ } => {
+        UiEventKind::PlanDraftUpdated {
+            markdown,
+            path: _,
+            draft_id: _,
+        } => {
             // 实时草稿预览:每次写盘就地更新最近一条 Plan,避免堆积重复条目。
             upsert_plan_history(state, markdown);
         }
@@ -454,6 +517,37 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             for a in state.agents.iter_mut() {
                 if a.id.starts_with(&format!("{id}::")) {
                     a.status = crate::events::AgentStatus::Done;
+                }
+            }
+        }
+        UiEventKind::SubagentStatusUpdate { children } => {
+            // v1.4 查询通道:按 child_id upsert /tasks 的 agents 列表。
+            // label 汇总 role / 在跑工具 / 迭代数 / token,终态标 Done。
+            for c in &children {
+                let status = if c.running {
+                    crate::events::AgentStatus::Running
+                } else {
+                    crate::events::AgentStatus::Done
+                };
+                let label = match &c.current_tool {
+                    Some(tool) => format!(
+                        "{} · {tool} · {} iters · {} tok",
+                        c.role, c.iteration, c.total_tokens
+                    ),
+                    None => format!(
+                        "{} · {} iters · {} tok",
+                        c.role, c.iteration, c.total_tokens
+                    ),
+                };
+                if let Some(a) = state.agents.iter_mut().find(|a| a.id == c.id) {
+                    a.status = status;
+                    a.label = label;
+                } else {
+                    state.agents.push(crate::events::AgentEntry {
+                        id: c.id.clone(),
+                        status,
+                        label,
+                    });
                 }
             }
         }
@@ -693,10 +787,7 @@ pub fn plan_approval_prompt(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("/ ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            " [3]/[Esc] Revise ",
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled(" [3]/[Esc] Revise ", Style::default().fg(Color::DarkGray)),
     ]);
 
     Paragraph::new(vec![title, source_line, hint])
@@ -779,10 +870,10 @@ mod tests {
 
         // 累积期间 history 不应有任何 Thinking/StreamedThinking
         assert!(
-            state
-                .history
-                .iter()
-                .all(|h| !matches!(h, UiHistoryItem::Thinking(_) | UiHistoryItem::StreamedThinking(_))),
+            state.history.iter().all(|h| !matches!(
+                h,
+                UiHistoryItem::Thinking(_) | UiHistoryItem::StreamedThinking(_)
+            )),
             "累积期间不应 push thinking cell"
         );
         assert_eq!(state.live_thinking, "The user wants");
@@ -818,10 +909,7 @@ mod tests {
         );
 
         // history 应有一条 StreamedThinking("ab")
-        assert_eq!(
-            streamed_thinking_segments(&state),
-            vec!["ab".to_string()]
-        );
+        assert_eq!(streamed_thinking_segments(&state), vec!["ab".to_string()]);
         // agent delta 已累积到 live
         assert_eq!(state.live, "x");
         // thinking buffer 已清空
@@ -868,7 +956,10 @@ mod tests {
             "show_thinking=false 时不应 push StreamedThinking"
         );
         // 返回空行（flush_thinking 返回空 Vec）
-        assert!(lines.is_empty(), "show_thinking=false 时不应返回 thinking 行");
+        assert!(
+            lines.is_empty(),
+            "show_thinking=false 时不应返回 thinking 行"
+        );
         // buffer 仍清空（即使不渲染也清空，避免下一段混入）
         assert!(state.live_thinking.is_empty());
     }

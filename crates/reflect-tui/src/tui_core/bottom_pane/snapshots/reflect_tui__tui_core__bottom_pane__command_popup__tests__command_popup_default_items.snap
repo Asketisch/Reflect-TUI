@@ -19,6 +19,7 @@ expression: commands
 /archive - archive this session and exit
 /delete - permanently delete this session and exit
 /resume - resume a saved chat
+/rewind - drop the last turn from the conversation (.bak backup kept)
 /fork - fork the current chat
 /app - continue this session in the Desktop app
 /init - create an AGENTS.md file with instructions for Reflect
@@ -48,6 +49,7 @@ expression: commands
 /help - show available commands and shortcuts
 /mode - cycle or set permission mode (auto/plan/prompt)
 /cost - show token usage and cost summary
+/rewind - pick a past prompt and rewind the conversation to it
 /tasks - open the task list panel
 /effort - set reasoning effort (low/medium/high)
 /exit-plan - exit plan mode

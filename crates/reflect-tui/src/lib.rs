@@ -1,5 +1,16 @@
 #![allow(clippy::collapsible_if)]
 #![allow(dead_code)]
+// 宽松头(沿用 Reflect-Agent 工作区惯例):以下 lint 命中的是仓库既有代码
+// 风格,批量改写收益低、风险高(rust 1.98 clippy 新增/收紧后全量暴露),
+// 统一在此豁免;新代码仍以 `cargo clippy -D warnings` 全绿为门槛。
+#![allow(
+    clippy::field_reassign_with_default,
+    clippy::result_large_err,
+    clippy::doc_lazy_continuation,
+    clippy::empty_line_after_doc_comments,
+    clippy::unnecessary_fallible_conversions,
+    clippy::too_many_arguments
+)]
 //! Reflect-TUI —— Reflect Agent 的终端交互界面(ratatui)。
 //!
 //! 架构:核心引擎(reflect-core / AgentThread 等)由 reflect-agent submodule 提供,
@@ -11,6 +22,7 @@
 
 mod adapter;
 mod bootstrap;
+mod bootstrap_wiring;
 mod events;
 mod history_render;
 mod keymap;
@@ -108,6 +120,10 @@ pub struct TuiArgs {
 pub fn run(args: TuiArgs) -> anyhow::Result<()> {
     bootstrap::run(args)
 }
+
+// 被 vendored 的 `tui_core::terminal_detection` 以原名 `terminal_detection` 重新导出,
+// 供使用未限定 crate 名的 vendored 代码使用。
+pub use crate::tui_core::terminal_detection;
 
 #[cfg(test)]
 mod tests {
@@ -338,7 +354,3 @@ mod tests {
         assert!(h1 >= h0, "Height should grow: {} -> {}", h0, h1);
     }
 }
-
-// 被 vendored 的 `tui_core::terminal_detection` 以原名 `terminal_detection` 重新导出,
-// 供使用未限定 crate 名的 vendored 代码使用。
-pub use crate::tui_core::terminal_detection;

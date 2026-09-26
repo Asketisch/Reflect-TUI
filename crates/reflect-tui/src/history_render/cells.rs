@@ -201,7 +201,7 @@ mod tests {
     fn tool_call_ok_header_green_with_elapsed() {
         let cell = tool_call_cell("Bash", "done", false, 42);
         let lines = cell.display_lines(60);
-        let rendered = format!("{}", line_to_plain(&lines[0]));
+        let rendered = line_to_plain(&lines[0]).to_string();
         assert!(rendered.contains("✓ Bash"), "ok header: {rendered}");
         assert!(rendered.contains("(42ms)"), "elapsed: {rendered}");
     }

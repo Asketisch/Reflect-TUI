@@ -59,8 +59,7 @@ pub(crate) fn new_patch_apply_failure(stderr: String) -> PlainHistoryCell {
 pub(crate) fn new_view_image_tool_call(path: LegacyAppPathString, cwd: &Path) -> PlainHistoryCell {
     let display_path = path
         .to_inferred_path_uri()
-        .and_then(|path| path.to_abs_path().ok())
-        .map(|path| display_path_for(path.as_path(), cwd))
+        .map(|path| display_path_for(path.to_abs_path().as_path(), cwd))
         .unwrap_or_else(|| path.into_string());
 
     let lines: Vec<Line<'static>> = vec![

@@ -204,10 +204,10 @@ impl ChatWidget {
         self.set_status_line_hyperlink(hyperlink_url);
     }
 
-/// 清除 Reflect 最近写入的终端标题（如果有）。
-///
-/// 该方法不会尝试恢复 shell 或终端此前的标题；它只清除受管理的标题，
-/// 并在 OSC 写入成功后更新缓存。
+    /// 清除 Reflect 最近写入的终端标题（如果有）。
+    ///
+    /// 该方法不会尝试恢复 shell 或终端此前的标题；它只清除受管理的标题，
+    /// 并在 OSC 写入成功后更新缓存。
     pub(crate) fn clear_managed_terminal_title(&mut self) -> std::io::Result<()> {
         if self.last_terminal_title.is_some() {
             clear_terminal_title()?;
@@ -217,12 +217,12 @@ impl ChatWidget {
         Ok(())
     }
 
-/// 针对一份已解析的选择快照，渲染并应用终端标题。
-///
-/// 空选择会清除受管理的标题。非空选择按配置顺序渲染当前值，
-/// 跳过不可用的段，并缓存最后一次成功写入的标题，以避免冗余的 OSC 写入。
-/// 当处于动画运行状态且包含 `activity` 项目时，还会调度下一帧，
-/// 使标题动画持续推进。
+    /// 针对一份已解析的选择快照，渲染并应用终端标题。
+    ///
+    /// 空选择会清除受管理的标题。非空选择按配置顺序渲染当前值，
+    /// 跳过不可用的段，并缓存最后一次成功写入的标题，以避免冗余的 OSC 写入。
+    /// 当处于动画运行状态且包含 `activity` 项目时，还会调度下一帧，
+    /// 使标题动画持续推进。
     fn refresh_terminal_title_from_selections(&mut self, selections: &StatusSurfaceSelections) {
         self.last_terminal_title_requires_action =
             self.terminal_title_shows_action_required_with_selections(selections);
@@ -268,11 +268,11 @@ impl ChatWidget {
         }
     }
 
-/// 基于一份共享的配置快照，重新计算两个状态面。
-///
-/// 这是底部状态栏与终端标题共用的刷新入口。它一次性解析两个配置，
-/// 一次性发出无效项目警告，同步共享的缓存状态（例如 git 分支查询），
-/// 然后基于该共享快照渲染每个状态面。
+    /// 基于一份共享的配置快照，重新计算两个状态面。
+    ///
+    /// 这是底部状态栏与终端标题共用的刷新入口。它一次性解析两个配置，
+    /// 一次性发出无效项目警告，同步共享的缓存状态（例如 git 分支查询），
+    /// 然后基于该共享快照渲染每个状态面。
     pub(crate) fn refresh_status_surfaces(&mut self) {
         let selections = self.status_surface_selections();
         self.warn_invalid_status_line_items_once(&selections.invalid_status_line_items);
@@ -396,9 +396,9 @@ impl ChatWidget {
         self.request_status_line_git_summary(cwd);
     }
 
-/// 将配置的状态栏 id 解析为已知项目，并收集未知 id。
-///
-/// 未知 id 会按插入顺序去重，用于生成警告消息。
+    /// 将配置的状态栏 id 解析为已知项目，并收集未知 id。
+    ///
+    /// 未知 id 会按插入顺序去重，用于生成警告消息。
     fn status_line_items_with_invalids(&self) -> (Vec<StatusLineItem>, Vec<String>) {
         parse_items_with_invalids(self.configured_status_line_items())
     }
@@ -412,9 +412,9 @@ impl ChatWidget {
         })
     }
 
-/// 将配置的终端标题 id 解析为已知项目，并收集未知 id。
-///
-/// 未知 id 会按插入顺序去重，用于生成警告消息。
+    /// 将配置的终端标题 id 解析为已知项目，并收集未知 id。
+    ///
+    /// 未知 id 会按插入顺序去重，用于生成警告消息。
     fn terminal_title_items_with_invalids(&self) -> (Vec<TerminalTitleItem>, Vec<String>) {
         parse_items_with_invalids(self.configured_terminal_title_items())
     }
@@ -435,10 +435,10 @@ impl ChatWidget {
             .unwrap_or(self.config.cwd.as_path())
     }
 
-/// 解析与 `cwd` 关联的项目根目录。
-///
-/// 可用时优先采用 Git 仓库根目录。否则回退到最近的
-/// 项目配置层，以便非 git 项目仍能呈现稳定的项目标签。
+    /// 解析与 `cwd` 关联的项目根目录。
+    ///
+    /// 可用时优先采用 Git 仓库根目录。否则回退到最近的
+    /// 项目配置层，以便非 git 项目仍能呈现稳定的项目标签。
     fn status_line_project_root_for_cwd(&self, cwd: &Path) -> Option<PathBuf> {
         if let Some(repo_root) = get_git_repo_root(cwd) {
             return Some(repo_root);
@@ -484,10 +484,10 @@ impl ChatWidget {
         root_name
     }
 
-/// 生成终端标题的 `project` 值。
-///
-/// 优先使用已缓存的「项目根目录名称」；当无法推断出项目根目录时，
-/// 回退到当前目录名称。
+    /// 生成终端标题的 `project` 值。
+    ///
+    /// 优先使用已缓存的「项目根目录名称」；当无法推断出项目根目录时，
+    /// 回退到当前目录名称。
     fn terminal_title_project_name(&mut self) -> Option<String> {
         let project = self.status_line_project_root_name().or_else(|| {
             let cwd = self.status_line_cwd();
@@ -502,10 +502,10 @@ impl ChatWidget {
         ))
     }
 
-/// 当状态栏的 cwd 发生变化时，重置 git 分支缓存状态。
-///
-/// 分支缓存以 cwd 为键，因为分支查询是相对于该路径执行的。
-/// 在 cwd 变化后保留过期的分支值，会暴露错误的仓库上下文。
+    /// 当状态栏的 cwd 发生变化时，重置 git 分支缓存状态。
+    ///
+    /// 分支缓存以 cwd 为键，因为分支查询是相对于该路径执行的。
+    /// 在 cwd 变化后保留过期的分支值，会暴露错误的仓库上下文。
     fn sync_status_line_branch_state(&mut self, cwd: &Path) {
         if self
             .status_line_branch_cwd
@@ -530,10 +530,10 @@ impl ChatWidget {
         self.status_line_git_summary_lookup_complete = false;
     }
 
-/// 启动一次异步 git 分支查询；若已有查询正在进行则跳过。
-///
-/// 产生的 `StatusLineBranchUpdated` 事件携带查询所用的 cwd，
-/// 以便调用方在目录变化后能够拒绝过期的完成结果。
+    /// 启动一次异步 git 分支查询；若已有查询正在进行则跳过。
+    ///
+    /// 产生的 `StatusLineBranchUpdated` 事件携带查询所用的 cwd，
+    /// 以便调用方在目录变化后能够拒绝过期的完成结果。
     fn request_status_line_branch(&mut self, cwd: PathBuf) {
         if self.status_line_branch_pending {
             return;
@@ -650,11 +650,11 @@ impl ChatWidget {
         true
     }
 
-/// 为某个已配置的状态栏项目解析显示字符串。
-///
-/// 返回 `None` 表示「暂时省略该项目」而非「配置错误」。调用方依赖
-/// 这一行为，在等待会话、令牌或 git 元数据期间，保持部分可用的
-/// 状态栏可读。
+    /// 为某个已配置的状态栏项目解析显示字符串。
+    ///
+    /// 返回 `None` 表示「暂时省略该项目」而非「配置错误」。调用方依赖
+    /// 这一行为，在等待会话、令牌或 git 元数据期间，保持部分可用的
+    /// 状态栏可读。
     pub(super) fn status_line_value_for_item(&mut self, item: StatusLineItem) -> Option<String> {
         match item {
             StatusLineItem::ModelName => Some(self.model_display_name().to_string()),
@@ -798,10 +798,10 @@ impl ChatWidget {
         };
         self.status_line_value_for_item(status_line_item)
     }
-/// 将某个已配置的终端标题项目解析为可显示的段。
-///
-/// 返回 `None` 表示「暂时省略该段」，这样调用方可以在隐藏尚不可用的
-/// 值的同时，保持配置的顺序不变。
+    /// 将某个已配置的终端标题项目解析为可显示的段。
+    ///
+    /// 返回 `None` 表示「暂时省略该段」，这样调用方可以在隐藏尚不可用的
+    /// 值的同时，保持配置的顺序不变。
     pub(super) fn terminal_title_value_for_item(
         &mut self,
         item: TerminalTitleItem,
@@ -889,10 +889,10 @@ impl ChatWidget {
         format!("{} {label}{service_tier_label}", self.model_display_name())
     }
 
-/// 计算基于文字的状态项目所使用的紧凑运行时状态标签。
-///
-/// 启动状态优先于普通任务状态；无论最后一次活跃的状态桶是什么，
-/// 空闲状态都渲染为 `Ready`。
+    /// 计算基于文字的状态项目所使用的紧凑运行时状态标签。
+    ///
+    /// 启动状态优先于普通任务状态；无论最后一次活跃的状态桶是什么，
+    /// 空闲状态都渲染为 `Ready`。
     pub(super) fn run_state_status_text(&self) -> String {
         if self.mcp_startup_status.is_some() {
             return "Starting".to_string();

@@ -166,6 +166,30 @@ pub struct UiState {
     /// `/clear` 二次确认标志:输入 `/clear` 后显示确认提示,
     /// 按 `y` 确认清除,按 `n` 取消。
     pub pending_clear_confirm: bool,
+    /// M2 `/archive` 二次确认:y = 归档当前会话(`[archived] ` 前缀重命名,
+    /// 可逆)并退出;n / Esc = 取消。
+    pub pending_archive_confirm: bool,
+    /// M2 `/delete` 二次确认:y = 删除当前会话全部落盘文件(JSONL + 轮转
+    /// 副本 + 名字文件,不可逆)并退出;n / Esc = 取消。
+    pub pending_delete_confirm: bool,
+    /// M2:确认后置位,主循环退出时执行归档(recorder 已停写,文件可安全改名)。
+    pub archive_session_on_exit: bool,
+    /// M2:确认后置位,主循环退出时执行删除(同上,退出后动手避免写竞争)。
+    pub delete_session_on_exit: bool,
+    /// M3:`/model` 切换前的可用性校验(run_async 启动期注入)。
+    pub model_registry: Option<std::sync::Arc<reflect_llm::ModelRegistry>>,
+    /// M3:启动期完整 config(`/model <name>` 缺 provider 时按 active 拼接)。
+    pub reflect_config: Option<reflect_config::ReflectConfig>,
+    /// M3:文件权限存储(审批选 always-allow 时写 Allow 规则,跨重启生效)。
+    pub persistent_permissions: Option<std::sync::Arc<dyn reflect_permissions::PermissionStore>>,
+    /// 插件运行时句柄(run_async 启动期注入)。SubmitAsUser / /loop 提交
+    /// 前用它展开 `/plugin:ns:name` 形式的插件 slash 命令;未装插件时为
+    /// 空句柄(展开恒未命中,行为等同直通)。
+    pub plugin_runtime: reflect_plugin::runtime::SharedPluginRuntime,
+    /// M4:正在运行的工具的输出流(v1.4 `ToolCallOutputDelta`)。live 区
+    /// 实时显示其 tail;`ToolCompleted` / 新回合时清空(完整输出走既有
+    /// ToolCompleted 落 scrollback 路径)。
+    pub tool_live: Option<ToolLiveStream>,
     /// 从 SessionConfigured 获取的模型名,显示在状态栏。
     /// `None` 时 fallback 到环境变量(REFLECT_MODEL_DISPLAY / OPENAI_MODEL / ANTHROPIC_MODEL)。
     pub status_model: Option<String>,
@@ -254,6 +278,16 @@ pub struct UiState {
     pub(crate) plan_enter_request: Option<PlanEnterRequestState>,
 }
 
+/// M4:正在运行的工具的输出流状态(v1.4 `ToolCallOutputDelta` 增量渲染)。
+/// `tail` 只保留最近 ~4KiB —— live 区只显示尾部若干行,完整输出仍由
+/// `ToolCompleted` 一次性落 scrollback。
+#[derive(Debug, Clone)]
+pub struct ToolLiveStream {
+    pub call_id: String,
+    pub tool: String,
+    pub tail: String,
+}
+
 /// v1.x Tier 4.5:一条 session 记录（用于 `/resume` / `/fork` 等 overlay 列表）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionEntry {
@@ -305,20 +339,11 @@ pub struct ImageFileEntry {
 }
 
 /// v1.x Tier 4.5:`/keymap` picker 状态。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct KeymapPickerState {
     /// 当前快捷键(action) → 绑定键 的可读摘要。
     pub bindings: Vec<KeymapBinding>,
     pub selected: usize,
-}
-
-impl Default for KeymapPickerState {
-    fn default() -> Self {
-        Self {
-            bindings: Vec::new(),
-            selected: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -524,6 +549,15 @@ impl Default for UiState {
             tasks_overlay: None,
             vim_enabled: false,
             pending_clear_confirm: false,
+            pending_archive_confirm: false,
+            pending_delete_confirm: false,
+            archive_session_on_exit: false,
+            delete_session_on_exit: false,
+            model_registry: None,
+            reflect_config: None,
+            persistent_permissions: None,
+            plugin_runtime: reflect_plugin::runtime::empty_plugin_runtime(),
+            tool_live: None,
             status_model: None,
             permission_mode: reflect_protocol::PermissionMode::default(),
             plan_approval: None,

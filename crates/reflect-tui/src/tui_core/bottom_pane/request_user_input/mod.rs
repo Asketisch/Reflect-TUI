@@ -43,14 +43,10 @@ use crate::tui_core::keymap::RuntimeKeymap;
 use crate::tui_core::render::renderable::Renderable;
 
 use crate::app_server_protocol::ToolRequestUserInputAnswer;
-#[cfg(test)]
-use crate::app_server_protocol::ToolRequestUserInputOption;
 use crate::app_server_protocol::ToolRequestUserInputParams;
 use crate::app_server_protocol::ToolRequestUserInputQuestion;
 use crate::app_server_protocol::ToolRequestUserInputResponse;
 use crate::protocol_compat::user_input::TextElement;
-#[cfg(test)]
-use crate::tui_core::app_command::AppCommand as Op;
 use unicode_width::UnicodeWidthStr;
 
 const NOTES_PLACEHOLDER: &str = "Add notes";

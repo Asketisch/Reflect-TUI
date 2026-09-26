@@ -44,11 +44,8 @@ pub(crate) fn compose_agents_summary(config: &Config, paths: &[PathUri]) -> Stri
             rels.push(path.inferred_native_path_string());
             continue;
         }
-        let Ok(p) = path.to_abs_path() else {
-            rels.push(path.inferred_native_path_string());
-            continue;
-        };
-        let p = p.as_path();
+        let abs = path.to_abs_path();
+        let p = abs.as_path();
         let file_name = p
             .file_name()
             .map(|name| name.to_string_lossy().to_string())

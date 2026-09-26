@@ -10,7 +10,7 @@ pub(super) fn exec_approval_request_from_params(
     // 支持外部路径，就保持其为 PathUri。
     let cwd = params
         .cwd
-        .and_then(|cwd| Some(cwd.to_inferred_abs_path()))
+        .map(|cwd| cwd.to_inferred_abs_path())
         .unwrap_or_else(|| fallback_cwd.clone());
     ExecApprovalRequestEvent {
         call_id: params.item_id,
@@ -53,9 +53,10 @@ pub(super) fn request_permissions_from_params(
         environment_id: params.environment_id,
         started_at_ms: params.started_at_ms,
         reason: params.reason,
-        permissions: params.permissions.try_into().map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::Other, "permission conversion failed")
-        })?,
+        permissions: params
+            .permissions
+            .try_into()
+            .map_err(|_| std::io::Error::other("permission conversion failed"))?,
         cwd: Some(params.cwd.display().to_string()),
     })
 }
@@ -129,10 +130,7 @@ pub(super) fn extract_first_bold(s: &str) -> Option<String> {
 /// 该匹配是穷尽的，因此新增 `TerminalName` 变体将强制
 /// 明确决定该终端应使用哪个绑定。
 pub(super) fn queued_message_edit_binding_for_terminal(terminal_info: TerminalInfo) -> KeyBinding {
-    if matches!(
-        terminal_info.multiplexer.as_ref(),
-        Some(Multiplexer::Tmux { .. })
-    ) {
+    if matches!(terminal_info.multiplexer.as_ref(), Some(Multiplexer::Tmux)) {
         return key_hint::shift(KeyCode::Left);
     }
 

@@ -322,7 +322,7 @@ fn find_session_file(
                 }
             } else if ft.is_file() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with(&needle) {
+                if name.starts_with(needle) {
                     if name == needle {
                         *found = Some(path);
                         return;
@@ -486,8 +486,7 @@ mod tests {
         let base = tmp.path();
         let tid = ThreadId::new();
         let path = write_session(base, tid, chrono::Utc::now());
-        let (resolved_tid, resolved_path) =
-            resolve_session_path(base, &tid.to_string()).unwrap();
+        let (resolved_tid, resolved_path) = resolve_session_path(base, &tid.to_string()).unwrap();
         assert_eq!(resolved_tid, tid);
         assert_eq!(resolved_path, path);
     }
@@ -510,13 +509,9 @@ mod tests {
         let base = tmp.path();
         let parent = ThreadId::new();
         let parent_path = write_session(base, parent, chrono::Utc::now());
-        let parent_lines = fs::read_to_string(&parent_path)
-            .unwrap()
-            .lines()
-            .count();
+        let parent_lines = fs::read_to_string(&parent_path).unwrap().lines().count();
 
-        let child =
-            fork_with_history(base, parent, "test-fork", None).expect("fork_with_history");
+        let child = fork_with_history(base, parent, "test-fork", None).expect("fork_with_history");
 
         // 子文件首行 SessionMeta 的 session_id 应为 child。
         let child_path = find_session_file(base, child).unwrap().unwrap();
@@ -529,7 +524,10 @@ mod tests {
         );
         // 子文件 record 数应 ≥ 父文件(原样复制 + 末尾 Fork marker)。
         let child_lines = child_content.lines().count();
-        assert!(child_lines >= parent_lines, "child {child_lines} should preserve parent {parent_lines} records");
+        assert!(
+            child_lines >= parent_lines,
+            "child {child_lines} should preserve parent {parent_lines} records"
+        );
     }
 
     #[test]
@@ -544,7 +542,10 @@ mod tests {
         let _child = fork_with_history(base, parent, "marker-test", None).unwrap();
 
         let after = fs::read_to_string(&parent_path).unwrap();
-        assert!(after.lines().count() > before_lines, "parent should gain a Fork marker");
+        assert!(
+            after.lines().count() > before_lines,
+            "parent should gain a Fork marker"
+        );
         // 末行应为 Fork record。
         let last: RolloutRecord = serde_json::from_str(after.lines().last().unwrap()).unwrap();
         assert!(
@@ -579,7 +580,10 @@ mod tests {
             .collect();
         let md = to_markdown(&records);
         // to_markdown 应包含 user 消息文本。
-        assert!(md.contains("hello fork"), "export markdown should contain message text");
+        assert!(
+            md.contains("hello fork"),
+            "export markdown should contain message text"
+        );
         assert!(!md.is_empty());
     }
 

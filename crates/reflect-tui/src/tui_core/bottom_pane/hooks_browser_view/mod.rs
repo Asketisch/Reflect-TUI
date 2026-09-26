@@ -102,7 +102,7 @@ impl HooksBrowserView {
     fn event_rows(&self) -> Vec<EventRow> {
         HookEventName::iter()
             .map(|event_name| {
-                let event_name: HookEventName = event_name.into();
+                let event_name: HookEventName = event_name;
                 let installed = self
                     .entry
                     .hooks
@@ -142,7 +142,6 @@ impl HooksBrowserView {
         self.state
             .selected_idx
             .and_then(|idx| HookEventName::iter().nth(idx))
-            .map(Into::into)
     }
 
     fn selected_hook_index(&self, event_name: HookEventName) -> Option<usize> {
@@ -285,8 +284,7 @@ impl HooksBrowserView {
         self.state = ScrollState::new();
         self.state.selected_idx = selected_event_name
             .and_then(|event_name| {
-                HookEventName::iter()
-                    .position(|candidate| HookEventName::from(candidate) == event_name)
+                HookEventName::iter().position(|candidate| candidate == event_name)
             })
             .or_else(|| (self.page_len() > 0).then_some(0));
     }

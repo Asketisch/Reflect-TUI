@@ -83,17 +83,12 @@ impl std::fmt::Display for SandboxModeRequirement {
 }
 
 /// 应用于云端模型的数据驻留需求。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ResidencyRequirement {
     Us,
     Eu,
+    #[default]
     Off,
-}
-
-impl Default for ResidencyRequirement {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 /// 受管环境允许的网页搜索模式。

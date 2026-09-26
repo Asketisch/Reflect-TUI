@@ -29,8 +29,6 @@ use crate::protocol_compat::ThreadId;
 use crate::protocol_compat::request_permissions::PermissionGrantScope;
 use crate::protocol_compat::request_permissions::RequestPermissionProfile;
 use crate::tui_core::app::app_server_requests::ResolvedAppServerRequest;
-#[cfg(test)]
-use crate::tui_core::app_command::AppCommand as Op;
 use crate::tui_core::app_event::AppEvent;
 use crate::tui_core::app_event_sender::AppEventSender;
 use crate::tui_core::bottom_pane::BottomPaneView;

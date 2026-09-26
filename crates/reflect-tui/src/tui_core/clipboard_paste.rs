@@ -262,7 +262,7 @@ pub fn normalize_pasted_path(pasted: &str) -> Option<PathBuf> {
         return url.to_file_path().ok();
     }
 
-// TODO：后续会视情况逐步完善实现与单元测试。
+    // TODO：后续会视情况逐步完善实现与单元测试。
     // 可能使用 typed-path（参见上游 PR 中的先例）。
     //
     // 检测未加引号的 Windows 路径并绕过 POSIX shlex（后者会
@@ -295,7 +295,7 @@ pub(crate) fn is_probably_wsl() -> bool {
         }
     }
 
-// 降级方案：检查 WSL 环境变量。这能处理一些边缘情况，比如
+    // 降级方案：检查 WSL 环境变量。这能处理一些边缘情况，比如
     // 在 WSL 中安装了自定义 Linux 内核，此时 /proc/version 可能不包含
     // "microsoft" 或 "WSL"。
     std::env::var_os("WSL_DISTRO_NAME").is_some() || std::env::var_os("WSL_INTEROP").is_some()

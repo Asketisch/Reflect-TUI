@@ -220,6 +220,7 @@ use super::prompt_args::parse_slash_name;
 use super::skill_popup::MentionItem;
 use super::skill_popup::SkillPopup;
 use super::slash_commands::BuiltinCommandFlags;
+use super::slash_commands::PluginCommandEntry;
 use super::slash_commands::ServiceTierCommand;
 use super::slash_commands::SlashCommandItem;
 use crate::protocol_compat::ThreadId;
@@ -270,13 +271,9 @@ use self::popup_state::PopupState;
 use self::slash_input::SlashInput;
 use self::slash_input::SlashValidation;
 use self::slash_input::SubmissionValidation;
-#[cfg(test)]
-use crate::app_server_protocol::SkillInterface;
 use crate::app_server_protocol::SkillMetadata;
 use crate::connectors::AppInfo;
 use crate::file_search::FileMatch;
-#[cfg(test)]
-use crate::plugin::AppConnectorId;
 use crate::plugin::PluginCapabilitySummary;
 use crate::tui_core::app_event::AppEvent;
 use crate::tui_core::app_event::ConnectorsSnapshot;
@@ -419,6 +416,9 @@ pub(crate) struct ChatComposer {
     token_activity_command_enabled: bool,
     service_tier_commands_enabled: bool,
     service_tier_commands: Vec<ServiceTierCommand>,
+    /// 插件命令快照(`set_plugin_commands` 注入,bootstrap 期从插件
+    /// 命令注册表快照)。参与 slash 弹窗补全、命令查找与提交校验。
+    plugin_commands: Vec<PluginCommandEntry>,
     mentions_v2_enabled: bool,
     goal_command_enabled: bool,
     personality_command_enabled: bool,
@@ -471,6 +471,7 @@ impl ChatComposer {
             self.draft.is_bash_mode,
             self.builtin_command_flags(),
             &self.service_tier_commands,
+            &self.plugin_commands,
         )
     }
 
@@ -583,6 +584,7 @@ impl ChatComposer {
             token_activity_command_enabled: false,
             service_tier_commands_enabled: false,
             service_tier_commands: Vec::new(),
+            plugin_commands: Vec::new(),
             mentions_v2_enabled: false,
             goal_command_enabled: false,
             personality_command_enabled: false,
@@ -728,6 +730,12 @@ impl ChatComposer {
     pub fn set_service_tier_commands(&mut self, commands: Vec<ServiceTierCommand>) {
         self.service_tier_commands = commands;
         self.sync_popups();
+    }
+
+    /// 注入插件命令快照(slash 弹窗补全 / 命令查找 / 提交校验共用)。
+    /// 启动期注入一次;TUI 当前不接 `[plugins]` 热重载,会话内不变。
+    pub(crate) fn set_plugin_commands(&mut self, commands: Vec<PluginCommandEntry>) {
+        self.plugin_commands = commands;
     }
 
     pub fn set_goal_command_enabled(&mut self, enabled: bool) {
@@ -3057,6 +3065,11 @@ impl ChatComposer {
         Some(match command {
             SlashCommandItem::Builtin(cmd) => InputResult::Command(cmd),
             SlashCommandItem::ServiceTier(command) => InputResult::ServiceTierCommand(command),
+            // 裸插件命令(无 args)按纯文本提交,交由展开路径处理。
+            SlashCommandItem::Plugin(entry) => InputResult::Submitted {
+                text: format!("/{}", entry.name),
+                text_elements: Vec::new(),
+            },
         })
     }
 

@@ -34,7 +34,7 @@ impl ChatWidget {
                 default
                     .description
                     .replace(" (Identical to Agent mode)", ""),
-                AskForApproval::from(default.approval),
+                default.approval,
                 ApprovalsReviewer::User,
             ),
         ];
@@ -51,14 +51,14 @@ impl ChatWidget {
             full_access,
             BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS,
             full_access.description.to_string(),
-            AskForApproval::from(full_access.approval),
+            full_access.approval,
             ApprovalsReviewer::User,
         ));
         items.push(self.builtin_permission_mode_selection_item(
             read_only,
             ":read-only",
             read_only.description.to_string(),
-            AskForApproval::from(read_only.approval),
+            read_only.approval,
             ApprovalsReviewer::User,
         ));
         items.extend(
@@ -106,8 +106,7 @@ impl ChatWidget {
             .permissions
             .active_permission_profile()
             .map(|profile| profile.id);
-        let current_approval =
-            AskForApproval::from(*self.config.permissions.approval_policy.value());
+        let current_approval = *self.config.permissions.approval_policy.value();
         let current_reviewer = self.config.approvals_reviewer;
         let profile_id = id.to_string();
         let selection = PermissionProfileSelection {

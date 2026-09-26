@@ -697,9 +697,9 @@ impl ChatWidget {
                     &mut text_elements,
                     text,
                     current_text_elements.iter().map(|element| {
-                        let range = element.byte_range.clone();
+                        let range = element.byte_range;
                         TextElement::new(
-                            range.clone().into(),
+                            range.into(),
                             element
                                 .placeholder()
                                 .or_else(|| text.get(range.start..range.end))

@@ -145,9 +145,8 @@ impl OnboardingScreen {
         let show_windows_create_sandbox_hint = false;
         let highlighted = TrustDirectorySelection::Trust;
         if show_trust_screen {
-            let trust_target = resolve_root_git_project_for_trust(&config.cwd)
-                .map(Into::into)
-                .unwrap_or_else(|| cwd.clone());
+            let trust_target =
+                resolve_root_git_project_for_trust(&config.cwd).unwrap_or_else(|| cwd.clone());
             steps.push(Step::TrustDirectory(TrustDirectoryWidget {
                 cwd,
                 trust_target,
@@ -534,7 +533,7 @@ pub(crate) async fn run_onboarding_app(
                                         ratatui::crossterm::style::Color::Reset
                                     )
                                 );
-                                let _ = tui.terminal.clear();
+                                tui.terminal.clear();
                                 did_full_clear_after_success = true;
                             }
                             let _ = tui.draw(u16::MAX, |frame| {
@@ -559,7 +558,7 @@ pub(crate) async fn run_onboarding_app(
                         AppServerEvent::Disconnected { message } => {
                             return Err(color_eyre::eyre::eyre!(message));
                         }
-                        AppServerEvent::Lagged { .. }
+                        AppServerEvent::Lagged
                         | AppServerEvent::ServerRequest(_) => {}
                     }
                 }

@@ -270,6 +270,18 @@ impl ChatWidget {
                 }
                 self.app_event_tx.compact();
             }
+            SlashCommand::Rewind => {
+                // v1.5:对话回退。chatwidget 嵌入路径的 AppCommand 契约暂无
+                // Rewind 变体(Direct 宿主需同步扩展转换层),这里引导用户用
+                // 引擎已就绪的两条替代路径:让 agent 执行 `rewind` 工具
+                // (scope=conversation,引擎侧已实现)或使用 stable 主循环
+                // 的 /rewind(直发 Op::Rewind)。
+                self.add_error_message(
+                    "/rewind is not wired in this embed mode yet. Ask the agent to run its \
+                     `rewind` tool with scope=conversation instead."
+                        .to_string(),
+                );
+            }
             SlashCommand::Review => {
                 self.open_review_popup();
             }
@@ -958,9 +970,14 @@ impl ChatWidget {
         }
 
         let service_tier_commands = self.current_model_service_tier_commands();
-        let Some(command) =
-            find_slash_command(name, self.builtin_command_flags(), &service_tier_commands)
-        else {
+        // chatwidget 路径当前不接插件运行时(插件命令快照只注入 stable
+        // TUI 主循环的 ComposerInput),这里传空列表。
+        let Some(command) = find_slash_command(
+            name,
+            self.builtin_command_flags(),
+            &service_tier_commands,
+            &[],
+        ) else {
             self.add_info_message(
                 format!(
                     r#"Unrecognized command '/{name}'. Type "/" for a list of supported commands."#
@@ -979,6 +996,18 @@ impl ChatWidget {
                 SlashCommandItem::ServiceTier(command) => {
                     self.handle_service_tier_command_dispatch(command);
                     QueueDrain::Continue
+                }
+                // chatwidget 路径的 find_slash_command 传了空插件列表(见上),
+                // 此臂实际不可达;保守按纯文本回提,交由 runtime 侧处理。
+                SlashCommandItem::Plugin(_) => {
+                    self.submit_user_message(UserMessage {
+                        text,
+                        local_images,
+                        remote_image_urls,
+                        text_elements,
+                        mention_bindings,
+                    });
+                    QueueDrain::Stop
                 }
             };
         }
@@ -1089,6 +1118,7 @@ impl ChatWidget {
             | SlashCommand::Clear
             | SlashCommand::Resume
             | SlashCommand::Fork
+            | SlashCommand::Rewind
             | SlashCommand::Init
             | SlashCommand::Compact
             | SlashCommand::Review

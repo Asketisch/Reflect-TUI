@@ -87,6 +87,9 @@ jobs:
             runner: ubuntu-latest
           - os: macos
             runner: macos-latest
+          # release.yml 已产出 Windows 包,测试同步覆盖,避免只发不测。
+          - os: windows
+            runner: windows-latest
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4

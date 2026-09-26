@@ -505,7 +505,7 @@ impl ChatWidget {
         );
         let permission_snapshot = PermissionProfileSnapshot::from_session_snapshot(
             permission_profile,
-            settings.active_permission_profile.take().map(Into::into),
+            settings.active_permission_profile.take(),
         );
         if let Err(err) = self
             .config

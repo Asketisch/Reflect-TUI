@@ -16,18 +16,10 @@ use crate::app_server_protocol::McpServerStatusDetail;
 use crate::app_server_protocol::ToolRequestUserInputAnswer;
 use crate::app_server_protocol::ToolRequestUserInputQuestion;
 use crate::app_server_protocol::WebSearchAction;
-#[cfg(test)]
-use crate::config_compat::types::McpServerTransportConfig;
-#[cfg(test)]
-use crate::mcp::qualified_mcp_tool_name_prefix;
 use crate::otel::RuntimeMetricsSummary;
 use crate::protocol_compat::account::PlanType;
 use crate::protocol_compat::approvals::ExecPolicyAmendment;
 use crate::protocol_compat::approvals::NetworkPolicyAmendment;
-#[cfg(test)]
-use crate::protocol_compat::mcp::Resource;
-#[cfg(test)]
-use crate::protocol_compat::mcp::ResourceTemplate;
 use crate::protocol_compat::models::ManagedFileSystemPermissions;
 use crate::protocol_compat::models::PermissionProfile;
 use crate::protocol_compat::models::local_image_label_text;
@@ -78,8 +70,6 @@ use crate::tui_core::wrapping::RtOptions;
 use crate::tui_core::wrapping::adaptive_wrap_line;
 use crate::tui_core::wrapping::adaptive_wrap_lines;
 use crate::utils_absolute_path::AbsolutePathBuf;
-#[cfg(test)]
-use crate::utils_cli::format_env_display;
 use base64::Engine;
 use image::DynamicImage;
 use image::ImageReader;
@@ -271,10 +261,10 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
             .unwrap_or(0)
     }
 
-/// 指示在后续浮层渲染中转录高度是否仍然有效。
-///
-/// 由外部状态支持的单元应返回 `false`，以便分页器在渲染前重新测量它们，
-/// 而不是复用可能会裁剪其内容的高度。
+    /// 指示在后续浮层渲染中转录高度是否仍然有效。
+    ///
+    /// 由外部状态支持的单元应返回 `false`，以便分页器在渲染前重新测量它们，
+    /// 而不是复用可能会裁剪其内容的高度。
     fn has_stable_transcript_height(&self) -> bool {
         true
     }
@@ -283,15 +273,15 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
         false
     }
 
-/// 当转录输出与时间相关时，返回一个粗粒度的“动画刻度”。
-///
-/// 转录浮层会缓存进行中活动单元的渲染输出，
-/// 因此包含时间相关 UI（旋转器、闪光等）的单元应返回一个会随时间变化的刻度，
-/// 以提示应重新计算缓存的尾部。返回 `None` 表示转录行是稳定的，
-/// 而在动画进行中返回 `Some(tick)` 可让浮层与主视口保持同步。
-///
-/// 如果单元使用时间相关的视觉效果但始终返回 `None`，`Ctrl+T` 可能会在
-/// 首次渲染的帧上看起来“冻结”，即便主视口仍在动画。
+    /// 当转录输出与时间相关时，返回一个粗粒度的“动画刻度”。
+    ///
+    /// 转录浮层会缓存进行中活动单元的渲染输出，
+    /// 因此包含时间相关 UI（旋转器、闪光等）的单元应返回一个会随时间变化的刻度，
+    /// 以提示应重新计算缓存的尾部。返回 `None` 表示转录行是稳定的，
+    /// 而在动画进行中返回 `Some(tick)` 可让浮层与主视口保持同步。
+    ///
+    /// 如果单元使用时间相关的视觉效果但始终返回 `None`，`Ctrl+T` 可能会在
+    /// 首次渲染的帧上看起来“冻结”，即便主视口仍在动画。
     fn transcript_animation_tick(&self) -> Option<u64> {
         None
     }

@@ -169,8 +169,7 @@ pub fn history_to_cells(history: &[UiHistoryItem], cwd: &Path) -> Vec<Arc<dyn Hi
                         display, cwd, None,
                     ))
                 }
-                UiHistoryItem::Thinking(text)
-                | UiHistoryItem::StreamedThinking(text) => {
+                UiHistoryItem::Thinking(text) | UiHistoryItem::StreamedThinking(text) => {
                     Arc::new(crate::history_render::cells::thinking_cell(text.clone()))
                 }
                 UiHistoryItem::ToolCall {
@@ -257,10 +256,7 @@ pub enum SlashOutcome {
     /// v0.4+ `/loop <secs> <cmd>`：在 TUI 内部以 interval 秒为周期重复提交 cmd。
     /// 调度是本地状态，不发 agent round-trip。`/loop stop` 取消。
     /// `interval_secs == 0` 表示取消当前 loop（语义同 stop）。
-    Loop {
-        interval_secs: u64,
-        command: String,
-    },
+    Loop { interval_secs: u64, command: String },
     /// v1.x `/review [instructions]`：注入代码审查 prompt（提交为 user msg）。
     Review { instructions: Option<String> },
     /// v1.x `/init`：注入 init prompt（生成 AGENTS.md）。
@@ -375,7 +371,8 @@ impl ReasoningEffort {
 pub fn is_legacy_passthrough_slash(name: &str) -> bool {
     matches!(
         name,
-        "help" | "?"
+        "help"
+            | "?"
             | "tasks"
             | "agents"
             | "cost"
@@ -400,6 +397,10 @@ pub fn legacy_popup_commands() -> &'static [(&'static str, &'static str)] {
         ("help", "show available commands and shortcuts"),
         ("mode", "cycle or set permission mode (auto/plan/prompt)"),
         ("cost", "show token usage and cost summary"),
+        (
+            "rewind",
+            "pick a past prompt and rewind the conversation to it",
+        ),
         ("tasks", "open the task list panel"),
         ("effort", "set reasoning effort (low/medium/high)"),
         ("exit-plan", "exit plan mode"),
@@ -448,8 +449,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // v1.x Plan mode:`/plan <task>` 请求进入 plan 模式;空 task → 用法提示。
         "/plan" => {
             let task: String = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .unwrap_or("")
                 .trim()
                 .to_string();
@@ -513,8 +514,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // /goal <text>  /goal clear
         "/goal" => {
             let rest = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .unwrap_or("")
                 .trim();
             if rest.is_empty() {
@@ -541,8 +542,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // interval 必须 >= 1s(防止 busy loop),否则返回用法提示。
         "/loop" => {
             let rest = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .unwrap_or("")
                 .trim();
             if rest.is_empty() {
@@ -577,9 +578,7 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
                 };
                 if rest_after.is_empty() {
                     return SlashOutcome::Handled {
-                        notice: Some(
-                            "/loop: missing command. Use /loop <secs> <cmd>".into(),
-                        ),
+                        notice: Some("/loop: missing command. Use /loop <secs> <cmd>".into()),
                     };
                 }
                 SlashOutcome::Loop {
@@ -591,8 +590,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // /review [instructions]
         "/review" => {
             let rest = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .unwrap_or("")
                 .trim();
             if rest.is_empty() {
@@ -615,8 +614,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // /fork [name]
         "/fork" => {
             let name = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
@@ -625,8 +624,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // /rename [name]
         "/rename" => {
             let name = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
@@ -635,8 +634,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // /mention [path]  /ref [path]
         "/mention" | "/ref" => {
             let path = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
@@ -673,8 +672,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // /theme [name|cycle|picker]
         "/theme" => {
             let arg = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
@@ -683,8 +682,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // /personality [name]
         "/personality" => {
             let arg = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
@@ -707,8 +706,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // /branch [list|<name>|create <name>]
         "/branch" => {
             let arg = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
@@ -717,8 +716,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // /skills [ls|hub|show|enable|disable <name>]
         "/skills" => {
             let arg = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
@@ -729,8 +728,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // /image [ls|path]  /img [ls|path]
         "/image" | "/img" => {
             let arg = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
@@ -739,8 +738,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // /keymap [ls|picker|bind|unbind|reset]
         "/keymap" => {
             let arg = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
@@ -749,8 +748,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         // /statusline [ls|picker|set|reset]
         "/statusline" => {
             let arg = trimmed
-                .splitn(2, char::is_whitespace)
-                .nth(1)
+                .split_once(char::is_whitespace)
+                .map(|x| x.1)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
@@ -1106,7 +1105,10 @@ mod sanitize_tests {
     fn dispatch_slash_loop_parses_args_and_stop() {
         // 正常路径
         match dispatch_slash("/loop 30 /status") {
-            SlashOutcome::Loop { interval_secs, command } => {
+            SlashOutcome::Loop {
+                interval_secs,
+                command,
+            } => {
                 assert_eq!(interval_secs, 30);
                 assert_eq!(command, "/status");
             }
@@ -1114,7 +1116,10 @@ mod sanitize_tests {
         }
         // stop 关键字
         match dispatch_slash("/loop stop") {
-            SlashOutcome::Loop { interval_secs, command } => {
+            SlashOutcome::Loop {
+                interval_secs,
+                command,
+            } => {
                 assert_eq!(interval_secs, 0);
                 assert!(command.is_empty());
             }
@@ -1137,17 +1142,24 @@ mod sanitize_tests {
         }
         // interval < 1 或非数字 → Handled
         match dispatch_slash("/loop abc /status") {
-            SlashOutcome::Handled { notice } => assert!(notice.unwrap().contains("invalid interval")),
+            SlashOutcome::Handled { notice } => {
+                assert!(notice.unwrap().contains("invalid interval"))
+            }
             other => panic!("/loop abc 应 Handled, 实为 {other:?}"),
         }
         // interval 合法但缺 command → Handled
         match dispatch_slash("/loop 10") {
-            SlashOutcome::Handled { notice } => assert!(notice.unwrap().contains("missing command")),
+            SlashOutcome::Handled { notice } => {
+                assert!(notice.unwrap().contains("missing command"))
+            }
             other => panic!("/loop 10 应 Handled, 实为 {other:?}"),
         }
         // 多词 command 完整保留
         match dispatch_slash("/loop 5 reply with the single word PONG") {
-            SlashOutcome::Loop { interval_secs, command } => {
+            SlashOutcome::Loop {
+                interval_secs,
+                command,
+            } => {
                 assert_eq!(interval_secs, 5);
                 assert_eq!(command, "reply with the single word PONG");
             }

@@ -10,6 +10,7 @@ use super::selection_popup_common::GenericDisplayRow;
 use super::selection_popup_common::measure_rows_height_with_col_width_mode;
 use super::selection_popup_common::render_rows_with_col_width_mode;
 use super::slash_commands::BuiltinCommandFlags;
+use super::slash_commands::PluginCommandEntry;
 use super::slash_commands::ServiceTierCommand;
 use super::slash_commands::SlashCommandItem;
 use super::slash_commands::commands_for_input;
@@ -30,10 +31,17 @@ const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
 pub(crate) enum CommandItem {
     Builtin(SlashCommand),
     ServiceTier(ServiceTierCommand),
+    /// 插件命令(bootstrap 期从插件命令注册表快照)。为可发现性和
+    /// 自动补全面列出;Enter 以当前输入全文纯文本派发(保留 args),
+    /// 由 `dispatch_slash` → `SubmitAsUser` → 展开路径接管。
+    Plugin(PluginCommandEntry),
     /// 由旧版 `dispatch_slash` 字符串匹配器处理的斜杠命令
     /// （不在 `SlashCommand` 枚举中）。为可发现性和自动补全面列出；
     /// 通过 `ComposerAction::Submitted` 以纯文本形式派发。
-    Legacy { name: &'static str, description: &'static str },
+    Legacy {
+        name: &'static str,
+        description: &'static str,
+    },
 }
 
 pub(crate) struct CommandPopup {
@@ -75,17 +83,22 @@ impl CommandPopup {
     pub(crate) fn new(
         flags: CommandPopupFlags,
         service_tier_commands: Vec<ServiceTierCommand>,
+        plugin_commands: Vec<PluginCommandEntry>,
     ) -> Self {
         // 保持内置命令的可用性与编写器一致。
-        let mut commands = commands_for_input(flags.into(), &service_tier_commands)
-            .into_iter()
-            .filter_map(|command| match command {
-                SlashCommandItem::Builtin(cmd) => (!cmd.command().starts_with("debug")
-                    && cmd != SlashCommand::Apps)
-                    .then_some(CommandItem::Builtin(cmd)),
-                SlashCommandItem::ServiceTier(command) => Some(CommandItem::ServiceTier(command)),
-            })
-            .collect::<Vec<_>>();
+        let mut commands =
+            commands_for_input(flags.into(), &service_tier_commands, &plugin_commands)
+                .into_iter()
+                .filter_map(|command| match command {
+                    SlashCommandItem::Builtin(cmd) => (!cmd.command().starts_with("debug")
+                        && cmd != SlashCommand::Apps)
+                        .then_some(CommandItem::Builtin(cmd)),
+                    SlashCommandItem::ServiceTier(command) => {
+                        Some(CommandItem::ServiceTier(command))
+                    }
+                    SlashCommandItem::Plugin(entry) => Some(CommandItem::Plugin(entry)),
+                })
+                .collect::<Vec<_>>();
         // 追加由 `dispatch_slash` 处理的旧版命令（不在
         // SlashCommand 枚举中）。这些命令可从弹出列表中发现并自动补全，
         // 但以纯文本形式派发。
@@ -258,6 +271,7 @@ impl CommandItem {
         match self {
             Self::Builtin(cmd) => cmd.command(),
             Self::ServiceTier(command) => &command.name,
+            Self::Plugin(entry) => &entry.name,
             Self::Legacy { name, .. } => name,
         }
     }
@@ -266,6 +280,7 @@ impl CommandItem {
         match self {
             Self::Builtin(cmd) => cmd.description(),
             Self::ServiceTier(command) => &command.description,
+            Self::Plugin(entry) => &entry.description,
             Self::Legacy { description, .. } => description,
         }
     }
@@ -295,7 +310,7 @@ mod tests {
 
     #[test]
     fn filter_includes_init_when_typing_prefix() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new(), Vec::new());
         // 模拟编写器行以 '/in' 开头，使弹出列表按前缀
         // 过滤匹配的命令。
         popup.on_composer_text_change("/in".to_string());
@@ -306,6 +321,7 @@ mod tests {
         let has_init = matches.iter().any(|item| match item {
             CommandItem::Builtin(cmd) => cmd.command() == "init",
             CommandItem::ServiceTier(_) => false,
+            CommandItem::Plugin(_) => false,
             CommandItem::Legacy { .. } => false,
         });
         assert!(
@@ -316,35 +332,68 @@ mod tests {
 
     #[test]
     fn selecting_init_by_exact_match() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new(), Vec::new());
         popup.on_composer_text_change("/init".to_string());
 
         // 当存在精确匹配时，默认选中的命令
         // 应为该命令。
         let selected = popup.selected_item();
-       match selected {
-           Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "init"),
-           Some(CommandItem::ServiceTier(command)) => {
-               panic!("expected init command, got service tier {command:?}")
-           }
-           Some(CommandItem::Legacy { .. }) => panic!("expected init command, got legacy"),
-           None => panic!("expected a selected command for exact match"),
-       }
+        match selected {
+            Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "init"),
+            Some(CommandItem::ServiceTier(command)) => {
+                panic!("expected init command, got service tier {command:?}")
+            }
+            Some(CommandItem::Plugin(_)) => panic!("expected init command, got plugin"),
+            Some(CommandItem::Legacy { .. }) => panic!("expected init command, got legacy"),
+            None => panic!("expected a selected command for exact match"),
+        }
     }
 
     #[test]
     fn model_is_first_suggestion_for_mo() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new(), Vec::new());
         popup.on_composer_text_change("/mo".to_string());
         let matches = popup.filtered_items();
-       match matches.first() {
-           Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "model"),
-           Some(CommandItem::ServiceTier(command)) => {
-               panic!("expected model command, got service tier {command:?}")
-           }
-           Some(CommandItem::Legacy { .. }) => panic!("expected model command, got legacy"),
-           None => panic!("expected at least one match for '/mo'"),
-       }
+        match matches.first() {
+            Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "model"),
+            Some(CommandItem::ServiceTier(command)) => {
+                panic!("expected model command, got service tier {command:?}")
+            }
+            Some(CommandItem::Plugin(_)) => panic!("expected model command, got plugin"),
+            Some(CommandItem::Legacy { .. }) => panic!("expected model command, got legacy"),
+            None => panic!("expected at least one match for '/mo'"),
+        }
+    }
+
+    #[test]
+    fn plugin_command_is_listed_filtered_and_selected() {
+        let mut popup = CommandPopup::new(
+            CommandPopupFlags::default(),
+            Vec::new(),
+            vec![PluginCommandEntry {
+                name: "demo:hello".to_string(),
+                description: "Say hello from the demo plugin".to_string(),
+            }],
+        );
+
+        // 无过滤时插件命令也在列表中。
+        popup.on_composer_text_change("/".to_string());
+        assert!(
+            popup.filtered_items().iter().any(
+                |item| matches!(item, CommandItem::Plugin(entry) if entry.name == "demo:hello")
+            ),
+            "expected plugin command to be listed with empty filter"
+        );
+
+        // 前缀过滤可命中,且精确匹配时被选中。
+        popup.on_composer_text_change("/demo:he".to_string());
+        match popup.selected_item() {
+            Some(CommandItem::Plugin(entry)) => {
+                assert_eq!(entry.name, "demo:hello");
+                assert_eq!(entry.description, "Say hello from the demo plugin");
+            }
+            other => panic!("expected plugin command selected, got {other:?}"),
+        }
     }
 
     #[test]
@@ -359,6 +408,7 @@ mod tests {
                 name: "fast".to_string(),
                 description: "Fastest inference with increased plan usage".to_string(),
             }],
+            Vec::new(),
         );
         popup.on_composer_text_change("/fa".to_string());
 
@@ -382,7 +432,7 @@ mod tests {
 
     #[test]
     fn filtered_commands_keep_presentation_order_for_prefix() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new(), Vec::new());
         popup.on_composer_text_change("/m".to_string());
 
         let cmds: Vec<String> = popup
@@ -391,25 +441,26 @@ mod tests {
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::Plugin(entry) => entry.name,
                 CommandItem::Legacy { name, .. } => name.to_string(),
             })
             .collect();
-       assert_eq!(
-           cmds,
-           vec![
-               "model".to_string(),
-               "memories".to_string(),
-               "mention".to_string(),
+        assert_eq!(
+            cmds,
+            vec![
+                "model".to_string(),
+                "memories".to_string(),
+                "mention".to_string(),
                 "mcp".to_string(),
                 "mode".to_string(), // 旧版命令附加在内置命令之后
-           ]
-       );
+            ]
+        );
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[test]
     fn app_command_popup_snapshot() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new(), Vec::new());
         popup.on_composer_text_change("/app".to_string());
 
         let width = 72;
@@ -428,7 +479,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn default_command_popup_items_snapshot() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new(), Vec::new());
         popup.on_composer_text_change("/".to_string());
 
         let commands = popup
@@ -447,7 +498,7 @@ mod tests {
 
     #[test]
     fn prefix_filter_limits_matches_for_ac() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new(), Vec::new());
         popup.on_composer_text_change("/ac".to_string());
 
         let cmds: Vec<String> = popup
@@ -456,6 +507,7 @@ mod tests {
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::Plugin(entry) => entry.name,
                 CommandItem::Legacy { name, .. } => name.to_string(),
             })
             .collect();
@@ -467,7 +519,7 @@ mod tests {
 
     #[test]
     fn changing_filter_resets_selection_after_scrolling() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new(), Vec::new());
         popup.on_composer_text_change("/".to_string());
 
         for _ in 0..MAX_POPUP_ROWS {
@@ -499,7 +551,7 @@ mod tests {
 
     #[test]
     fn quit_hidden_in_empty_filter_but_shown_for_prefix() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new(), Vec::new());
         popup.on_composer_text_change("/".to_string());
         let items = popup.filtered_items();
         assert!(!items.contains(&CommandItem::Builtin(SlashCommand::Quit)));
@@ -511,7 +563,7 @@ mod tests {
 
     #[test]
     fn btw_hidden_in_empty_filter_but_shown_for_prefix() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new(), Vec::new());
         popup.on_composer_text_change("/".to_string());
         let items = popup.filtered_items();
         assert!(!items.contains(&CommandItem::Builtin(SlashCommand::Btw)));
@@ -523,7 +575,7 @@ mod tests {
 
     #[test]
     fn plan_command_hidden_when_collaboration_modes_disabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new(), Vec::new());
         popup.on_composer_text_change("/".to_string());
 
         let cmds: Vec<String> = popup
@@ -532,6 +584,7 @@ mod tests {
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::Plugin(entry) => entry.name,
                 CommandItem::Legacy { name, .. } => name.to_string(),
             })
             .collect();
@@ -555,6 +608,7 @@ mod tests {
                 windows_degraded_sandbox_active: false,
                 side_conversation_active: false,
             },
+            Vec::new(),
             Vec::new(),
         );
         popup.on_composer_text_change("/plan".to_string());
@@ -583,6 +637,7 @@ mod tests {
                 side_conversation_active: false,
             },
             Vec::new(),
+            Vec::new(),
         );
         popup.on_composer_text_change("/pers".to_string());
 
@@ -592,6 +647,7 @@ mod tests {
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::Plugin(entry) => entry.name,
                 CommandItem::Legacy { name, .. } => name.to_string(),
             })
             .collect();
@@ -616,6 +672,7 @@ mod tests {
                 side_conversation_active: false,
             },
             Vec::new(),
+            Vec::new(),
         );
         popup.on_composer_text_change("/personality".to_string());
 
@@ -630,13 +687,14 @@ mod tests {
 
     #[test]
     fn debug_commands_are_hidden_from_popup() {
-        let popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        let popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new(), Vec::new());
         let cmds: Vec<String> = popup
             .filtered_items()
             .into_iter()
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::Plugin(entry) => entry.name,
                 CommandItem::Legacy { name, .. } => name.to_string(),
             })
             .collect();

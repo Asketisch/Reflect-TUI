@@ -212,14 +212,14 @@ impl ChatWidget {
                 .plan_type
                 .as_deref()
                 .and_then(PlanType::from_str_lossy)
-                .or_else(|| self.plan_type.clone());
+                .or(self.plan_type);
 
             let is_reflect_limit = limit_id.eq_ignore_ascii_case("reflect");
             if is_reflect_limit
                 && (matches!(source, RateLimitSnapshotSource::AccountUsage)
                     || snapshot.spend_control_reached.is_some())
             {
-                self.reflect_spend_control_reached = snapshot.spend_control_reached.clone();
+                self.reflect_spend_control_reached = snapshot.spend_control_reached;
             }
             if (is_reflect_limit && matches!(source, RateLimitSnapshotSource::AccountUsage))
                 || snapshot.rate_limit_reached_type.is_some()

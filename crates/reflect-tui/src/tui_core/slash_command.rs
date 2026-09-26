@@ -34,6 +34,11 @@ pub enum SlashCommand {
     Archive,
     Delete,
     Resume,
+    /// v1.5 `/rewind` —— 对话回退:向引擎发 `Op::Rewind { to_turn_id: None }`,
+    /// 丢弃最后一个 turn(含)之后的 rollout 记录(先写 `.bak` 备份)。
+    /// 引擎每轮从 rollout 回放重建历史,下一 turn 自然从更短历史回放。
+    /// 文件回滚(git checkpoint)由 agent 的 `rewind` 工具负责。
+    Rewind,
     Fork,
     App,
     Init,
@@ -61,6 +66,7 @@ pub enum SlashCommand {
     Pets,
     Mcp,
     Apps,
+    #[strum(to_string = "plugins", serialize = "plugin")]
     Plugins,
     Logout,
     Quit,
@@ -93,6 +99,7 @@ impl SlashCommand {
             SlashCommand::Review => "review my current changes and find issues",
             SlashCommand::Rename => "rename the current thread",
             SlashCommand::Resume => "resume a saved chat",
+            SlashCommand::Rewind => "drop the last turn from the conversation (.bak backup kept)",
             SlashCommand::Archive => "archive this session and exit",
             SlashCommand::Delete => "permanently delete this session and exit",
             SlashCommand::Clear => "clear the terminal and start a new chat",
@@ -126,7 +133,9 @@ impl SlashCommand {
             SlashCommand::Personality => "choose a communication style for Reflect",
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Goal => "set or view the goal for a long-running task",
-            SlashCommand::Loop => "repeat a command on an interval: /loop <secs> <cmd>  (or /loop stop)",
+            SlashCommand::Loop => {
+                "repeat a command on an interval: /loop <secs> <cmd>  (or /loop stop)"
+            }
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
             SlashCommand::Side | SlashCommand::Btw => {
                 "start a side conversation in an ephemeral fork"
@@ -198,6 +207,7 @@ impl SlashCommand {
             | SlashCommand::Archive
             | SlashCommand::Delete
             | SlashCommand::Fork
+            | SlashCommand::Rewind
             | SlashCommand::Init
             | SlashCommand::Compact
             | SlashCommand::Keymap

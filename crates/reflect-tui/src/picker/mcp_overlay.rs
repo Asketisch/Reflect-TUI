@@ -35,13 +35,6 @@ pub fn load_mcp_status() -> Vec<Line<'static>> {
         ]));
     }
 
-    if mcp_servers.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "(no MCP servers configured)",
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
-
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         format!("  {} servers · Esc to close", mcp_servers.len()),

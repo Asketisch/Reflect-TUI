@@ -99,7 +99,7 @@ fn file_match_to_row(file_match: &FileMatch) -> SearchResult {
         description: None,
         mention_type,
         selection: Selection::File(file_match.path.clone()),
-        match_indices: file_match.indices.clone().into(),
+        match_indices: file_match.indices.clone(),
         score: file_match.score,
     }
 }

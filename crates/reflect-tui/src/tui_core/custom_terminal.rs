@@ -277,7 +277,8 @@ where
         // 出现重叠/错乱/残影。检测到纯宽度变化时,resize 后 reset current
         // buffer(与 previous 一起全空),强制下一帧全量重绘新宽度的整帧,
         // 绕开一维 resize 的二维布局损坏。高度变化不影响 (x,y) 映射,无需此处理。
-        let width_changed = !self.viewport_area.is_empty() && self.viewport_area.width != area.width;
+        let width_changed =
+            !self.viewport_area.is_empty() && self.viewport_area.width != area.width;
         self.current_buffer_mut().resize(area);
         self.previous_buffer_mut().resize(area);
         if width_changed {

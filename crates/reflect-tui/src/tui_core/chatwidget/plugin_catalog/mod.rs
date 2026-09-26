@@ -100,10 +100,7 @@ enum MarketplaceProduct {
 
 impl MarketplaceProduct {
     fn from_marketplace(marketplace: &PluginMarketplaceEntry) -> Self {
-        Self::from_marketplace_parts(
-            &marketplace.name,
-            marketplace.path.as_ref().map(|p| p.as_path()),
-        )
+        Self::from_marketplace_parts(&marketplace.name, marketplace.path.as_deref())
     }
 
     fn from_marketplace_parts(marketplace_name: &str, marketplace_path: Option<&Path>) -> Self {
@@ -1006,7 +1003,7 @@ impl ChatWidget {
     ) -> SelectionViewParams {
         let marketplace_label = MarketplaceProduct::from_marketplace_parts(
             &plugin.marketplace_name,
-            plugin.marketplace_path.as_ref().map(|p| p.as_path()),
+            plugin.marketplace_path.as_deref(),
         )
         .label()
         .map(str::to_string)

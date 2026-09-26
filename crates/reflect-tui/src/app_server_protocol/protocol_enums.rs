@@ -307,5 +307,5 @@ impl std::str::FromStr for AskForApproval {
 }
 
 impl SandboxPolicy {
-    pub fn to_core(&self) -> () {}
+    pub fn to_core(&self) {}
 }

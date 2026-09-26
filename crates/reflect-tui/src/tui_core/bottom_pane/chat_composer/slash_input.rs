@@ -13,6 +13,7 @@ use crate::tui_core::bottom_pane::command_popup::CommandPopup;
 use crate::tui_core::bottom_pane::command_popup::CommandPopupFlags;
 use crate::tui_core::bottom_pane::prompt_args::parse_slash_name;
 use crate::tui_core::bottom_pane::slash_commands::BuiltinCommandFlags;
+use crate::tui_core::bottom_pane::slash_commands::PluginCommandEntry;
 use crate::tui_core::bottom_pane::slash_commands::ServiceTierCommand;
 use crate::tui_core::bottom_pane::slash_commands::SlashCommandItem;
 use crate::tui_core::bottom_pane::slash_commands::find_slash_command;
@@ -48,6 +49,9 @@ pub(super) struct SlashInput<'a> {
     is_bash_mode: bool,
     command_flags: BuiltinCommandFlags,
     service_tier_commands: &'a [ServiceTierCommand],
+    /// 插件命令快照(bootstrap 期注入):参与命令查找 / 提交校验 /
+    /// 弹窗补全。快照为空 = 无插件,行为与旧版一致。
+    plugin_commands: &'a [PluginCommandEntry],
 }
 
 impl<'a> SlashInput<'a> {
@@ -56,12 +60,14 @@ impl<'a> SlashInput<'a> {
         is_bash_mode: bool,
         command_flags: BuiltinCommandFlags,
         service_tier_commands: &'a [ServiceTierCommand],
+        plugin_commands: &'a [PluginCommandEntry],
     ) -> Self {
         Self {
             enabled,
             is_bash_mode,
             command_flags,
             service_tier_commands,
+            plugin_commands,
         }
     }
 
@@ -79,8 +85,7 @@ impl<'a> SlashInput<'a> {
         if input_starts_with_space || name.contains('/') {
             return SubmissionValidation::Valid;
         }
-        if self.command(name).is_some()
-            || crate::history_render::is_legacy_passthrough_slash(name)
+        if self.command(name).is_some() || crate::history_render::is_legacy_passthrough_slash(name)
         {
             SubmissionValidation::Valid
         } else {
@@ -167,7 +172,12 @@ impl<'a> SlashInput<'a> {
             return rest.is_empty();
         }
 
-        has_slash_command_prefix(name, self.command_flags, self.service_tier_commands)
+        has_slash_command_prefix(
+            name,
+            self.command_flags,
+            self.service_tier_commands,
+            self.plugin_commands,
+        )
     }
 
     pub(super) fn command_popup(&self, filter_text: &str) -> CommandPopup {
@@ -184,13 +194,19 @@ impl<'a> SlashInput<'a> {
                 side_conversation_active: self.command_flags.side_conversation_active,
             },
             self.service_tier_commands.to_vec(),
+            self.plugin_commands.to_vec(),
         );
         command_popup.on_composer_text_change(filter_text.to_string());
         command_popup
     }
 
     pub(super) fn command(&self, name: &str) -> Option<SlashCommandItem> {
-        find_slash_command(name, self.command_flags, self.service_tier_commands)
+        find_slash_command(
+            name,
+            self.command_flags,
+            self.service_tier_commands,
+            self.plugin_commands,
+        )
     }
 }
 
@@ -231,14 +247,19 @@ impl ChatComposer {
         // 若用户已键入的命令名恰好是一个「旧 passthrough 命令」(如 `/mode`),
         // 不要让弹窗把模糊命中的枚举命令(如 `/model`)顶替掉 —— 这些命令应
         // 原样提交,交由 `dispatch_slash` 处理。详见 `is_legacy_passthrough_slash`。
-        let typed_is_legacy = self
+        // 插件命令同理:全名精确命中时按原样提交(保留 args,走展开路径),
+        // 不让弹窗的模糊补全把已敲好的命令顶替掉。
+        let typed_slash_name = self
             .draft
             .textarea
             .text()
             .lines()
             .next()
-            .and_then(|line| parse_slash_name(line).map(|(name, _, _)| name))
-            .is_some_and(crate::history_render::is_legacy_passthrough_slash);
+            .and_then(|line| parse_slash_name(line).map(|(name, _, _)| name));
+        let typed_is_legacy = typed_slash_name
+            .is_some_and(crate::history_render::is_legacy_passthrough_slash)
+            || typed_slash_name
+                .is_some_and(|name| self.plugin_commands.iter().any(|entry| entry.name == name));
 
         match key_event {
             KeyEvent {
@@ -275,8 +296,7 @@ impl ChatComposer {
                 let filter_text = command_popup_filter_text(&first_line, cursor)
                     .unwrap_or_else(|| first_line.clone());
                 popup.on_composer_text_change(filter_text);
-                if !typed_is_legacy
-                    && let Some(selected_cmd) = popup.selected_item() {
+                if !typed_is_legacy && let Some(selected_cmd) = popup.selected_item() {
                     if selected_command_dispatches_immediately_on_tab(&selected_cmd)
                         && let CommandItem::Builtin(cmd) = &selected_cmd
                     {
@@ -356,25 +376,24 @@ impl ChatComposer {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if !typed_is_legacy
-                    && let Some(sel) = popup.selected_item()
-                {
-                   if self.blocks_direct_input {
-                       let command_is_allowed = match &sel {
-                           CommandItem::Builtin(cmd) => {
-                               parse_slash_name(self.draft.textarea.text()).is_some_and(
-                                   |(_, args, _)| parent_owned_command_is_allowed(*cmd, args),
-                               )
-                           }
-                           CommandItem::ServiceTier(_) => false,
-                           // 旧命令 (help/mode/cost/tasks/effort/exit-plan)
-                           // 属于信息/控制类 —— 在侧边会话中允许使用。
-                           CommandItem::Legacy { .. } => true,
-                       };
-                       if !command_is_allowed {
-                           return (InputResult::ParentOwnedInputBlocked, true);
-                       }
-                   }
+                if !typed_is_legacy && let Some(sel) = popup.selected_item() {
+                    if self.blocks_direct_input {
+                        let command_is_allowed = match &sel {
+                            CommandItem::Builtin(cmd) => {
+                                parse_slash_name(self.draft.textarea.text()).is_some_and(
+                                    |(_, args, _)| parent_owned_command_is_allowed(*cmd, args),
+                                )
+                            }
+                            CommandItem::ServiceTier(_) => false,
+                            // 旧命令 (help/mode/cost/tasks/effort/exit-plan)
+                            // 与插件命令属于信息/透传类 —— 允许纯文本提交。
+                            CommandItem::Plugin(_) => true,
+                            CommandItem::Legacy { .. } => true,
+                        };
+                        if !command_is_allowed {
+                            return (InputResult::ParentOwnedInputBlocked, true);
+                        }
+                    }
                     if self
                         .complete_selected_slash_command_preserving_existing_draft_tail_as_inline_args(
                             &sel,
@@ -390,24 +409,34 @@ impl ChatComposer {
                         return (result, true);
                     }
 
+                    // 插件命令的参数语义是「命令名后的全文当 $ARGUMENTS」,
+                    // 必须在清空 textarea 前把当前输入全文捕获下来。
+                    let typed_text = self.draft.textarea.text().to_string();
                     self.stage_selected_slash_command_history(&sel);
                     self.draft.textarea.set_text_clearing_elements("");
                     self.draft.is_bash_mode = false;
-                   return (
-                       match sel {
-                           CommandItem::Builtin(cmd) => InputResult::Command(cmd),
-                           CommandItem::ServiceTier(command) => {
-                               InputResult::ServiceTierCommand(command)
-                           }
-                           // 旧命令不是 SlashCommand 枚举的变体。
-                           // 以纯文本形式提交，交由 dispatch_slash 处理。
-                           CommandItem::Legacy { name, .. } => InputResult::Submitted {
-                               text: format!("/{}", name),
-                               text_elements: Vec::new(),
-                           },
-                       },
-                       true,
-                   );
+                    return (
+                        match sel {
+                            CommandItem::Builtin(cmd) => InputResult::Command(cmd),
+                            CommandItem::ServiceTier(command) => {
+                                InputResult::ServiceTierCommand(command)
+                            }
+                            // 插件命令不是 SlashCommand 枚举的变体:
+                            // 以当前输入全文(如 `/demo:hello world`)纯文本提交,
+                            // 交由 dispatch_slash → SubmitAsUser → 展开路径处理。
+                            CommandItem::Plugin(_) => InputResult::Submitted {
+                                text: typed_text,
+                                text_elements: Vec::new(),
+                            },
+                            // 旧命令不是 SlashCommand 枚举的变体。
+                            // 以纯文本形式提交，交由 dispatch_slash 处理。
+                            CommandItem::Legacy { name, .. } => InputResult::Submitted {
+                                text: format!("/{}", name),
+                                text_elements: Vec::new(),
+                            },
+                        },
+                        true,
+                    );
                 }
                 // 若未选中任何命令，则回退到默认的换行处理。
                 self.handle_key_event_without_popup(key_event)

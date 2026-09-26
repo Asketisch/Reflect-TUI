@@ -2,6 +2,18 @@
 
 use super::*;
 
+/// M4:工具输出流式渲染开关(默认开;`REFLECT_TUI_TOOL_STREAM=0` 关闭)。
+/// 关闭时 ToolCallOutputDelta 保持旧行为(忽略),完整输出仍由 ToolCallEnd
+/// 展示,不会缺失内容。
+fn tool_stream_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("REFLECT_TUI_TOOL_STREAM")
+            .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
+            .unwrap_or(true)
+    })
+}
+
 pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
     use reflect_protocol::event_msg::EventMsg::*;
     let kind = match event.msg {
@@ -118,19 +130,83 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
             };
             UiEventKind::Notice(format!("[子代理 {}] {}", sp.role, text))
         }
-        // v1.4 子代理可观测(查询通道):`Op::QuerySubagents` 的状态回执。
-        // TUI 内嵌运行不发起该查询,按构造收不到,忽略。
-        SubagentStatus(_) => return None,
-        // v1.4 工具输出流式增量:TUI 暂不做工具输出增量渲染,
-        // ToolCallEnd 携带的完整输出已覆盖展示,忽略避免重复。
-        ToolCallOutputDelta(_) => return None,
+        // v1.4 子代理可观测(查询通道):状态快照 → /tasks 面板 agents
+        // 列表实时刷新(apply_event 按 child_id upsert)。映射为本地投影。
+        SubagentStatus(ev) => UiEventKind::SubagentStatusUpdate {
+            children: ev
+                .children
+                .into_iter()
+                .map(|c| crate::adapter::SubagentView {
+                    id: c.child_id,
+                    role: c.role,
+                    running: matches!(c.state, reflect_protocol::SubagentRunStateMirror::Running),
+                    current_tool: c.current_tool,
+                    iteration: c.iteration,
+                    total_tokens: c.total_tokens,
+                })
+                .collect(),
+        },
+        // M4:v1.4 工具输出流式增量 → live 区 tail 渲染。开关
+        // REFLECT_TUI_TOOL_STREAM=0 关闭(默认开);关闭时保持旧行为,
+        // ToolCallEnd 的完整输出仍是唯一展示路径,不会缺失内容。
+        ToolCallOutputDelta(d) => {
+            if tool_stream_enabled() {
+                UiEventKind::ToolOutputDelta {
+                    call_id: d.call_id,
+                    delta: d.delta,
+                }
+            } else {
+                return None;
+            }
+        }
+        // MCP / LSP 生命周期事件(bootstrap 接线连接管理器后真实到达):
+        // 以 Notice 行进对话流,让用户看到外部服务上线/失败。McpToolInvoked
+        // 逐调用触发,渲染过噪,留待 /mcp 详情视图。
+        McpServerStarted(e) => UiEventKind::Notice(format!(
+            "MCP server '{}' started ({} tools, {:?})",
+            e.server, e.tool_count, e.transport
+        )),
+        // 插件挂载成功(bootstrap_plugins per-plugin emit):与 MCP 上线
+        // 同款通知行,让用户看到插件能力面(skills / commands 计数)。
+        PluginLoaded(e) => UiEventKind::Notice(format!(
+            "Plugin '{}' loaded (v{}, {}, {} skills, {} commands)",
+            e.plugin, e.version, e.scope, e.skill_count, e.command_count
+        )),
+        McpServerFailed(e) => UiEventKind::Notice(format!(
+            "MCP server '{}' failed: {}{}",
+            e.server,
+            e.error,
+            if e.will_retry { " (will retry)" } else { "" }
+        )),
+        LspServerStarted(e) => UiEventKind::Notice(format!(
+            "LSP server '{}' started ({})",
+            e.server,
+            e.language_ids.join(", ")
+        )),
+        LspServerFailed(e) => UiEventKind::Notice(format!(
+            "LSP server '{}' failed: {}{}",
+            e.server,
+            e.error,
+            if e.will_retry { " (will retry)" } else { "" }
+        )),
+        McpToolInvoked(_) => return None,
         // v1.3 SDK 远程工具执行请求仅存在于 serve 模式(SDK 客户端经
         // Op::RegisterTools 注册远程工具后,core 请客户端本地执行并等回执)。
         // TUI 内置运行 agent、不注册远程工具,此事件按构造不可能出现,忽略。
-        ToolExecutionRequest(_) | ShutdownComplete | PermissionBubble(_) | ContextCompacted(_)
-        | ConfigReloaded(_) | TurnRewound(_) | CollabMessage(_) | McpServerStarted(_)
-        | McpServerFailed(_) | McpToolInvoked(_) | LspServerStarted(_) | LspServerFailed(_)
-        | PluginLoaded(_) | Routing(_) | QuotaExhausted(_) => return None,
+        // v1.5:`/rewind` 的回执 —— 回报实际截断的记录数,让用户确认
+        // 对话回退已生效(会话 JSONL 的 .bak 备份由 writer 侧保证)。
+        TurnRewound(e) => UiEventKind::Notice(match e.truncated_after {
+            0 => "Rewound: nothing to drop (already at the last turn boundary).".to_string(),
+            n => format!("Rewound: dropped {n} conversation record(s). A .bak backup was kept."),
+        }),
+        ToolExecutionRequest(_)
+        | ShutdownComplete
+        | PermissionBubble(_)
+        | ContextCompacted(_)
+        | ConfigReloaded(_)
+        | CollabMessage(_)
+        | Routing(_)
+        | QuotaExhausted(_) => return None,
         // v1.3 SDK:serve 在 per-turn 通道排空后发出的收尾标记,仅存在于
         // serve 模式的 SDK 客户端;TUI 内嵌运行不经 serve,按构造不可能收到。
         SubmissionClosed => return None,
@@ -232,16 +308,16 @@ mod tests {
         let prefix = "a".repeat(498);
         let diff = format!("{prefix}中中");
         assert_eq!(diff.len(), 504, "前置条件:总长 504 字节");
-        assert_eq!(diff.as_bytes()[500], 0xAD, "前置条件:byte 500 是「中」的尾字节(码点内部)");
+        assert_eq!(
+            diff.as_bytes()[500],
+            0xAD,
+            "前置条件:byte 500 是「中」的尾字节(码点内部)"
+        );
 
         let out = format_content_blocks(&[diff_block(&diff)]);
         assert!(out.ends_with('…'), "截断后应以省略号结尾");
         // 截断点必须回退到 498(最后一个完整 ASCII 字符),保留「a…」而非半个字符。
-        assert!(
-            out.ends_with("a…"),
-            "截断应在字符边界,实际结尾:{:?}",
-            out
-        );
+        assert!(out.ends_with("a…"), "截断应在字符边界,实际结尾:{:?}", out);
         // 且不应 panic(本测试若能跑到断言即说明未 panic)。
     }
 

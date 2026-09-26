@@ -103,8 +103,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     // 全局 `--cwd` / `-C`:最早应用,后续 `current_dir()` / 配置路径都基于此。
     if let Some(p) = &cli.cwd {
-        std::env::set_current_dir(p)
-            .map_err(|e| anyhow::anyhow!("--cwd {}: {e}", p.display()))?;
+        std::env::set_current_dir(p).map_err(|e| anyhow::anyhow!("--cwd {}: {e}", p.display()))?;
     }
     match cli.command {
         None => reflect_tui::run(cli.tui_args),
@@ -117,9 +116,7 @@ fn main() -> anyhow::Result<()> {
             SessionAction::Fork { id, branch } => {
                 reflect_tui::cli::session::fork(&id, branch.as_deref())
             }
-            SessionAction::Rename { id, name } => {
-                reflect_tui::cli::session::rename(&id, &name)
-            }
+            SessionAction::Rename { id, name } => reflect_tui::cli::session::rename(&id, &name),
             SessionAction::Export { id, out } => {
                 reflect_tui::cli::session::export(&id, out.as_deref())
             }

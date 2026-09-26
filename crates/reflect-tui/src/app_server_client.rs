@@ -155,13 +155,13 @@ pub struct EnvironmentManager;
 
 impl EnvironmentManager {
     pub fn default_for_tests() -> Self {
-        Self::default()
+        Self
     }
 }
 
 impl InProcessAppServerClient {
     pub async fn start(_args: InProcessClientStartArgs) -> color_eyre::Result<Self> {
-        Ok(Self::default())
+        Ok(Self)
     }
 
     pub fn request_handle(&self) -> AppServerRequestHandle {

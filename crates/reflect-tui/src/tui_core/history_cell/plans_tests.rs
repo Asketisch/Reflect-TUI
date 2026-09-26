@@ -68,12 +68,25 @@ fn finalized_plan_single_blank_after_header() {
     let lines = visible_lines(cell.display_hyperlink_lines(width));
     let rendered: Vec<String> = lines
         .iter()
-        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        })
         .collect();
     // 先是标题，接着恰好一个空白分隔行，然后是计划正文。
     assert_eq!(rendered[0].trim_end(), "• Proposed Plan");
-    assert!(rendered[1].trim().is_empty(), "expected one blank after header, got {:?}", rendered[1]);
-    assert!(!rendered[2].trim().is_empty(), "expected body right after the single blank, got {:?}", rendered);
+    assert!(
+        rendered[1].trim().is_empty(),
+        "expected one blank after header, got {:?}",
+        rendered[1]
+    );
+    assert!(
+        !rendered[2].trim().is_empty(),
+        "expected body right after the single blank, got {:?}",
+        rendered
+    );
 }
 
 #[test]
@@ -96,6 +109,16 @@ fn finalized_plan_heading_spans_carry_distinct_fg_colors() {
     }
     eprintln!("DIAG heading fgs = {:?}", seen_fgs);
     let unique: std::collections::HashSet<_> = seen_fgs.iter().collect();
-    assert_eq!(seen_fgs.len(), 6, "expected six heading lines, got {:?}", seen_fgs);
-    assert_eq!(unique.len(), 6, "heading colors must all differ, got {:?}", seen_fgs);
+    assert_eq!(
+        seen_fgs.len(),
+        6,
+        "expected six heading lines, got {:?}",
+        seen_fgs
+    );
+    assert_eq!(
+        unique.len(),
+        6,
+        "heading colors must all differ, got {:?}",
+        seen_fgs
+    );
 }

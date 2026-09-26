@@ -223,20 +223,15 @@ impl Tui {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum TuiEvent {
     Key(crossterm::event::KeyEvent),
     Resize(u16, u16),
     Paste(String),
     FocusGained,
     FocusLost,
+    #[default]
     Tick,
     Frame,
     Draw,
-}
-
-impl Default for TuiEvent {
-    fn default() -> Self {
-        Self::Tick
-    }
 }

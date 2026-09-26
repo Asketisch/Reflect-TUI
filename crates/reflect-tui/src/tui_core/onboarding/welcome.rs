@@ -41,7 +41,7 @@ impl KeyboardHandler for WelcomeWidget {
         }
         if key_event.kind == KeyEventKind::Press && keys::TOGGLE_ANIMATION.is_pressed(key_event) {
             tracing::warn!("Welcome background to press '.'");
-            let _ = self.animation.pick_random_variant();
+            self.animation.pick_random_variant();
         }
     }
 }

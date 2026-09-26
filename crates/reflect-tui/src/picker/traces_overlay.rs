@@ -24,9 +24,9 @@ pub fn load_recent_traces() -> Vec<Line<'static>> {
     let mut log_files: Vec<PathBuf> = std::fs::read_dir(&trace_dir)
         .ok()
         .into_iter()
-        .flat_map(|rd| rd)
+        .flatten()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "jsonl"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
         .map(|e| e.path())
         .collect();
 

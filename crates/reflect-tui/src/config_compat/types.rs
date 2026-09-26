@@ -270,7 +270,7 @@ impl IntoIterator for ApprovalsReviewer {
     }
 }
 
-impl<'a> IntoIterator for &'a ApprovalsReviewer {
+impl IntoIterator for &ApprovalsReviewer {
     type Item = ApprovalsReviewer;
     type IntoIter = std::array::IntoIter<ApprovalsReviewer, 2>;
     fn into_iter(self) -> Self::IntoIter {

@@ -17,10 +17,25 @@ pub(crate) struct ServiceTierCommand {
     pub(crate) description: String,
 }
 
+/// 插件 slash 命令弹窗条目(bootstrap 期从插件命令注册表快照)。
+///
+/// `name` 是命令全名(如 `demo:hello`,不带前导 `/`),与
+/// `reflect_plugin::expand_user_input` 的查找键一致;`description`
+/// 来自命令 md frontmatter,可为空。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PluginCommandEntry {
+    pub(crate) name: String,
+    pub(crate) description: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SlashCommandItem {
     Builtin(SlashCommand),
     ServiceTier(ServiceTierCommand),
+    /// 插件命令(bootstrap 期快照)。派发走纯文本提交 →
+    /// `dispatch_slash` 未命中 → `SubmitAsUser` → 提交前由
+    /// `expand_plugin_submission` 展开为命令 md 正文。
+    Plugin(PluginCommandEntry),
 }
 
 impl SlashCommandItem {
@@ -28,6 +43,7 @@ impl SlashCommandItem {
         match self {
             Self::Builtin(cmd) => cmd.command(),
             Self::ServiceTier(command) => &command.name,
+            Self::Plugin(entry) => &entry.name,
         }
     }
 
@@ -35,6 +51,9 @@ impl SlashCommandItem {
         match self {
             Self::Builtin(cmd) => cmd.supports_inline_args(),
             Self::ServiceTier(_) => false,
+            // 插件命令的参数语义是「名字后的全文当 $ARGUMENTS」,
+            // 由文本提交路径自然携带,不走 builtin inline-args 补全。
+            Self::Plugin(_) => false,
         }
     }
 
@@ -42,6 +61,7 @@ impl SlashCommandItem {
         match self {
             Self::Builtin(cmd) => cmd.available_in_side_conversation(),
             Self::ServiceTier(_) => false,
+            Self::Plugin(_) => true,
         }
     }
 
@@ -49,6 +69,7 @@ impl SlashCommandItem {
         match self {
             Self::Builtin(cmd) => cmd.available_during_task(),
             Self::ServiceTier(_) => true,
+            Self::Plugin(_) => true,
         }
     }
 }
@@ -84,6 +105,7 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
 pub(crate) fn commands_for_input(
     flags: BuiltinCommandFlags,
     service_tier_commands: &[ServiceTierCommand],
+    plugin_commands: &[PluginCommandEntry],
 ) -> Vec<SlashCommandItem> {
     let mut commands = Vec::new();
     let tiers_enabled = flags.service_tier_commands_enabled;
@@ -98,6 +120,13 @@ pub(crate) fn commands_for_input(
             );
         }
     }
+    // 插件命令追加在内置命令之后(与 legacy 命令在弹窗中的次序一致)。
+    commands.extend(
+        plugin_commands
+            .iter()
+            .cloned()
+            .map(SlashCommandItem::Plugin),
+    );
     commands
         .into_iter()
         .filter(|cmd| !flags.side_conversation_active || cmd.available_in_side_conversation())
@@ -129,29 +158,37 @@ pub(crate) fn find_slash_command(
     name: &str,
     flags: BuiltinCommandFlags,
     service_tier_commands: &[ServiceTierCommand],
+    plugin_commands: &[PluginCommandEntry],
 ) -> Option<SlashCommandItem> {
     if let Some(cmd) = find_builtin_command(name, flags) {
         return Some(SlashCommandItem::Builtin(cmd));
     }
 
     let tiers_enabled = flags.service_tier_commands_enabled;
-    tiers_enabled
-        .then(|| {
-            service_tier_commands
-                .iter()
-                .find(|command| command.name == name)
-                .cloned()
-                .map(SlashCommandItem::ServiceTier)
-        })
-        .flatten()
+    if tiers_enabled
+        && let Some(command) = service_tier_commands
+            .iter()
+            .find(|command| command.name == name)
+            .cloned()
+    {
+        return Some(SlashCommandItem::ServiceTier(command));
+    }
+
+    // 插件命令按全名精确匹配(与 expand_user_input 的查找一致)。
+    plugin_commands
+        .iter()
+        .find(|entry| entry.name == name)
+        .cloned()
+        .map(SlashCommandItem::Plugin)
 }
 
 pub(crate) fn has_slash_command_prefix(
     name: &str,
     flags: BuiltinCommandFlags,
     service_tier_commands: &[ServiceTierCommand],
+    plugin_commands: &[PluginCommandEntry],
 ) -> bool {
-    commands_for_input(flags, service_tier_commands)
+    commands_for_input(flags, service_tier_commands, plugin_commands)
         .into_iter()
         .any(|command| fuzzy_match(command.command(), name).is_some())
 }
@@ -224,7 +261,7 @@ mod tests {
             description: "fastest inference".to_string(),
         }];
 
-        assert_eq!(find_slash_command("fast", flags, &commands), None);
+        assert_eq!(find_slash_command("fast", flags, &commands, &[]), None);
     }
 
     #[test]
@@ -242,7 +279,7 @@ mod tests {
             },
         ];
 
-        let items = commands_for_input(all_enabled_flags(), &commands);
+        let items = commands_for_input(all_enabled_flags(), &commands, &[]);
         let model_idx = items
             .iter()
             .position(|item| matches!(item, SlashCommandItem::Builtin(SlashCommand::Model)))
@@ -340,7 +377,7 @@ mod tests {
         };
 
         assert_eq!(
-            find_slash_command("fast", flags, from_ref(&command)),
+            find_slash_command("fast", flags, from_ref(&command), &[]),
             Some(SlashCommandItem::ServiceTier(command))
         );
     }

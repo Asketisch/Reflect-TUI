@@ -26,7 +26,7 @@ pub(crate) fn skill_description(skill: &SkillMetadata) -> &str {
         .as_ref()
         .and_then(|interface| interface.short_description.as_deref())
         .or(skill.short_description.as_deref())
-        .or_else(|| skill.description.as_deref())
+        .or(skill.description.as_deref())
         .unwrap_or("")
 }
 

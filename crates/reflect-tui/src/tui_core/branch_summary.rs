@@ -657,7 +657,10 @@ mod tests {
             repo_search_order_from_output(
                 r#"{"nameWithOwner":"asketisch/reflect-tui","parent":{"nameWithOwner":"asketisch/reflect"}}"#
             ),
-            Some(vec!["asketisch/reflect".to_string(), "asketisch/reflect-tui".to_string()])
+            Some(vec![
+                "asketisch/reflect".to_string(),
+                "asketisch/reflect-tui".to_string()
+            ])
         );
     }
 

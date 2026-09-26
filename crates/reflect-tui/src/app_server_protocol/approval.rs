@@ -216,8 +216,9 @@ pub enum FileSystemAccessMode {
     Deny,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum FileSystemSpecialPath {
+    #[default]
     Root,
     Minimal,
     ProjectRoots {
@@ -229,12 +230,6 @@ pub enum FileSystemSpecialPath {
         path: String,
         subpath: Option<String>,
     },
-}
-
-impl Default for FileSystemSpecialPath {
-    fn default() -> Self {
-        FileSystemSpecialPath::Root
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

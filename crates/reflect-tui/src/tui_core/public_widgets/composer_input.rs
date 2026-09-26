@@ -12,6 +12,7 @@ use crate::tui_core::app_event::AppEvent;
 use crate::tui_core::app_event_sender::AppEventSender;
 use crate::tui_core::bottom_pane::ChatComposer;
 use crate::tui_core::bottom_pane::InputResult;
+use crate::tui_core::bottom_pane::slash_commands::PluginCommandEntry;
 use crate::tui_core::render::renderable::Renderable;
 use crate::tui_core::slash_command::SlashCommand;
 
@@ -76,6 +77,9 @@ impl ComposerInput {
         inner.set_goal_command_enabled(true);
         // 启用 /personality 命令，让用户可以切换沟通风格。
         inner.set_personality_command_enabled(true);
+        // 启用 /plugin 命令 —— 打开真实已装插件 overlay(与 submodule 的
+        // 插件系统接线配套;ChatComposer 默认 false,留给宿主自行开启)。
+        inner.set_plugins_command_enabled(true);
         Self { inner, _tx: tx, rx }
     }
 
@@ -105,6 +109,12 @@ impl ComposerInput {
     /// 切换 composer 的提示内容。
     pub fn set_placeholder(&mut self, placeholder: String) {
         self.inner.set_placeholder_text(placeholder);
+    }
+
+    /// 注入插件命令快照(对内部 `ChatComposer::set_plugin_commands` 的薄封装)。
+    /// 命令会出现在 slash 弹窗补全中,并通过 `validate_submission` 白名单。
+    pub(crate) fn set_plugin_commands(&mut self, commands: Vec<PluginCommandEntry>) {
+        self.inner.set_plugin_commands(commands);
     }
 
     /// 将一个按键事件送入 composer，并返回高层动作。
@@ -259,7 +269,7 @@ fn file_search(query: &str) -> Vec<crate::file_search::FileMatch> {
         .git_exclude(true)
         .build();
     for entry in walker.flatten() {
-        if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
             continue;
         }
         let path = entry.path();
@@ -289,7 +299,7 @@ fn file_search(query: &str) -> Vec<crate::file_search::FileMatch> {
             break;
         }
     }
-    results.sort_by(|a, b| b.1.cmp(&a.1));
+    results.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
     results.truncate(50);
     results
         .into_iter()
@@ -317,7 +327,8 @@ mod tests {
     fn current_text_reflects_typed_input() {
         // current_text() 是外部编辑器 (Ctrl+G) 的 draft seed,必须真实回读
         // composer 内容,否则用户已有输入会被空 buffer 覆盖丢失。
-        let mut input = ComposerInput::new_with_config(String::new(), /*disable_paste_burst*/ true);
+        let mut input =
+            ComposerInput::new_with_config(String::new(), /*disable_paste_burst*/ true);
         assert!(input.is_empty());
         assert_eq!(input.current_text(), "");
 
@@ -327,7 +338,8 @@ mod tests {
 
     #[test]
     fn current_text_clears_to_empty() {
-        let mut input = ComposerInput::new_with_config(String::new(), /*disable_paste_burst*/ true);
+        let mut input =
+            ComposerInput::new_with_config(String::new(), /*disable_paste_burst*/ true);
         input.handle_paste("draft".to_string());
         input.clear();
         assert_eq!(input.current_text(), "");

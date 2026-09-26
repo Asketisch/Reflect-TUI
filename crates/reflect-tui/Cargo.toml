@@ -118,6 +118,15 @@ pollster         = { workspace = true }
 # S5a:`/permissions ls/allow/deny` 反射 `PermissionResolver` + `PermissionStore`。
 reflect-permissions = { workspace = true }
 reflect-hooks       = { workspace = true }
+# v1.x 能力接线:对齐 headless(reflect-exec)的 M4/M5/M6/LSP 装配 ——
+# LLM 摘要压缩、session notes、post-compact 恢复、LSP 语言服务、prompt 构建。
+# tokenizer feature:v1.4 D1 真实分词器 —— 压缩触发阈值与上下文估算用
+# tiktoken,替代默认 len/3.5 启发式(bootstrap 期 set_global_estimator)。
+reflect-compact  = { workspace = true, features = ["tokenizer"] }
+reflect-notes    = { workspace = true }
+reflect-recovery = { workspace = true }
+reflect-lsp      = { workspace = true }
+reflect-prompt   = { workspace = true }
 syntect             = "5"
 # v0.4.x markdown 渲染:把 Agent/User 文本的 CommonMark 结构(标题/强调/
 # 列表/引用/表格/代码块)渲染成带样式的 ratatui `Line`。代码块仍走 syntect。

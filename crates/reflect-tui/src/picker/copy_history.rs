@@ -122,7 +122,7 @@ pub fn draw(
         .map(|(i, text)| {
             let preview = if text.chars().count() > 70 {
                 let mut s: String = text.chars().take(67).collect();
-                s.push_str("…");
+                s.push('…');
                 s
             } else {
                 text.clone()

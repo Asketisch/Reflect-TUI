@@ -21,7 +21,7 @@ impl Default for Osc9Backend {
 impl Osc9Backend {
     pub fn new() -> Self {
         Self {
-            dcs_passthrough: matches!(terminal_info().multiplexer, Some(Multiplexer::Tmux { .. })),
+            dcs_passthrough: matches!(terminal_info().multiplexer, Some(Multiplexer::Tmux)),
         }
     }
 

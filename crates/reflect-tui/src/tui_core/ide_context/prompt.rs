@@ -80,7 +80,7 @@ fn prefixed_text_input(prefix: String, text: String, text_elements: Vec<TextElem
         text_elements: text_elements
             .into_iter()
             .map(|element| {
-                let range = element.byte_range.clone();
+                let range = element.byte_range;
                 TextElement::new(
                     ByteRange {
                         start: range.start + prefix_len,

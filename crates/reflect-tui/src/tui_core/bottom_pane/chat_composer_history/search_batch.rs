@@ -82,7 +82,7 @@ impl ChatComposerHistory {
         {
             if let Some(search) = self.search.as_mut() {
                 search.awaiting = Some(PendingHistorySearch::Batch {
-                    cursor: cursor.clone(),
+                    cursor,
                     boundary_if_exhausted,
                     read_failures: read_failures + 1,
                 });
@@ -189,7 +189,7 @@ impl ChatComposerHistory {
         };
         if let Some(search) = self.search.as_mut() {
             search.awaiting = Some(PendingHistorySearch::Batch {
-                cursor: cursor.clone(),
+                cursor,
                 boundary_if_exhausted,
                 read_failures: 0,
             });

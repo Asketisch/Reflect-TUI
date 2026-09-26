@@ -527,7 +527,10 @@ mod tests {
         let s: String = line.spans.iter().map(|s| s.content.clone()).collect();
         assert!(s.contains("[NORMAL]"), "vim 启用时显示 [NORMAL]: {s}");
         // [NORMAL] 不再是行尾 —— 退出提示在其后。
-        assert!(!s.ends_with("[NORMAL]"), "[NORMAL] 不应在行尾(后有 quit 提示): {s}");
+        assert!(
+            !s.ends_with("[NORMAL]"),
+            "[NORMAL] 不应在行尾(后有 quit 提示): {s}"
+        );
     }
 
     #[test]
@@ -563,7 +566,10 @@ mod tests {
             false,
         );
         let s: String = line.spans.iter().map(|s| s.content.clone()).collect();
-        assert!(!s.contains("Ctrl+C to quit"), "审批挂起时省略 quit 提示: {s}");
+        assert!(
+            !s.contains("Ctrl+C to quit"),
+            "审批挂起时省略 quit 提示: {s}"
+        );
         assert!(s.contains("[y/n]"), "审批挂起应显示 [y/n]: {s}");
     }
 

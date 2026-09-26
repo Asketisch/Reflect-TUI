@@ -43,8 +43,10 @@ impl PathUri {
         self.0.clone()
     }
 
-    pub fn to_abs_path(&self) -> Result<PathUri, ()> {
-        Ok(self.clone())
+    /// 恒成功的克隆(历史签名是 `Result<PathUri, ()>`,但实现从不失败;
+    /// clippy result_unit_err 下改为不可失败返回)。
+    pub fn to_abs_path(&self) -> PathUri {
+        self.clone()
     }
 
     pub fn as_path(&self) -> &Path {

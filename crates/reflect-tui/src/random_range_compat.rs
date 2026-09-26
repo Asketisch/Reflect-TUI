@@ -18,7 +18,7 @@ pub trait RandomRangeCompat {
     }
 
     fn random_bool(&mut self, probability: f64) -> bool {
-        assert!(probability >= 0.0 && probability <= 1.0);
+        assert!((0.0..=1.0).contains(&probability));
         self.random_range(0.0..1.0) < probability
     }
 }

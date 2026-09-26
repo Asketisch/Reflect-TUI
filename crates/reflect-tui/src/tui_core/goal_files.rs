@@ -161,7 +161,7 @@ pub(crate) fn objective_file_path(
     let path = objective
         .strip_prefix(GOAL_FILE_PREFIX)
         .and_then(|path| path.strip_suffix(GOAL_FILE_SUFFIX))?;
-    let path = AppServerPath::from_absolute_str(&path);
+    let path = AppServerPath::from_absolute_str(path);
     let path_str = path.as_ref().to_string_lossy();
     let parts: Vec<_> = path_str.split('/').collect();
     let attachment_id = parts.get(parts.len().checked_sub(2)?)?;

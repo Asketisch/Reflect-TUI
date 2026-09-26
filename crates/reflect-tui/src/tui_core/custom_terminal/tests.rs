@@ -215,7 +215,9 @@ fn resize_width_then_redraw_no_corruption() {
     terminal
         .draw(|frame| {
             let area = frame.area();
-            Paragraph::new("AAAAAAAAAA").block(Block::bordered()).render(area, frame.buffer_mut());
+            Paragraph::new("AAAAAAAAAA")
+                .block(Block::bordered())
+                .render(area, frame.buffer_mut());
         })
         .expect("draw frame 1");
 
@@ -224,7 +226,9 @@ fn resize_width_then_redraw_no_corruption() {
     terminal
         .draw(|frame| {
             let area = frame.area();
-            Paragraph::new("BBBBBBBBBB").block(Block::bordered()).render(area, frame.buffer_mut());
+            Paragraph::new("BBBBBBBBBB")
+                .block(Block::bordered())
+                .render(area, frame.buffer_mut());
         })
         .expect("draw frame 2");
 
@@ -298,8 +302,8 @@ fn resize_reflow_reemits_history_at_new_width() {
 /// 断言:缩窄后 current buffer 所有 cell 都是空符号。
 #[test]
 fn set_viewport_area_resets_current_buffer_on_width_change() {
-    let mut terminal = Terminal::with_options(CaptureBackend::new(/*width*/ 10, /*height*/ 4))
-        .expect("terminal");
+    let mut terminal =
+        Terminal::with_options(CaptureBackend::new(/*width*/ 10, /*height*/ 4)).expect("terminal");
     terminal.set_viewport_area(Rect::new(0, 0, 10, 4));
 
     // 在 current buffer 写入内容(模拟已渲染的一帧)。
@@ -336,8 +340,8 @@ fn set_viewport_area_resets_current_buffer_on_width_change() {
 /// 无需全量重绘,保留 diff 增量更新以减少闪烁。
 #[test]
 fn set_viewport_area_keeps_buffer_on_height_only_change() {
-    let mut terminal = Terminal::with_options(CaptureBackend::new(/*width*/ 8, /*height*/ 4))
-        .expect("terminal");
+    let mut terminal =
+        Terminal::with_options(CaptureBackend::new(/*width*/ 8, /*height*/ 4)).expect("terminal");
     terminal.set_viewport_area(Rect::new(0, 0, 8, 4));
 
     {
@@ -354,8 +358,5 @@ fn set_viewport_area_keeps_buffer_on_height_only_change() {
         .content
         .iter()
         .any(|c| c.symbol() == "Y");
-    assert!(
-        any_filled_after,
-        "宽度不变时不应清空 buffer(保留增量 diff)"
-    );
+    assert!(any_filled_after, "宽度不变时不应清空 buffer(保留增量 diff)");
 }

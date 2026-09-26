@@ -81,7 +81,7 @@ fn convert_location_reference(s: &str) -> Option<String> {
         }
 
         let rest = &part[1..];
-        let (line_str, col_str) = if let Some(pos) = rest.find(|c: char| c == 'C' || c == 'c') {
+        let (line_str, col_str) = if let Some(pos) = rest.find(['C', 'c']) {
             let (l, c) = rest.split_at(pos);
             (l, &c[1..])
         } else {
@@ -94,7 +94,7 @@ fn convert_location_reference(s: &str) -> Option<String> {
 
         // 只有第一部分获得前导 ':'。
         if idx == 0 {
-            converted.push_str(":");
+            converted.push(':');
         }
         converted.push_str(line_str);
 
@@ -102,7 +102,7 @@ fn convert_location_reference(s: &str) -> Option<String> {
             if !col_str.chars().all(|c: char| c.is_ascii_digit()) {
                 return None;
             }
-            converted.push_str(":");
+            converted.push(':');
             converted.push_str(col_str);
         }
     }

@@ -285,7 +285,7 @@ impl StatusHistoryCell {
                     config
                         .model_reasoning_effort
                         .clone()
-                        .map(|s| crate::protocol_compat::openai_models::ReasoningEffort::from(s))
+                        .map(crate::protocol_compat::openai_models::ReasoningEffort::from)
                 })
                 .map(|effort| effort.to_string())
                 .unwrap_or_else(|| "none".to_string());

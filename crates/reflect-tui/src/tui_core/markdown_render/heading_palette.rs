@@ -9,10 +9,10 @@ use ratatui::style::Style;
 use ratatui::style::Stylize;
 
 use crate::tui_core::color::is_light;
+use crate::tui_core::terminal_palette::StdoutColorLevel;
 use crate::tui_core::terminal_palette::best_color_for_level;
 use crate::tui_core::terminal_palette::default_bg;
 use crate::tui_core::terminal_palette::effective_stdout_color_level;
-use crate::tui_core::terminal_palette::StdoutColorLevel;
 
 /// HSL 颜色到 RGB 颜色的转换。
 ///
@@ -45,7 +45,11 @@ fn hsl_to_rgb(h: u16, s: f32, l: f32) -> (u8, u8, u8) {
 pub(crate) fn heading_rgb_levels(is_light_bg: bool) -> [(u8, u8, u8); 6] {
     // 暗色背景：饱和度稍降避免刺眼，亮度提升到 57%
     // 亮色背景：饱和度保持 0.62，亮度降到 38% 保证对比度
-    let (s, l) = if is_light_bg { (0.62, 0.38) } else { (0.55, 0.57) };
+    let (s, l) = if is_light_bg {
+        (0.62, 0.38)
+    } else {
+        (0.55, 0.57)
+    };
     [
         hsl_to_rgb(78, s, l),  // H1 黄绿
         hsl_to_rgb(118, s, l), // H2 绿
@@ -81,10 +85,11 @@ pub(crate) fn heading_styles_for_terminal() -> [Style; 6] {
 
     match color_level {
         StdoutColorLevel::TrueColor | StdoutColorLevel::Ansi256 => {
-            let apply_fg = |base: Style, rgb: (u8, u8, u8)| match best_color_for_level(rgb, color_level) {
-                Color::Reset => base,
-                color => base.fg(color),
-            };
+            let apply_fg =
+                |base: Style, rgb: (u8, u8, u8)| match best_color_for_level(rgb, color_level) {
+                    Color::Reset => base,
+                    color => base.fg(color),
+                };
             std::array::from_fn(|idx| apply_fg(modifiers[idx], levels[idx]))
         }
         // 16 色（或探测不到颜色能力）的终端下，best_color_for_level 会返回 Color::Reset，
@@ -165,9 +170,18 @@ mod tests {
         // （标准 ANSI 亮色），保证各级标题在视觉上彼此可区分，避免退化为单一无色样式。
         let styles = super::heading_styles_for_terminal();
         let fgs: HashSet<_> = styles.iter().map(|style| style.fg).collect();
-        assert_eq!(fgs.len(), 6, "H1-H6 must have six distinct foreground colors, got {:#?}", styles);
+        assert_eq!(
+            fgs.len(),
+            6,
+            "H1-H6 must have six distinct foreground colors, got {:#?}",
+            styles
+        );
         for style in &styles {
-            assert!(style.fg.is_some(), "each heading must carry a foreground color: {:#?}", style);
+            assert!(
+                style.fg.is_some(),
+                "each heading must carry a foreground color: {:#?}",
+                style
+            );
         }
     }
 }

@@ -306,7 +306,7 @@ fn env_non_empty(key: &str) -> Option<String> {
 }
 
 impl Multiplexer {
-    pub fn as_ref(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Multiplexer::Tmux => "tmux",
             Multiplexer::Zellij => "zellij",

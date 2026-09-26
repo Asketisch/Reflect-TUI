@@ -40,18 +40,20 @@ pub struct CommandExecResponse {
 // 审查
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ReviewTarget {
+    #[default]
     UncommittedChanges,
-    BaseBranch { branch: String },
-    Commit { sha: String, title: Option<String> },
-    Custom { instructions: String },
-}
-
-impl Default for ReviewTarget {
-    fn default() -> Self {
-        ReviewTarget::UncommittedChanges
-    }
+    BaseBranch {
+        branch: String,
+    },
+    Commit {
+        sha: String,
+        title: Option<String>,
+    },
+    Custom {
+        instructions: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

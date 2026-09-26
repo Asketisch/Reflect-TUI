@@ -808,7 +808,7 @@ impl AuthModeWidget {
                 })
                 .await
             {
-                Ok(LoginAccountResponse::ApiKey {}) => {
+                Ok(LoginAccountResponse::ApiKey) => {
                     *error.write().unwrap() = None;
                     *sign_in_state.write().unwrap() = SignInState::ApiKeyConfigured;
                 }

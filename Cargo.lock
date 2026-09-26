@@ -960,6 +960,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluent-uri"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17c704e9dbe1ddd863da1e6ff3567795087b1eb201ce80d8fa81162e1516500d"
+dependencies = [
+ "bitflags 1.3.2",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1904,6 +1913,19 @@ name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
+
+[[package]]
+name = "lsp-types"
+version = "0.97.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53353550a17c04ac46c585feb189c2db82154fc84b79c7a66c96c2c644f66071"
+dependencies = [
+ "bitflags 1.3.2",
+ "fluent-uri",
+ "serde",
+ "serde_json",
+ "serde_repr",
+]
 
 [[package]]
 name = "markup5ever"
@@ -3111,6 +3133,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "reflect-lsp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "globset",
+ "lsp-types",
+ "parking_lot",
+ "reflect-config",
+ "reflect-protocol",
+ "reflect-tools",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "reflect-mcp"
 version = "0.1.0"
 dependencies = [
@@ -3462,15 +3505,20 @@ dependencies = [
  "ratatui-macros",
  "reflect-agent-def",
  "reflect-ast",
+ "reflect-compact",
  "reflect-config",
  "reflect-core",
  "reflect-hooks",
  "reflect-llm",
+ "reflect-lsp",
  "reflect-mcp",
  "reflect-memory",
+ "reflect-notes",
  "reflect-permissions",
  "reflect-plugin",
+ "reflect-prompt",
  "reflect-protocol",
+ "reflect-recovery",
  "reflect-rollout",
  "reflect-sandbox",
  "reflect-skills",
@@ -3988,6 +4036,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_repr"
+version = "0.1.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d3b1629de253c70a0508c3899572da79ca359fdab27c7920ff00406df418906"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
 ]
 
 [[package]]

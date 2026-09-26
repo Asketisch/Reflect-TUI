@@ -64,13 +64,13 @@ pub(crate) struct TextElementSnapshot {
     pub(crate) text: String,
 }
 
-    /// `TextArea` 是 TUI composer 背后的可编辑缓冲区。
-    ///
-    /// 它拥有原始 UTF-8 文本、必须随编辑原子移动的占位符式文本元素、用于渲染的光标/换行状态，
-    /// 以及用于 `Ctrl+K` / `Ctrl+Y` 式编辑的单条目杀入缓冲区。调用方可通过
-    /// [`Self::set_text_clearing_elements`] 或 [`Self::set_text_with_elements`] 替换整个可见缓冲区
-    /// 而不干扰杀入缓冲区；如果他们错误地假设这些方法会完全重置编辑状态，那么之后的 yank
-    /// 在用户看来就像恢复了过期文本。
+/// `TextArea` 是 TUI composer 背后的可编辑缓冲区。
+///
+/// 它拥有原始 UTF-8 文本、必须随编辑原子移动的占位符式文本元素、用于渲染的光标/换行状态，
+/// 以及用于 `Ctrl+K` / `Ctrl+Y` 式编辑的单条目杀入缓冲区。调用方可通过
+/// [`Self::set_text_clearing_elements`] 或 [`Self::set_text_with_elements`] 替换整个可见缓冲区
+/// 而不干扰杀入缓冲区；如果他们错误地假设这些方法会完全重置编辑状态，那么之后的 yank
+/// 在用户看来就像恢复了过期文本。
 #[derive(Debug)]
 pub(crate) struct TextArea {
     text: String,

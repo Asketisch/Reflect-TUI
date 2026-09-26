@@ -118,8 +118,6 @@ mod skills_toggle_view;
 pub(crate) mod slash_commands;
 pub(crate) use footer::CollaborationModeIndicator;
 pub(crate) use footer::GoalStatusIndicator;
-#[cfg(test)]
-pub(crate) use footer::goal_status_indicator_line;
 pub(crate) use list_selection_view::ColumnWidthMode;
 #[cfg(test)]
 pub(crate) use list_selection_view::ListSelectionView;
@@ -145,8 +143,6 @@ pub(crate) use status_surface_preview::StatusSurfacePreviewData;
 pub(crate) use status_surface_preview::StatusSurfacePreviewItem;
 pub(crate) use title_setup::TerminalTitleItem;
 pub(crate) use title_setup::TerminalTitleSetupView;
-#[cfg(test)]
-pub(crate) use title_setup::preview_line_for_title_items;
 mod paste_burst;
 mod pending_input_preview;
 mod pending_thread_approvals;

@@ -26,9 +26,9 @@ pub(super) struct LinkState {
     pub(super) destination: String,
     pub(super) show_destination: bool,
     pub(super) style_label: bool,
-/// 本地文件链接的预渲染显示文本。
-///
-/// 当此字段存在时，markdown label 会被有意抑制，确保渲染出的转写始终反映真实的目标路径。
+    /// 本地文件链接的预渲染显示文本。
+    ///
+    /// 当此字段存在时，markdown label 会被有意抑制，确保渲染出的转写始终反映真实的目标路径。
     pub(super) local_target_display: Option<String>,
 }
 

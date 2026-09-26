@@ -150,42 +150,6 @@ pub fn set_terminal_title(title: &str) {
     let _ = write_osc(&mut std::io::stdout(), &format!("\x1b]0;{}\x07", sanitized));
 }
 
-#[cfg(test)]
-mod terminal_title_tests {
-    use super::*;
-
-    #[test]
-    fn terminal_title_sanitizes_esc_and_control_chars() {
-        // 测试 sanitized 字符串逻辑:ESC 和控制字符被移除。
-        let title = "Reflect · test\x1b\x00\x1f";
-        let sanitized: String = title
-            .chars()
-            .filter(|c| u32::from(*c) >= 0x20)
-            .filter(|c| *c != '\x1b')
-            .take(80)
-            .collect();
-        assert!(!sanitized.contains('\x1b'), "ESC should be removed");
-        assert!(!sanitized.contains('\x00'), "NUL should be removed");
-        assert!(
-            !sanitized.contains('\x1f'),
-            "Control char should be removed"
-        );
-        assert_eq!(sanitized, "Reflect · test");
-    }
-
-    #[test]
-    fn terminal_title_truncates_long_title() {
-        let title = "a".repeat(100);
-        let sanitized: String = title
-            .chars()
-            .filter(|c| u32::from(*c) >= 0x20)
-            .filter(|c| *c != '\x1b')
-            .take(80)
-            .collect();
-        assert_eq!(sanitized.len(), 80, "should be truncated to 80 chars");
-    }
-}
-
 /// 通过 crossterm OSC 查询写入 palette，并同步到 terminal_probe 形状。
 fn probe_and_cache_default_colors() {
     if !should_probe_default_colors() {
@@ -222,7 +186,7 @@ fn should_probe_default_colors() -> bool {
     if let Ok(v) = std::env::var("REFLECT_TUI_COLOR_PROBE") {
         return v != "0";
     }
-    use crate::tui_core::terminal_detection::{terminal_info, TerminalName};
+    use crate::tui_core::terminal_detection::{TerminalName, terminal_info};
     matches!(
         terminal_info().name,
         TerminalName::ITerm2
@@ -259,4 +223,39 @@ pub fn poll_event(timeout: std::time::Duration) -> anyhow::Result<Option<Event>>
 
 pub fn is_exit_key(key: KeyEvent) -> bool {
     matches!(key.code, KeyCode::Char('c')) && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+#[cfg(test)]
+mod terminal_title_tests {
+
+    #[test]
+    fn terminal_title_sanitizes_esc_and_control_chars() {
+        // 测试 sanitized 字符串逻辑:ESC 和控制字符被移除。
+        let title = "Reflect · test\x1b\x00\x1f";
+        let sanitized: String = title
+            .chars()
+            .filter(|c| u32::from(*c) >= 0x20)
+            .filter(|c| *c != '\x1b')
+            .take(80)
+            .collect();
+        assert!(!sanitized.contains('\x1b'), "ESC should be removed");
+        assert!(!sanitized.contains('\x00'), "NUL should be removed");
+        assert!(
+            !sanitized.contains('\x1f'),
+            "Control char should be removed"
+        );
+        assert_eq!(sanitized, "Reflect · test");
+    }
+
+    #[test]
+    fn terminal_title_truncates_long_title() {
+        let title = "a".repeat(100);
+        let sanitized: String = title
+            .chars()
+            .filter(|c| u32::from(*c) >= 0x20)
+            .filter(|c| *c != '\x1b')
+            .take(80)
+            .collect();
+        assert_eq!(sanitized.len(), 80, "should be truncated to 80 chars");
+    }
 }

@@ -215,7 +215,7 @@ pub enum PluginSharePrincipalRole {
     Owner,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PluginSource {
     Local {
         path: PathBuf,
@@ -231,13 +231,8 @@ pub enum PluginSource {
         version: Option<String>,
         registry: Option<String>,
     },
+    #[default]
     Remote,
-}
-
-impl Default for PluginSource {
-    fn default() -> Self {
-        PluginSource::Remote
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

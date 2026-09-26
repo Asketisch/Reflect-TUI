@@ -23,8 +23,8 @@ pub fn ls(limit: usize) -> anyhow::Result<()> {
     let sessions = list_sessions(&reflect_rollout::path::default_base()).unwrap_or_default();
 
     println!(
-        "{:<36}  {:<20}  {:<5}  {:<12}  {}",
-        "session_id", "title", "calls", "last", "model"
+        "{:<36}  {:<20}  {:<5}  {:<12}  model",
+        "session_id", "title", "calls", "last"
     );
     for (id, path, _mtime) in files.iter().take(limit) {
         let recs = read_model_io_file(path);

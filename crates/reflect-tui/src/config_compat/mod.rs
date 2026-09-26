@@ -68,9 +68,9 @@ impl crate::config_compat::RequirementSource {
 }
 
 impl crate::config_compat::ConfigRequirements {
-    pub fn exec_policy_source(&self) -> () {}
+    pub fn exec_policy_source(&self) {}
 }
 
 impl crate::config_compat::ManagedHooksRequirementsToml {
-    pub fn handler_count(&self) -> () {}
+    pub fn handler_count(&self) {}
 }
