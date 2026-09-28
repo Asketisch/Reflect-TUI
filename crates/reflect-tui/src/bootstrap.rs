@@ -387,8 +387,8 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
     let mcp_manager = bootstrap_mcp(&reflect_cfg, lifecycle_tx.clone(), tools.clone()).await;
     let _lsp_manager = bootstrap_lsp(&reflect_cfg, lifecycle_tx.clone(), tools.clone()).await;
 
-    // MCP 资源读取工具(与 exec 对齐;MCP 未启用时挂空 manager,工具自身
-    // 对空列表返回友好结果)。
+    // MCP 资源 / Prompts 读取工具(与 exec 对齐;MCP 未启用时挂空
+    // manager,工具自身对空列表返回友好结果)。v1.6 补 Prompts 原语。
     let mcp_for_resources = mcp_manager.clone().unwrap_or_else(|| {
         let (tx, _rx) = tokio::sync::mpsc::channel::<reflect_mcp::McpLifecycleEvent>(16);
         Arc::new(reflect_mcp::McpConnectionManager::new(tx))
@@ -397,6 +397,12 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
         mcp_for_resources.clone(),
     )));
     tools.register(Arc::new(reflect_mcp::ReadMcpResourceTool::new(
+        mcp_for_resources.clone(),
+    )));
+    tools.register(Arc::new(reflect_mcp::ListMcpPromptsTool::new(
+        mcp_for_resources.clone(),
+    )));
+    tools.register(Arc::new(reflect_mcp::GetMcpPromptTool::new(
         mcp_for_resources,
     )));
 
