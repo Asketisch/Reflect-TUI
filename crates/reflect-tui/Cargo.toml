@@ -63,7 +63,7 @@ dirs = "5"
 derive_more = { version = "0.99", features = ["is_variant"] }
 two-face = "0.5"
 unicode-segmentation = "1"
-itertools = "0.13"
+itertools = "0.14"
 supports-color = "3"
 reflect-core     = { workspace = true }
 reflect-protocol = { workspace = true }
