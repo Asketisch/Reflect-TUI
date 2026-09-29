@@ -40,8 +40,11 @@ jobs:
         with:
           workspaces: '. -> target'
 
+      # v0.22:修复 --format(cargo-audit)选项不再可用的问题 + 支持 CVSS 4.0 advisory
+      # 解析;0.21.x 同时移除了 --format 且解析不了新版 advisory DB 的
+      # CVSS 4.0 条目(RUSTSEC-2026-0073 实测),锁 0.22 线。
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked --version "^0.21"
+        run: cargo install cargo-audit --locked --version "^0.22"
 
       # 检出漏洞时 cargo-audit 以非零码退出;用 continue-on-error 保证
       # SARIF 仍然生成并上传,是否让 job 失败由最后一步决定。
@@ -123,13 +126,15 @@ jobs:
                       }
                   )
 
-              # 漏洞 → error;未维护/yanked → warning;信息类 → note
+              # 漏洞 → error;未维护/yanked/unsound → warning;信息类 → note
+              # (0.22 起 warnings 增加 unsound 类别)
               for entry in (report.get("vulnerabilities") or {}).get("list") or []:
                   add(entry, "error")
               warnings = report.get("warnings") or {}
               for key, level in (
                   ("unmaintained", "warning"),
                   ("yanked", "warning"),
+                  ("unsound", "warning"),
                   ("informational", "note"),
               ):
                   for entry in warnings.get(key) or []:

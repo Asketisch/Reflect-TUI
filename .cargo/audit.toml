@@ -1,0 +1,20 @@
+# cargo-audit 配置 —— CI 的 audit workflow(cargo audit --deny warnings)读取。
+#
+# ignore 原则:只 ignore **无法在本仓库修复**的传递依赖 advisory;
+# 出现 patched 版本可用时立即移除 ignore 并升级。
+# 理由注释:
+# - RUSTSEC-2025-0141:bincode 1.x 为 syntect 5.x 传递依赖,上游未迁移 bincode 2
+# - RUSTSEC-2024-0436:paste 为 ratatui fork(git 依赖)传递依赖
+# - RUSTSEC-2024-0320:yaml-rust 为 syntect 5.x 传递依赖,上游未迁移 yaml-rust2
+# - RUSTSEC-2026-0253 / RUSTSEC-2026-0002:lru 0.12.5 被 ratatui fork 锁定,
+#   修复版在 0.16/0.18 系,fork 迁移前无本地修复路径(ratatui-core 侧的
+#   lru 已升 0.18.2 修复)
+
+[advisories]
+ignore = [
+    "RUSTSEC-2025-0141",
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2024-0320",
+    "RUSTSEC-2026-0253",
+    "RUSTSEC-2026-0002",
+]
