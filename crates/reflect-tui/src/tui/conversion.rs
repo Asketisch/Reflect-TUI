@@ -80,15 +80,18 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
                 kind: ar.kind,
             }
         }
-        AskUserQuestion(aq) => {
-            let n = aq.questions.len();
-            if n == 1 {
-                UiEventKind::Notice(format!("Question: {}", aq.questions[0].question))
-            } else {
-                UiEventKind::Notice(format!("{n} questions asked"))
-            }
-        }
-        AskUserInput(ai) => UiEventKind::Notice(format!("Agent asks: {}", ai.prompt)),
+        // v1.x:结构化问题不再是 Notice 一行了事 —— agent 阻塞等待回执,
+        // 必须打开交互面板让用户作答(Op::AskUserQuestionResponse)。
+        AskUserQuestion(aq) => UiEventKind::QuestionAsked {
+            request_id: aq.request_id,
+            questions: aq.questions,
+        },
+        // v1.x:自由文本询问同理 —— composer 下一条提交捕获为回答。
+        AskUserInput(ai) => UiEventKind::AskUserRequested {
+            request_id: ai.request_id,
+            prompt: ai.prompt,
+            secret: ai.secret.unwrap_or(false),
+        },
         TokenCount(tc) => UiEventKind::TokenCount {
             input_tokens: tc.input_tokens,
             cached_tokens: tc.cached_tokens,
@@ -478,6 +481,81 @@ mod tests {
         match ui_r.kind {
             UiEventKind::PlanRejected { reason, .. } => assert_eq!(reason.as_deref(), Some("nope")),
             other => panic!("expected PlanRejected, got {other:?}"),
+        }
+    }
+
+    // ── v1.x 问答事件转换(agent 阻塞等待,必须转交互事件而非 Notice) ──
+
+    fn sample_question(multi: bool) -> reflect_protocol::Question {
+        reflect_protocol::Question::new(
+            "Approach",
+            "Use which approach?",
+            vec![
+                reflect_protocol::QuestionOption {
+                    label: "Fast".into(),
+                    description: "quick but rough".into(),
+                    preview: None,
+                },
+                reflect_protocol::QuestionOption {
+                    label: "Thorough".into(),
+                    description: "slow but solid".into(),
+                    preview: None,
+                },
+            ],
+            multi,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn convert_ask_user_question_routes_to_panel_event() {
+        use reflect_protocol::event_msg::{AskUserQuestionEvent, EventMsg};
+        let ev = reflect_protocol::Event::new(
+            "id-q",
+            EventMsg::AskUserQuestion(AskUserQuestionEvent::new(
+                "req-1",
+                vec![sample_question(false)],
+            )),
+        );
+        let ui = convert_event(ev).expect("AskUserQuestion 不应被丢弃");
+        match ui.kind {
+            UiEventKind::QuestionAsked {
+                request_id,
+                questions,
+            } => {
+                assert_eq!(request_id, "req-1");
+                assert_eq!(questions.len(), 1);
+                assert_eq!(questions[0].options.len(), 2);
+            }
+            other => panic!("expected QuestionAsked, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_ask_user_input_routes_to_composer_capture_event() {
+        use reflect_protocol::event_msg::AskUserInputEvent;
+        use reflect_protocol::event_msg::EventMsg;
+        let ev = reflect_protocol::Event::new(
+            "id-ai",
+            EventMsg::AskUserInput(AskUserInputEvent {
+                request_id: "req-2".into(),
+                prompt: "paste your token".into(),
+                secret: Some(true),
+                placeholder: None,
+            }),
+        );
+        let ui = convert_event(ev).expect("AskUserInput 不应被丢弃");
+        match ui.kind {
+            UiEventKind::AskUserRequested {
+                request_id,
+                prompt,
+                secret,
+            } => {
+                assert_eq!(request_id, "req-2");
+                assert_eq!(prompt, "paste your token");
+                assert!(secret, "secret 缺省按 false,显式 Some(true) 应保留");
+            }
+            other => panic!("expected AskUserRequested, got {other:?}"),
         }
     }
 }

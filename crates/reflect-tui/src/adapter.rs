@@ -105,6 +105,20 @@ pub enum UiEventKind {
         summary: String,
         kind: reflect_protocol::ApprovalKind,
     },
+    /// v1.x:LLM 主动询问的结构化问题(`ask_user_question` 工具)。调用方
+    /// 据此打开问题面板;用户作答/取消后回送
+    /// `Op::AskUserQuestionResponse { id, answers }` 解锁阻塞中的 agent。
+    QuestionAsked {
+        request_id: String,
+        questions: Vec<reflect_protocol::Question>,
+    },
+    /// v1.x:LLM 自由文本询问(`ask_user` 工具)。composer 的下一条提交被
+    /// 捕获为回答(`Op::AskUserInputResponse { id, text }`);Esc 回送空文本。
+    AskUserRequested {
+        request_id: String,
+        prompt: String,
+        secret: bool,
+    },
     /// 上下文窗口配置(SessionConfigured 携带的 context_window_size)。
     ContextWindowConfigured {
         window_size: Option<u32>,
@@ -247,6 +261,10 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             state.tool_live = None;
             // 新回合开始，清除上回合残留的审批 banner，避免跨回合 stale state。
             state.pending_approval = None;
+            // 同理清理过期的问答状态(正常情况下 gate 阻塞期间回合不会结束,
+            // 这里兜底 abort/超时路径,避免残留面板卡住键盘)。
+            state.pending_question = None;
+            state.pending_ask_user = None;
             // v1.x fork 接线:记录本回合 turn_id。user prompt 在 emit_op 前
             // 已 push 进 history,TurnStarted 回流时二者配对,追加进
             // user_prompt_turns(与 fork_rewind overlay 的 user_prompt_indices
@@ -289,6 +307,8 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             state.seen_tool_calls.clear();
             // 回合结束，清除残留的审批 banner，避免显示已过时的审批提示。
             state.pending_approval = None;
+            state.pending_question = None;
+            state.pending_ask_user = None;
         }
         UiEventKind::AgentDelta(delta) => {
             // ── reasoning → agent 正文边界：先 flush 累积的思考成一条消息，
@@ -454,6 +474,44 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
         UiEventKind::Notice(text) => state.history.push(UiHistoryItem::Notice(text)),
         UiEventKind::ApprovalNeeded { id, summary, kind } => {
             state.pending_approval = Some(PendingApproval { id, summary, kind });
+        }
+        UiEventKind::QuestionAsked {
+            request_id,
+            questions,
+        } => {
+            // 问题进对话流留痕(纯文本),面板状态另存(agent 阻塞等待回执)。
+            let n = questions.len();
+            let preview = questions
+                .first()
+                .map(|q| q.question.clone())
+                .unwrap_or_default();
+            state.history.push(UiHistoryItem::Notice(if n == 1 {
+                format!("❓ {preview}")
+            } else {
+                format!("❓ agent 提了 {n} 个问题: {preview}")
+            }));
+            state.pending_question = Some(crate::events::QuestionPromptState::new(
+                request_id, questions,
+            ));
+        }
+        UiEventKind::AskUserRequested {
+            request_id,
+            prompt,
+            secret,
+        } => {
+            state.history.push(UiHistoryItem::Notice(format!(
+                "❓ agent 等待输入:{}(在下方输入后回车回答,Esc 取消)",
+                if secret {
+                    "<敏感信息已隐藏>"
+                } else {
+                    &prompt
+                }
+            )));
+            state.pending_ask_user = Some(crate::events::AskUserPendingState {
+                request_id,
+                prompt,
+                secret,
+            });
         }
         UiEventKind::ContextWindowConfigured { window_size, model } => {
             state.context_usage.window_size = window_size;
@@ -743,6 +801,109 @@ pub fn approval_block(pending: &PendingApproval) -> ratatui::widgets::Paragraph<
         .border_style(Style::default().fg(Color::Yellow));
 
     Paragraph::new(vec![title, content, hint]).block(block)
+}
+
+/// v1.x:问题面板高度(带边框) = 标题 + 题干 + 选项数 + 按键提示 + 边框 2。
+pub fn question_panel_height(q: &crate::events::QuestionPromptState) -> u16 {
+    let Some(cur) = q.questions.get(q.current) else {
+        return 4; // 不应发生(协议保证 ≥1 题);防御式给最小高度
+    };
+    cur.options.len() as u16 + 5
+}
+
+/// v1.x:结构化问题面板(带边框,渲染在 composer 上方)。
+///
+/// 标题 `❓ QUESTION n/m` 青色;题干白字;选项列表逐行渲染
+/// `[ ]/[x] label — description`(高亮行反白标记 `>`);底部按键提示。
+pub fn question_block(q: &crate::events::QuestionPromptState) -> Paragraph<'static> {
+    use ratatui::widgets::{Block, Borders};
+
+    let Some(cur) = q.questions.get(q.current) else {
+        return Paragraph::new("");
+    };
+    let multi_tag = if cur.multi_select { "多选" } else { "单选" };
+    let title = Line::from(Span::styled(
+        format!(
+            " ❓ QUESTION {}/{} · {} · {} ",
+            q.current + 1,
+            q.questions.len(),
+            cur.header,
+            multi_tag
+        ),
+        Style::default()
+            .fg(Color::Cyan)
+            .bg(Color::Black)
+            .add_modifier(Modifier::BOLD),
+    ));
+
+    let mut lines = vec![
+        title,
+        Line::from(Span::styled(
+            format!("  {}", cur.question),
+            Style::default().fg(Color::White),
+        )),
+    ];
+    for (i, opt) in cur.options.iter().enumerate() {
+        let checked = q.selections[q.current].contains(&i);
+        let marker = if checked { "[x]" } else { "[ ]" };
+        let style = if i == q.highlight {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else if checked {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let desc = if opt.description.is_empty() {
+            String::new()
+        } else {
+            format!(" — {}", opt.description)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {marker} {label}", label = opt.label), style),
+            Span::styled(desc, Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+    lines.push(Line::from(Span::styled(
+        " ↑/↓ 移动 · 空格/数字勾选 · Enter 确认 · Esc 取消 ",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    Paragraph::new(lines).block(block)
+}
+
+/// v1.x:自由文本询问提示条高度(无边框 2 行)。
+pub fn ask_user_bar_height() -> u16 {
+    2
+}
+
+/// v1.x:自由文本询问提示条(无边框 2 行,渲染在 composer 上方)。
+/// composer 的下一条提交即回答;Esc 取消。
+pub fn ask_user_block(a: &crate::events::AskUserPendingState) -> Paragraph<'static> {
+    let title = Line::from(Span::styled(
+        " ❓ AGENT 等待你的回答 ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
+    let shown = if a.secret {
+        "<敏感信息,输入将以普通回显提交>".to_string()
+    } else {
+        a.prompt.clone()
+    };
+    let hint = Line::from(vec![
+        Span::styled(format!(" {shown} "), Style::default().fg(Color::White)),
+        Span::styled(
+            "(回车=回答 · Esc=取消)",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]);
+    Paragraph::new(vec![title, hint])
 }
 
 /// Plan 审批提示条块（3 行,无边框,渲染在 composer 正上方）。

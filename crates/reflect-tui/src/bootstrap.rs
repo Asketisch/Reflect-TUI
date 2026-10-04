@@ -117,7 +117,7 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
     // 2. 注册内置工具的 Tool registry（与 reflect-exec 同集合）。
     let tools = Arc::new(ToolRegistry::default());
     tools.register(Arc::new(builtins::EchoTool));
-    tools.register(Arc::new(builtins::BashTool));
+    tools.register(Arc::new(builtins::BashTool::default()));
     tools.register(Arc::new(builtins::ReadTool));
     tools.register(Arc::new(builtins::WriteTool));
     tools.register(Arc::new(builtins::EditTool));

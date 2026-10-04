@@ -394,10 +394,22 @@ pub async fn run_async(
                 let composer_h = state.composer.desired_height(width);
                 // 两种审批条高度不同:plan_approval_prompt 3 行(无边框),
                 // approval_block 5 行(3 行内容 + 上下边框)。二者互斥,取其一。
+                // v1.x:问题面板(ask_user_question)与自由文本询问条
+                // (ask_user)额外各占一段(与审批条互斥场景少,直接叠加)。
                 let approval_h: u16 = if state.pending_approval.is_some() {
                     5
                 } else if state.plan_approval.is_some() {
                     3
+                } else {
+                    0
+                };
+                let question_h: u16 = state
+                    .pending_question
+                    .as_ref()
+                    .map(adapter::question_panel_height)
+                    .unwrap_or(0);
+                let ask_user_h: u16 = if state.pending_ask_user.is_some() {
+                    adapter::ask_user_bar_height()
                 } else {
                     0
                 };
@@ -406,6 +418,8 @@ pub async fn run_async(
                 let desired = composer_h
                     .saturating_add(live_h)
                     .saturating_add(approval_h)
+                    .saturating_add(question_h)
+                    .saturating_add(ask_user_h)
                     .saturating_add(status_h)
                     .min(height)
                     .max(1);
@@ -1914,6 +1928,99 @@ fn resolve_model_switch(
     registry.next_for(&spec, &[]).map(|_| spec)
 }
 
+/// v1.x:问题面板的按键处理结果。`None` = 仅更新面板内部状态(高亮/勾选);
+/// `Answer` = 整组作答完成或取消,携带逐题答案(`cancelled=true` 时全部为空)。
+enum QuestionPanelAction {
+    None,
+    Answer(Vec<reflect_protocol::Answer>, bool),
+}
+
+/// v1.x:问题面板按键 → 动作。↑/↓ 移动高亮;空格 / 数字键 1-9 勾选
+/// (单选覆盖、多选切换);Enter 提交当前题并前进(最后一题 → 提交全部,
+/// 任一题未选则不前进);Esc 取消整组(回送空 Answer,协议语义 = 未回答)。
+fn question_panel_key(key: KeyEvent, state: &mut UiState) -> QuestionPanelAction {
+    let Some(q) = state.pending_question.as_mut() else {
+        return QuestionPanelAction::None;
+    };
+    let Some(cur) = q.questions.get(q.current).cloned() else {
+        return QuestionPanelAction::None;
+    };
+    // 勾选逻辑:单选覆盖为该下标,多选切换该下标。
+    fn apply_select(
+        selections: &mut [Vec<usize>],
+        current: usize,
+        idx: usize,
+        multi: bool,
+    ) {
+        let sel = &mut selections[current];
+        if multi {
+            if let Some(p) = sel.iter().position(|&s| s == idx) {
+                sel.remove(p);
+            } else {
+                sel.push(idx);
+            }
+        } else {
+            sel.clear();
+            sel.push(idx);
+        }
+    }
+    match key.code {
+        KeyCode::Esc => {
+            let answers = vec![reflect_protocol::Answer::default(); q.questions.len()];
+            QuestionPanelAction::Answer(answers, true)
+        }
+        KeyCode::Up => {
+            q.highlight = q.highlight.saturating_sub(1);
+            QuestionPanelAction::None
+        }
+        KeyCode::Down => {
+            if q.highlight + 1 < cur.options.len() {
+                q.highlight += 1;
+            }
+            QuestionPanelAction::None
+        }
+        KeyCode::Char(' ') => {
+            apply_select(&mut q.selections, q.current, q.highlight, cur.multi_select);
+            QuestionPanelAction::None
+        }
+        KeyCode::Char(c @ '1'..='9') => {
+            let idx = (c as u8 - b'1') as usize;
+            if idx < cur.options.len() {
+                apply_select(&mut q.selections, q.current, idx, cur.multi_select);
+                q.highlight = idx;
+            }
+            QuestionPanelAction::None
+        }
+        KeyCode::Enter => {
+            let sel = q.selections[q.current].clone();
+            if sel.is_empty() {
+                // 未作答不前进(单选必须选一,多选也要求 ≥1;取消走 Esc)。
+                return QuestionPanelAction::None;
+            }
+            if q.current + 1 < q.questions.len() {
+                q.current += 1;
+                q.highlight = 0;
+                QuestionPanelAction::None
+            } else {
+                let answers = q
+                    .questions
+                    .iter()
+                    .zip(&q.selections)
+                    .map(|(question, sel)| {
+                        if question.multi_select {
+                            reflect_protocol::Answer::multi(sel.clone())
+                        } else {
+                            reflect_protocol::Answer::single(sel[0])
+                        }
+                    })
+                    .collect();
+                QuestionPanelAction::Answer(answers, false)
+            }
+        }
+        _ => QuestionPanelAction::None,
+    }
+}
+
 fn handle_key(
     key: KeyEvent,
     state: &mut UiState,
@@ -1922,6 +2029,58 @@ fn handle_key(
     event_tx: &mpsc::UnboundedSender<UiEvent>,
     history_tail: &mut usize,
 ) -> anyhow::Result<bool> {
+    // v1.x:结构化问题面板(ask_user_question)独占键位 —— agent 阻塞等待
+    // 应答,任何按键都不应漏给 composer / 其他 overlay。
+    if state.pending_question.is_some() {
+        match question_panel_key(key, state) {
+            QuestionPanelAction::None => return Ok(false),
+            QuestionPanelAction::Answer(answers, cancelled) => {
+                if let Some(q) = state.pending_question.take() {
+                    emit_op(
+                        thread,
+                        event_tx,
+                        reflect_protocol::Op::AskUserQuestionResponse {
+                            id: q.request_id,
+                            answers: reflect_protocol::AskUserAnswer { answers },
+                        },
+                    );
+                    let n = q.questions.len();
+                    state
+                        .history
+                        .push(adapter::UiHistoryItem::Notice(if cancelled {
+                            "问题面板已取消(全部题按未回答回送)。".into()
+                        } else {
+                            format!("已回答 {n} 个问题,agent 继续。")
+                        }));
+                }
+                return Ok(false);
+            }
+        }
+    }
+    // v1.x:自由文本询问(ask_user)—— Esc 取消(回送空文本,协议语义 =
+    // 用户未回答);composer 输入在 `ComposerAction::Submitted` 路径捕获为
+    // 回答。此分支必须先于 busy-Esc 中断,否则 Esc 会被中断语义抢走。
+    if state.pending_ask_user.is_some()
+        && key.code == KeyCode::Esc
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        if let Some(pending) = state.pending_ask_user.take() {
+            emit_op(
+                thread,
+                event_tx,
+                reflect_protocol::Op::AskUserInputResponse {
+                    id: pending.request_id,
+                    text: String::new(),
+                },
+            );
+            state.history.push(adapter::UiHistoryItem::Notice(
+                "已取消回答(空文本回送)。".into(),
+            ));
+        }
+        return Ok(false);
+    }
     // v1.x Plan mode 审批弹窗:1/2/3/Esc + 滚动键 优先拦截(plan_approval 打开时)。
     if let Some(plan) = state.plan_approval.clone() {
         let choice = match key.code {
@@ -2156,6 +2315,23 @@ fn handle_key(
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
     {
+        // v1.x:busy 回合中 Esc = 中断当前 turn(`Op::Interrupt`)。引擎取消
+        // 回合级令牌(丢弃进行中的模型流 / bash / 审批等待)并以
+        // `TurnAborted` 收尾 —— conversion.rs 已把它映射为 TurnCompleted,
+        // spinner / HUD 的 busy 状态随之复位。空闲时 Esc 仍归 composer
+        // (abort 候选 / 清空输入),行为不变。审批弹窗 / plan 审批的 Esc
+        // 已在上方各自分支提前消费,不会落到这里。
+        if state.busy {
+            emit_op(
+                thread,
+                event_tx,
+                reflect_protocol::Op::Interrupt { child_id: None },
+            );
+            state.history.push(adapter::UiHistoryItem::Notice(
+                "⏹ 已发送中断请求,正在停止当前回合…".into(),
+            ));
+            return Ok(false);
+        }
         let _ = state.composer.input(key);
         return Ok(false);
     }
@@ -2441,6 +2617,23 @@ fn handle_key(
 
     match state.composer.input(key) {
         ComposerAction::Submitted(text) => {
+            // v1.x:ask_user 等待中 → 本条提交是回答,不再作为普通 user
+            // input(空文本 = 取消,协议语义;正常不会发生 —— 空提交不触发
+            // Submitted)。
+            if let Some(pending) = state.pending_ask_user.take() {
+                emit_op(
+                    thread,
+                    event_tx,
+                    reflect_protocol::Op::AskUserInputResponse {
+                        id: pending.request_id,
+                        text: text.clone(),
+                    },
+                );
+                state
+                    .history
+                    .push(adapter::UiHistoryItem::User(format!("(回答) {text}")));
+                return Ok(false);
+            }
             if text.is_empty() {
                 return Ok(false);
             }
@@ -3201,18 +3394,33 @@ fn draw(
     } else {
         0
     };
+    // v1.x:问题面板(ask_user_question,带边框,高度随当前题选项数)与
+    // 自由文本询问条(ask_user,无边框 2 行)。
+    let question_h: u16 = state
+        .pending_question
+        .as_ref()
+        .map(adapter::question_panel_height)
+        .unwrap_or(0);
+    let ask_user_h: u16 = if state.pending_ask_user.is_some() {
+        adapter::ask_user_bar_height()
+    } else {
+        0
+    };
     // HUD 行数(窄屏防御):按「屏幕总高度」判定,不是视口高度
     // (视口高度 = desired,通常很小,用它判定会让 hud_height 永远返回 0)。
     let status_h: u16 = history_render::statusline::hud_height(screen_height);
 
-    // 布局顺序:live 流式区 → 审批提示区 → composer → HUD。审批提示条紧贴
-    // composer 上方,既不会被 scrollback 淹没,也不遮挡正文。
+    // 布局顺序:live 流式区 → 审批提示区 → 问题面板区 → ask_user 条 →
+    // composer → HUD。提示条紧贴 composer 上方,既不会被 scrollback 淹没,
+    // 也不遮挡正文。
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(live_h),
             Constraint::Length(plan_approval_h),
             Constraint::Length(approval_h),
+            Constraint::Length(question_h),
+            Constraint::Length(ask_user_h),
             Constraint::Length(composer_h),
             Constraint::Length(status_h),
         ])
@@ -3231,16 +3439,22 @@ fn draw(
     }
 
     // plan 审批提示优先,其次工具审批(二者不会同时出现,plan 审批时
-    // pending_approval 必为 None)。
+    // pending_approval 必为 None)。问题面板 / ask_user 条独占其后两段。
     if let Some(ref plan) = state.plan_approval {
         frame.render_widget_ref(adapter::plan_approval_prompt(plan), layout[1]);
     }
     if let Some(ref pending) = state.pending_approval {
         frame.render_widget_ref(adapter::approval_block(pending), layout[2]);
     }
+    if let Some(ref question) = state.pending_question {
+        frame.render_widget_ref(adapter::question_block(question), layout[3]);
+    }
+    if let Some(ref ask) = state.pending_ask_user {
+        frame.render_widget_ref(adapter::ask_user_block(ask), layout[4]);
+    }
 
     // Composer：不再手工铺 Black 底；ChatComposer 用 user_message_style()。
-    let composer_area = layout[3];
+    let composer_area = layout[5];
     state.composer.render_ref(composer_area, frame.buffer_mut());
     if let Some((x, y)) = state.composer.cursor_pos(composer_area) {
         frame.set_cursor_position((x, y));
@@ -3259,7 +3473,7 @@ fn draw(
                 hud_lines.push(metrics.clone());
             }
         }
-        frame.render_widget_ref(Paragraph::new(hud_lines), layout[4]);
+        frame.render_widget_ref(Paragraph::new(hud_lines), layout[6]);
     }
 
     // 居中 overlay(plan 弹窗 + picker 覆盖层)由 draw / draw_fullscreen 共用。
@@ -4789,5 +5003,162 @@ mod draw_tests {
         terminal
             .draw(|frame| draw(frame, &mut state, frame.area().height, &[], 0))
             .unwrap();
+    }
+
+    // ── v1.x:结构化问题面板按键逻辑 ─────────────────────────────────
+
+    use crate::events::QuestionPromptState;
+    use reflect_protocol::{Question, QuestionOption};
+
+    fn panel_question(multi: bool) -> Question {
+        Question::new(
+            "Approach",
+            "Use which approach?",
+            vec![
+                QuestionOption {
+                    label: "Fast".into(),
+                    description: "quick but rough".into(),
+                    preview: None,
+                },
+                QuestionOption {
+                    label: "Thorough".into(),
+                    description: "slow but solid".into(),
+                    preview: None,
+                },
+                QuestionOption {
+                    label: "Hybrid".into(),
+                    description: "mixed".into(),
+                    preview: None,
+                },
+            ],
+            multi,
+        )
+        .unwrap()
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn question_panel_single_select_flow() {
+        let mut state = UiState::default();
+        state.pending_question = Some(QuestionPromptState::new(
+            "req-1".into(),
+            vec![panel_question(false)],
+        ));
+        // 未选时 Enter 不前进。
+        assert!(matches!(
+            question_panel_key(key(KeyCode::Enter), &mut state),
+            QuestionPanelAction::None
+        ));
+        // 数字键 2 勾选第二项。
+        assert!(matches!(
+            question_panel_key(key(KeyCode::Char('2')), &mut state),
+            QuestionPanelAction::None
+        ));
+        assert_eq!(
+            state.pending_question.as_ref().unwrap().selections[0],
+            vec![1]
+        );
+        // Enter 提交(仅一题 → 直接 Answer)。
+        match question_panel_key(key(KeyCode::Enter), &mut state) {
+            QuestionPanelAction::Answer(answers, cancelled) => {
+                assert!(!cancelled);
+                assert_eq!(answers.len(), 1);
+                assert_eq!(answers[0].selected, vec![1]);
+                assert!(answers[0].custom.is_none());
+            }
+            QuestionPanelAction::None => panic!("Enter 应提交答案"),
+        }
+    }
+
+    #[test]
+    fn question_panel_multi_select_and_navigation() {
+        let mut state = UiState::default();
+        state.pending_question = Some(QuestionPromptState::new(
+            "req-2".into(),
+            vec![panel_question(true)],
+        ));
+        // 空格切换高亮项(默认高亮 0)。
+        question_panel_key(key(KeyCode::Char(' ')), &mut state);
+        // ↓ 到 1 再空格。
+        question_panel_key(key(KeyCode::Down), &mut state);
+        question_panel_key(key(KeyCode::Char(' ')), &mut state);
+        assert_eq!(
+            state.pending_question.as_ref().unwrap().selections[0],
+            vec![0, 1]
+        );
+        // 再次空格取消高亮项。
+        question_panel_key(key(KeyCode::Char(' ')), &mut state);
+        assert_eq!(
+            state.pending_question.as_ref().unwrap().selections[0],
+            vec![0]
+        );
+        // Enter 提交多选。
+        match question_panel_key(key(KeyCode::Enter), &mut state) {
+            QuestionPanelAction::Answer(answers, false) => {
+                assert_eq!(answers[0].selected, vec![0]);
+            }
+            _ => panic!("多选 Enter 应提交"),
+        }
+    }
+
+    #[test]
+    fn question_panel_multi_question_advances_then_submits_all() {
+        let mut state = UiState::default();
+        state.pending_question = Some(QuestionPromptState::new(
+            "req-3".into(),
+            vec![panel_question(false), panel_question(false)],
+        ));
+        question_panel_key(key(KeyCode::Char('1')), &mut state);
+        // 第一题 Enter → 前进到第二题(不提交)。
+        assert!(matches!(
+            question_panel_key(key(KeyCode::Enter), &mut state),
+            QuestionPanelAction::None
+        ));
+        assert_eq!(state.pending_question.as_ref().unwrap().current, 1);
+        // 第二题作答后 Enter → 全部提交,两题答案齐备。
+        question_panel_key(key(KeyCode::Char('3')), &mut state);
+        match question_panel_key(key(KeyCode::Enter), &mut state) {
+            QuestionPanelAction::Answer(answers, false) => {
+                assert_eq!(answers.len(), 2);
+                assert_eq!(answers[0].selected, vec![0]);
+                assert_eq!(answers[1].selected, vec![2]);
+            }
+            _ => panic!("最后一题 Enter 应提交全部"),
+        }
+    }
+
+    #[test]
+    fn question_panel_esc_cancels_with_empty_answers() {
+        let mut state = UiState::default();
+        state.pending_question = Some(QuestionPromptState::new(
+            "req-4".into(),
+            vec![panel_question(false), panel_question(false)],
+        ));
+        question_panel_key(key(KeyCode::Char('1')), &mut state);
+        match question_panel_key(key(KeyCode::Esc), &mut state) {
+            QuestionPanelAction::Answer(answers, true) => {
+                assert_eq!(answers.len(), 2, "取消时按题数回送空 Answer");
+                assert!(answers.iter().all(|a| a.selected.is_empty()));
+            }
+            _ => panic!("Esc 应取消整组"),
+        }
+    }
+
+    #[test]
+    fn question_panel_ignores_out_of_range_digits() {
+        let mut state = UiState::default();
+        state.pending_question = Some(QuestionPromptState::new(
+            "req-5".into(),
+            vec![panel_question(false)],
+        ));
+        // 选项只有 3 个:按 9 不应选中也不应 panic。
+        assert!(matches!(
+            question_panel_key(key(KeyCode::Char('9')), &mut state),
+            QuestionPanelAction::None
+        ));
+        assert!(state.pending_question.as_ref().unwrap().selections[0].is_empty());
     }
 }

@@ -74,6 +74,55 @@ pub struct PlanEnterRequestState {
     pub task: String,
 }
 
+/// v1.x:结构化问题面板状态(`ask_user_question` 工具触发)。
+///
+/// 由 `EventMsg::AskUserQuestion` 填入 `UiState.pending_question`,在
+/// composer 上方渲染问题面板;用户逐题作答后回送
+/// `Op::AskUserQuestionResponse { id, answers }`(agent 阻塞等待,必须回送)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuestionPromptState {
+    /// 与 `AskUserQuestionEvent.request_id` 配对;`Op::AskUserQuestionResponse.id`
+    /// 必须回填这个值。
+    pub request_id: String,
+    /// 问题列表(1-4 题,协议校验过 options 2-4 个)。
+    pub questions: Vec<reflect_protocol::Question>,
+    /// 当前作答的题号(逐题作答,Enter 前进)。
+    pub current: usize,
+    /// 每题已勾选的 option 下标(与 questions 等长;单选至多 1 个,多选任意)。
+    pub selections: Vec<Vec<usize>>,
+    /// 当前题的高亮 option 下标(↑/↓ 移动)。
+    pub highlight: usize,
+}
+
+impl QuestionPromptState {
+    /// 构造一个新问题面板状态(全部题未作答、高亮第 0 项)。
+    pub fn new(request_id: String, questions: Vec<reflect_protocol::Question>) -> Self {
+        let n = questions.len();
+        Self {
+            request_id,
+            questions,
+            current: 0,
+            selections: vec![Vec::new(); n],
+            highlight: 0,
+        }
+    }
+}
+
+/// v1.x:自由文本询问状态(`ask_user` 工具触发)。
+///
+/// 由 `EventMsg::AskUserInput` 填入 `UiState.pending_ask_user`:composer
+/// 的下一条提交被捕获为回答(`Op::AskUserInputResponse { id, text }`);
+/// Esc 回送空文本(协议语义 = 用户取消)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskUserPendingState {
+    /// 与 `AskUserInputEvent.request_id` 配对。
+    pub request_id: String,
+    /// agent 的问题文本(渲染在 composer 上方提示条)。
+    pub prompt: String,
+    /// 敏感输入(回显掩码提示;composer 本身不做掩码,只影响提示文案)。
+    pub secret: bool,
+}
+
 /// v0.4+ `/loop <secs> <cmd>` 的本地调度状态。
 ///
 /// `/loop` 把一个 slash 命令或自由文本作为「每 N 秒自动提交一次」的循环挂到
@@ -200,6 +249,13 @@ pub struct UiState {
     /// v1.x Plan mode:`PlanReady` 到来时填入,打开审批弹窗;
     /// 用户 `1/2/3/Esc` 或 `PlanApproved/Rejected` 后清空。
     pub plan_approval: Option<PlanApprovalState>,
+    /// v1.x:结构化问题面板(`ask_user_question`)。`QuestionAsked` 事件填入,
+    /// 用户作答/取消(`Op::AskUserQuestionResponse`)后清空。agent 阻塞等待,
+    /// 面板打开期间独占键盘。
+    pub pending_question: Option<QuestionPromptState>,
+    /// v1.x:自由文本询问(`ask_user`)。composer 下一条提交被捕获为回答,
+    /// Esc 回送空文本;回送后清空。
+    pub pending_ask_user: Option<AskUserPendingState>,
     /// v1.x `/raw [on|off]`：切换 raw scrollback 模式（绕过 markdown / glyph 改写）。
     pub raw_output: bool,
     /// 全屏模式：`history` 区距底部的滚动偏移（0 = 贴底，新消息可见）。
@@ -561,6 +617,8 @@ impl Default for UiState {
             status_model: None,
             permission_mode: reflect_protocol::PermissionMode::default(),
             plan_approval: None,
+            pending_question: None,
+            pending_ask_user: None,
             raw_output: false,
             show_thinking: true,
             session_overlay: None,
