@@ -5,6 +5,41 @@
 
 ## [Unreleased]
 
+### 能力补齐（对标 codex / claude code / pi 审计后）
+
+- **prompt 历史召回**：Up / Ctrl+P / Ctrl+N / Ctrl+R 此前全是死键 —— vendored
+  `ChatComposerHistory` 跑在未接线的 `AppEvent` 往返上（对面是 vendored `App`），
+  Ctrl+R 更糟：会真的开一个搜索会话然后永远出不来匹配。新增自包含
+  `prompt_history.rs`：JSONL 落盘（temp + rename 原子写，崩溃不会丢全部历史）、
+  Up 召回 / Down 越过最新一条还原草稿、跳过空与超长与连续重复、上限 500 条；
+  多行草稿时方向键仍归 composer 移动光标；Ctrl+R 反向搜索（大小写不敏感子串、
+  重复按找更旧匹配、Enter 接受、Esc 还原草稿）。
+- **审批 always-allow 可收窄**：`[A]lways allow` 对 bash 原先写
+  `shell_pattern: None` = 放行**所有** shell 命令，而 UI 只显示一行 80 字符
+  JSON 摘要。新增 `[S]cope` 键按实际命令派生 `shell_pattern`
+  （`git push origin main` → `git push *`，复合命令取第一段），命令解析用
+  submodule 新加的 `resolve_bash_command`（按 cmd → command → cmdline 解析别名）。
+  Notice 现在明确说出放行范围。
+- **审批弹窗补 diff 预览**：Edit / Write 审批显示目标路径 + 最多 3 行 `-` /
+  3 行 `+`（按字符截断，CJK 不会 panic）；审批块高度改为按内容动态计算。
+- **`/checkpoint` 接 git**：此前每个按钮都是占位通知（"git auto-commit not yet
+  wired" / "git reset --hard not yet wired" / "(placeholder)"）。新增
+  `git_checkpoint.rs`：create = `git add -A` + 带前缀提交 + tag；list 走
+  `for-each-ref refs/tags/reflect-cp/*`（**必须打 tag**：rewind 会先做安全快照
+  再 `reset --hard`，那之后安全快照已不在分支历史上，只有 tag 还指着它）；
+  rewind 只接受本模块创建的 checkpoint 且**回退前先做安全快照提交**，脏树时
+  未提交的工作不会被一次性烧掉。
+- **图片附件真正进模型上下文**：`/image` picker 此前只往 composer 插一段
+  `@<path>` 文本，而 `Submission::user_input_items` 从未被 TUI 调用 —— 附件
+  等于被静默丢掉。改为走 composer 的真实图片附件路径，提交时构建
+  `Text` + `LocalImage` items。
+- **`/theme` 真正生效**：此前选完只打印 "display only — palette apply not yet
+  wired"。新增语义调色板 `theme::Palette`（brand / dim / warn / danger / ok /
+  info / plan），statusline 与 metrics 行改引角色而非硬编码颜色；`no-color`
+  主题真正剥掉全部颜色，`light` 避开在白底上不可见的 `DarkGray`；选择持久化到
+  `<reflect home>/theme`（原子写），启动优先级
+  `NO_COLOR` > `REFLECT_TUI_THEME` > 持久化 > 深色默认。
+
 ### 修复（对标 codex / claude code 审计后的 TUI 层缺陷）
 
 - **Ctrl-C 不再在回合进行中直接退出 TUI**：此前 Ctrl-C 无条件映射 `Exit`，
@@ -35,6 +70,20 @@
   在终端宽度 ≤ 4 时下溢（dev/test profile 开了 overflow-checks）。钳到
   `saturating_sub(4).max(1)`，调用侧 `open_diff_overlay` 的 width 也钳到 ≥ 8。
 - `cargo fmt` 收口：`question_panel_key` 内 `apply_select` 签名单行化。
+
+### 正确性收口（潜在 panic / 非原子写 / 无上限增长）
+
+- `/diff` 之外的三处算术缺陷：pager 底栏百分比 `width - pct_w - 1` 在分隔条
+  窄于百分比文本时下溢（debug panic / release 回绕成越界 x），装不下就整个不画；
+  sixel 缓存 `frame.height()` 为 0 时除零 panic，补零维度守卫；`/usage` 图表
+  `value * 4` / 周累加在 overflow-checks 下 panic、release 下回绕成负数让高用量
+  渲染成低等级，统一改 `saturating_*`。
+- 三处非原子写改 temp + rename：CLI `session export`（崩溃会把用户指定的导出
+  路径截断成不完整 markdown）、pets sixel 缓存（`path.exists()` 快路径不校验
+  内容，损坏条目会被当有效缓存复用）、prompt 历史与主题持久化。
+- `state.history` 此前无上限增长（每个 `StreamedAgent` 片段、每条 `Notice`
+  永久留在内存）。钳到 5000 条并同步下调 `history_tail` 游标 —— 它按 history
+  下标寻址，不同步会让 scrollback 重复或漏渲染。完整内容本就在 rollout JSONL 里。
 
 ### 能力接线（对齐 headless reflect-exec，引擎能力在 TUI 内真正可用）
 

@@ -276,6 +276,27 @@ pub fn agent_replies_in_order(history: &[UiHistoryItem]) -> Vec<String> {
     replies
 }
 
+/// `state.history` 的内存上限(条目数)。
+///
+/// 此前无上限:每个 `StreamedAgent` 片段、每条 `Notice` 都永久留在内存里供
+/// overlay 读取,长会话会一直涨。完整内容本来就在 rollout JSONL 里
+/// (`/resume` 与 CLI `session show` 可读),所以内存里只需保留一个够用的窗口。
+pub const MAX_HISTORY_ENTRIES: usize = 5_000;
+
+/// 把 `state.history` 钳到 [`MAX_HISTORY_ENTRIES`],丢弃最旧的条目。
+///
+/// `history_tail` 是主循环的「已刷进 scrollback 的游标」,按 `history` 下标
+/// 寻址 —— 从前端裁剪必须同步下调它,否则游标会指向错位的条目(表现为
+/// scrollback 重复渲染或漏渲染)。
+pub fn trim_history(history: &mut Vec<UiHistoryItem>, history_tail: &mut usize) {
+    let excess = history.len().saturating_sub(MAX_HISTORY_ENTRIES);
+    if excess == 0 {
+        return;
+    }
+    history.drain(..excess);
+    *history_tail = history_tail.saturating_sub(excess);
+}
+
 /// 应用 UI 事件。
 ///
 /// 流式引擎接线：`AgentDelta` 一方面 push 进 `StreamController`（保持与 Reflect
@@ -1142,6 +1163,44 @@ pub fn approval_banner(pending: &PendingApproval) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trim_history_keeps_tail_cursor_consistent() {
+        // history_tail 是主循环「已刷进 scrollback 的游标」,按 history 下标
+        // 寻址。从前端裁剪必须同步下调它,否则游标指错位 —— 表现为 scrollback
+        // 重复渲染或漏渲染。
+        let mut history: Vec<UiHistoryItem> = (0..MAX_HISTORY_ENTRIES + 100)
+            .map(|i| UiHistoryItem::Notice(format!("n{i}")))
+            .collect();
+        let mut tail = history.len(); // 全部已刷
+        trim_history(&mut history, &mut tail);
+        assert_eq!(history.len(), MAX_HISTORY_ENTRIES);
+        assert_eq!(tail, MAX_HISTORY_ENTRIES, "游标应同步下调");
+        // 游标不得越过末尾(否则 while 循环会立刻越界)。
+        assert!(tail <= history.len());
+
+        // 未刷完的部分也要正确保留相对位置。
+        let mut history2: Vec<UiHistoryItem> = (0..MAX_HISTORY_ENTRIES + 100)
+            .map(|i| UiHistoryItem::Notice(format!("n{i}")))
+            .collect();
+        let mut tail2 = 10usize;
+        trim_history(&mut history2, &mut tail2);
+        assert_eq!(tail2, 0, "丢弃 100 条后原第 10 项已不在窗口内");
+        assert_eq!(history2.len(), MAX_HISTORY_ENTRIES);
+        // 保留的是最新的窗口。
+        assert!(
+            matches!(&history2[MAX_HISTORY_ENTRIES - 1], UiHistoryItem::Notice(t) if t == "n5099")
+        );
+    }
+
+    #[test]
+    fn trim_history_is_noop_below_cap() {
+        let mut history = vec![UiHistoryItem::Notice("a".into())];
+        let mut tail = 1usize;
+        trim_history(&mut history, &mut tail);
+        assert_eq!(history.len(), 1);
+        assert_eq!(tail, 1, "未超上限时不得动游标");
+    }
 
     #[test]
     fn agent_replies_in_order_merges_consecutive_streamed_segments() {

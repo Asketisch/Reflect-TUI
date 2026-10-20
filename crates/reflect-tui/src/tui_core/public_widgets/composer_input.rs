@@ -351,6 +351,27 @@ impl ComposerInput {
         }
     }
 
+    /// 当前 composer 里附着的本地图片路径(粘贴图片 / `/image` 选中后)。
+    ///
+    /// 宿主在提交时必须读这个列表并走 `Submission::user_input_items` ——
+    /// 否则图片只是 composer 里的一个占位符,永远不会进模型上下文。
+    pub fn attached_image_paths(&self) -> Vec<std::path::PathBuf> {
+        self.inner
+            .local_images()
+            .into_iter()
+            .map(|img| img.path)
+            .collect()
+    }
+
+    /// 追加一个本地图片附件(供 `/image` picker 与外部调用用)。
+    ///
+    /// 走 `handle_paste_image_path` 让 composer 自己管理占位符与去重,
+    /// 与用户直接粘贴图片走同一条路径。返回是否真的加上了。
+    pub fn attach_image_path(&mut self, path: std::path::PathBuf) -> bool {
+        self.inner
+            .handle_paste_image_path(path.to_string_lossy().to_string())
+    }
+
     /// 历史条目数(测试 / 诊断用)。
     #[cfg(test)]
     pub(crate) fn history_len(&self) -> usize {
@@ -713,6 +734,42 @@ mod tests {
         input.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(input.history_search_query(), None, "Enter 后应退出搜索");
         assert_eq!(input.current_text(), "fix the parser");
+    }
+
+    #[test]
+    fn attached_image_paths_round_trips_through_composer() {
+        // 回归:/image picker 此前只往 composer 插一段 `@<path>` 文本,
+        // 而 Submission::user_input_items 从未被 TUI 调用 —— 图片附件等于
+        // 被静默丢掉,模型看到的只是字面量路径。
+        // 用一张真实存在的 PNG(1x1)让 composer 的尺寸探测能通过。
+        let dir = std::env::temp_dir().join("reflect-composer-image-attach");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("dot.png");
+        // 最小合法 PNG(1x1 透明)。
+        const PNG_1X1: [u8; 67] = [
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        std::fs::write(&png, PNG_1X1).unwrap();
+
+        let mut input = ComposerInput::new_with_config(String::new(), true);
+        assert!(input.attached_image_paths().is_empty());
+        assert!(input.attach_image_path(png.clone()), "合法 PNG 应能附着");
+        assert_eq!(input.attached_image_paths(), vec![png.clone()]);
+
+        // 非图片文件不得附着(composer 靠尺寸探测判定)。
+        let txt = dir.join("notes.txt");
+        std::fs::write(&txt, "hello").unwrap();
+        assert!(!input.attach_image_path(txt), "非图片文件不应附着");
+        assert_eq!(
+            input.attached_image_paths(),
+            vec![png],
+            "附件列表不应被污染"
+        );
     }
 
     #[test]

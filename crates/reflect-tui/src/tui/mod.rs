@@ -53,6 +53,8 @@ pub async fn run_async(
     // fullscreen 为 true 时直接进备用屏(alt-screen),整个屏幕是 ratatui buffer。
     let mut guard = TerminalGuard::enter(fullscreen)?;
     let mut state = UiState::default();
+    // 启动时解析主题:NO_COLOR > REFLECT_TUI_THEME > 上次 /theme 持久化 > 深色默认。
+    state.palette = crate::theme::resolve_startup();
 
     // FrameRequester：与 Reflect 一致，供 composer 动画/ paste-burst 调度重绘。
     let (draw_tx, mut draw_rx) = broadcast::channel::<()>(16);
@@ -253,6 +255,9 @@ pub async fn run_async(
                 ));
                 history_tail += 1;
             }
+            // 钳内存:长会话下 history 原本无上限增长。history_tail 同步下调,
+            // 否则游标会指错位。
+            adapter::trim_history(&mut state.history, &mut history_tail);
         }
         // Plan 审批弹窗 / mode 段可能因事件改变 → 同步 composer 占位符。
         sync_plan_mode_visuals(&mut state);
@@ -329,6 +334,7 @@ pub async fn run_async(
         // 优先用 SessionConfigured 提供的模型名,环境变量 fallback。
         let model_for_hud = state.status_model.as_deref().unwrap_or(&status_model);
         state.status_line = Some(history_render::statusline::render_identity_line(
+            &state.palette,
             state.busy,
             tick_frame,
             model_for_hud,
@@ -341,6 +347,7 @@ pub async fn run_async(
             state.plan_enter_request.is_some(),
         ));
         state.metrics_line = Some(history_render::statusline::render_metrics_line(
+            &state.palette,
             &state.history,
         ));
 
@@ -2663,9 +2670,21 @@ fn handle_key(
             }
             crate::picker::image_picker::ImagePickerAction::Attach(path) => {
                 state.image_picker = None;
-                // 回填 @<path> 到 composer(对齐 /image 文档语义)。
-                let mention = format!("@{}", path.display());
-                state.composer.handle_paste(mention);
+                // 走 composer 的真实图片附件路径(与用户直接粘贴图片同一条路),
+                // 提交时经 Submission::user_input_items 进模型上下文。
+                // 此前这里只是往 composer 插一段 `@<path>` 文本 —— 模型看到的
+                // 是字面量路径而不是图片,附件等于被静默丢掉。
+                if state.composer.attach_image_path(path.clone()) {
+                    state.history.push(adapter::UiHistoryItem::Notice(format!(
+                        "🖼  attached: {} (submitted with your next message)",
+                        path.display()
+                    )));
+                } else {
+                    state.history.push(adapter::UiHistoryItem::Notice(format!(
+                        "🖼  cannot attach {}: not a readable image file",
+                        path.display()
+                    )));
+                }
                 return Ok(false);
             }
             crate::picker::image_picker::ImagePickerAction::Nop => {}
@@ -2717,7 +2736,6 @@ fn handle_key(
                 return Ok(false);
             }
             crate::picker::theme_picker::ThemePickerAction::Apply => {
-                // picker.current 已由 handle_key 回写;调色板真正切换留待后续。
                 let theme_id = state
                     .theme_picker
                     .as_ref()
@@ -2725,9 +2743,23 @@ fn handle_key(
                     .map(|t| t.id.clone());
                 state.theme_picker = None;
                 if let Some(id) = theme_id {
-                    state.history.push(adapter::UiHistoryItem::Notice(format!(
-                        "/theme: switched to '{id}' (display only — palette apply not yet wired)."
-                    )));
+                    // 真正切换:调色板落到 state,下一帧的 statusline / metrics
+                    // 就用新角色重绘。此前这里只打印 "display only"。
+                    state.palette = crate::theme::resolve(&id);
+                    // 持久化,重启后仍是这个主题。写失败只 warn —— 不影响本次切换。
+                    if let Err(e) = crate::theme::persist(&id) {
+                        tracing::warn!(error = %e, theme = %id, "主题持久化失败");
+                    }
+                    let note = if crate::theme::no_color_env() {
+                        format!(
+                            "/theme: '{id}' selected, but NO_COLOR is set — rendering without color."
+                        )
+                    } else {
+                        format!("/theme: switched to '{id}'.")
+                    };
+                    state.history.push(adapter::UiHistoryItem::Notice(note));
+                    // HUD 两行由主循环每帧重算(见 run_async 的 status_line /
+                    // metrics_line 赋值),所以改 palette 即下一帧生效,无需手动刷新。
                 }
                 return Ok(false);
             }
@@ -2755,6 +2787,41 @@ fn handle_key(
                 return Ok(false);
             }
             if text.is_empty() {
+                return Ok(false);
+            }
+            // 多模态提交:composer 里有图片附件时走 user_input_items,
+            // 否则图片只是 composer 里的占位符,永远不会进模型上下文。
+            let images = state.composer.attached_image_paths();
+            if !images.is_empty() && !text.starts_with('/') {
+                let mut items = vec![reflect_protocol::UserInputItem::Text { text: text.clone() }];
+                for p in &images {
+                    items.push(reflect_protocol::UserInputItem::LocalImage { path: p.clone() });
+                }
+                let names: Vec<String> = images
+                    .iter()
+                    .map(|p| {
+                        p.file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| p.display().to_string())
+                    })
+                    .collect();
+                state.history.push(adapter::UiHistoryItem::User(format!(
+                    "{text}  [🖼 {}]",
+                    names.join(", ")
+                )));
+                let thread = Arc::clone(thread);
+                let tx = event_tx.clone();
+                tokio::spawn(async move {
+                    let sub = reflect_protocol::Submission::user_input_items(items);
+                    let mut handle = thread.submit(sub).await;
+                    while let Some(protocol_event) = handle.next().await {
+                        if let Some(ui_event) = conversion::convert_event(protocol_event) {
+                            if tx.send(ui_event).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                });
                 return Ok(false);
             }
             match history_render::dispatch_slash(&text) {
@@ -4700,6 +4767,7 @@ mod draw_tests {
             total_cost_usd: None,
         };
         let line = history_render::statusline::render_identity_line(
+            &crate::theme::Palette::DARK,
             false,
             0,
             "m",

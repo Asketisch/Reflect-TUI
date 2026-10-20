@@ -210,8 +210,13 @@ pub fn export(id: &str, out: Option<&std::path::Path>) -> anyhow::Result<()> {
     let markdown = to_markdown(&records);
     match out {
         Some(p) => {
-            std::fs::write(p, &markdown)
-                .with_context(|| format!("write export file {}", p.display()))?;
+            // 原子落盘:直接写目标文件时若进程崩溃/磁盘满,用户指定的导出路径
+            // 会被截断成一个不完整的 markdown,而且看不出是坏的。同目录
+            // temp + rename 保证要么完整要么原文件不动。
+            let tmp = p.with_extension(format!("md.tmp.{}", std::process::id()));
+            std::fs::write(&tmp, &markdown)
+                .with_context(|| format!("write export temp {}", tmp.display()))?;
+            std::fs::rename(&tmp, p).with_context(|| format!("finalize export {}", p.display()))?;
             println!(
                 "Exported session {tid} → {} ({} bytes)",
                 p.display(),

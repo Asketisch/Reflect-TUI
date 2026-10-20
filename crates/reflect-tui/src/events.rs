@@ -210,6 +210,8 @@ pub struct UiState {
     /// MCP 服务器连接态快照(由 McpServerStarted / McpServerFailed upsert,
     /// 供 `/mcp` overlay 展示真实状态)。
     pub(crate) mcp_servers: Vec<crate::adapter::McpServerView>,
+    /// 当前主题调色板(`/theme` 切换后实时生效,渲染层引用语义角色而非硬编码颜色)。
+    pub(crate) palette: crate::theme::Palette,
     /// `/tasks` overlay(alt-screen,左 message_list + 右 task/agent 面板)。
     pub(crate) tasks_overlay: Option<crate::tasks_pager::TasksPager>,
     /// Vim 模式开关(底部状态行右侧显示 `INSERT` / `NORMAL`)。
@@ -606,6 +608,7 @@ impl Default for UiState {
             plan_steps: Vec::new(),
             agents: Vec::new(),
             mcp_servers: Vec::new(),
+            palette: crate::theme::Palette::DARK,
             tasks_overlay: None,
             vim_enabled: false,
             pending_clear_confirm: false,

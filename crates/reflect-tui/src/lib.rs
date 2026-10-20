@@ -70,6 +70,7 @@ pub mod random_range_compat;
 pub mod rollout;
 pub mod shell_command;
 pub mod state;
+pub mod theme;
 pub mod tui_compat;
 pub mod utils_absolute_path;
 pub mod utils_approval_presets;
