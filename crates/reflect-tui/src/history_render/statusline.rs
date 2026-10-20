@@ -12,7 +12,7 @@
 //! 这是 Reflect 侧薄层:不改 Reflect,产 `Vec<Line>` 交给主循环画在视口底部。
 
 use crate::adapter::UiHistoryItem;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use reflect_protocol::PermissionMode;
 
@@ -75,6 +75,7 @@ impl ContextUsage {
 /// - `usage`:上下文用量(有数据时附 `Context █░░ 6%`)。
 /// - `permission_mode`:会话级权限模式(非 `Auto` 时附 `[plan]` / `[accept_edits]` …)。
 pub fn render_identity_line(
+    palette: &crate::theme::Palette,
     busy: bool,
     tick: u32,
     model: &str,
@@ -86,8 +87,9 @@ pub fn render_identity_line(
     permission_mode: PermissionMode,
     plan_enter_pending: bool,
 ) -> Line<'static> {
-    let dim = Style::default().fg(Color::DarkGray);
-    let brand = Style::default().fg(Color::Cyan);
+    // 颜色走语义角色,不再硬编码 —— `/theme` 切换后这里实时生效。
+    let dim = palette.dim();
+    let brand = palette.brand();
     let mut spans: Vec<Span<'static>> = Vec::new();
 
     if busy {
@@ -102,17 +104,14 @@ pub fn render_identity_line(
     if let Some(branch) = git_branch {
         spans.push(Span::styled(cwd.to_string(), dim));
         spans.push(Span::styled(" git:(", dim));
-        spans.push(Span::styled(
-            branch.to_string(),
-            Style::default().fg(Color::Yellow),
-        ));
+        spans.push(Span::styled(branch.to_string(), palette.warn()));
         spans.push(Span::styled(")", dim));
     } else {
         spans.push(Span::styled(cwd.to_string(), dim));
     }
 
     // 上下文用量条(有数据才显示)。
-    if let Some(seg) = context_bar_span(usage) {
+    if let Some(seg) = context_bar_span(palette, usage) {
         spans.push(Span::styled(" · ", dim));
         spans.push(seg);
     }
@@ -122,22 +121,17 @@ pub fn render_identity_line(
         spans.push(Span::styled(" · ", dim));
         spans.push(Span::styled(
             format!("${:.4}", cost),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
+            Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
         ));
     }
 
     if approval_pending {
-        spans.push(Span::styled("  [y/n]", Style::default().fg(Color::Yellow)));
+        spans.push(Span::styled("  [y/n]", palette.warn()));
     }
     // v1.x Plan mode:进入确认挂起时附 `[1]enter/[3]cancel` 提示,与 approval 的
     // [y/n] 对称,让用户知道有 plan-enter 决策待处理(主循环里按 1/3/Esc 回送)。
     if plan_enter_pending {
-        spans.push(Span::styled(
-            "  Enter plan? [1]yes/[3]no",
-            Style::default().fg(Color::Yellow),
-        ));
+        spans.push(Span::styled("  Enter plan? [1]yes/[3]no", palette.warn()));
     }
 
     // Vim 模式指示:仅在启用时显示(`[NORMAL]` 暗黄粗体),与老 TUI `-- NORMAL --`
@@ -147,14 +141,14 @@ pub fn render_identity_line(
         spans.push(Span::styled(
             "[NORMAL]",
             Style::default()
-                .fg(Color::Yellow)
+                .fg(palette.warn)
                 .add_modifier(Modifier::BOLD),
         ));
     }
 
     // 会话级权限模式:`Auto`(默认)省略,其余都附 `[mode]` 段。
     // Plan = 品红(最显眼)、AcceptEdits = 青、Bypass = 红、Prompt/Deny/Bubble = 暗黄。
-    if let Some(seg) = permission_mode_span(permission_mode) {
+    if let Some(seg) = permission_mode_span(palette, permission_mode) {
         spans.push(Span::styled("  ", dim));
         spans.push(seg);
     }
@@ -165,9 +159,7 @@ pub fn render_identity_line(
         spans.push(Span::styled("  ", dim));
         spans.push(Span::styled(
             "Ctrl+C to quit",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
+            Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
         ));
     }
 
@@ -175,38 +167,37 @@ pub fn render_identity_line(
 }
 
 /// 权限模式段 span。`Auto`(默认)→ `None`(省略)。
-fn permission_mode_span(mode: PermissionMode) -> Option<Span<'static>> {
-    let (label, color) = match mode {
-        PermissionMode::Auto => return None,
-        PermissionMode::Plan => ("[plan]", Color::Magenta),
-        PermissionMode::AcceptEdits => ("[accept_edits]", Color::Cyan),
-        PermissionMode::Bypass => ("[bypass]", Color::Red),
-        PermissionMode::Prompt => ("[prompt]", Color::Yellow),
-        PermissionMode::Deny => ("[deny]", Color::Red),
-        PermissionMode::Bubble => ("[bubble]", Color::Blue),
-    };
-    Some(Span::styled(
-        label,
-        Style::default().fg(color).add_modifier(Modifier::BOLD),
-    ))
+fn permission_mode_span(
+    palette: &crate::theme::Palette,
+    mode: PermissionMode,
+) -> Option<Span<'static>> {
+    let (label, style) = palette.mode_style(mode);
+    if mode == PermissionMode::Auto {
+        return None;
+    }
+    Some(Span::styled(label, style.add_modifier(Modifier::BOLD)))
 }
 
 /// 上下文用量条 span:`Context ████░░░░░░ 42%`(阈值色 + BOLD)。
 /// 缺数据 → `None`(调用方省略)。
-fn context_bar_span(usage: &ContextUsage) -> Option<Span<'static>> {
+fn context_bar_span(
+    palette: &crate::theme::Palette,
+    usage: &ContextUsage,
+) -> Option<Span<'static>> {
     let pct = usage.percent()?;
     let filled = ((pct as f64 / 10.0).round() as u8).min(10) as usize;
     let bar: String = "█".repeat(filled) + &"░".repeat(10 - filled);
-    let color = if pct >= 85 {
-        Color::Red
+    // 阈值色走语义角色:≥85% 危险、≥70% 警示、其余正常。
+    let style = if pct >= 85 {
+        palette.danger()
     } else if pct >= 70 {
-        Color::Yellow
+        palette.warn()
     } else {
-        Color::Green
+        palette.ok()
     };
     Some(Span::styled(
         format!("Context {bar} {pct}%"),
-        Style::default().fg(color).add_modifier(Modifier::BOLD),
+        style.add_modifier(Modifier::BOLD),
     ))
 }
 
@@ -214,9 +205,12 @@ fn context_bar_span(usage: &ContextUsage) -> Option<Span<'static>> {
 ///
 /// 输出 `✓ name ×N │ ✗ name ×M │`(倒序,最多 `MAX_TOOL_DISTINCT` 个不同工具)。
 /// 无工具调用 → dim 占位 `(no tool calls yet)`。
-pub fn render_metrics_line(history: &[UiHistoryItem]) -> Line<'static> {
+pub fn render_metrics_line(
+    palette: &crate::theme::Palette,
+    history: &[UiHistoryItem],
+) -> Line<'static> {
     let segments = collect_recent_tools(history);
-    let dim = Style::default().fg(Color::DarkGray);
+    let dim = palette.dim();
 
     if segments.is_empty() {
         return Line::from(Span::styled(" (no tool calls yet)", dim));
@@ -224,14 +218,14 @@ pub fn render_metrics_line(history: &[UiHistoryItem]) -> Line<'static> {
 
     let mut spans: Vec<Span<'static>> = Vec::new();
     for seg in &segments {
-        let color = if seg.failed > 0 {
-            Color::Red
+        let style = if seg.failed > 0 {
+            palette.danger()
         } else {
-            Color::Green
+            palette.ok()
         };
         spans.push(Span::styled(
             format!("{} {} ×{}", seg.marker, seg.name, seg.total),
-            Style::default().fg(color),
+            style,
         ));
         spans.push(Span::styled(" │ ", dim));
     }
@@ -318,6 +312,7 @@ pub fn render_status_line(
     vim_enabled: bool,
 ) -> Line<'static> {
     render_identity_line(
+        &crate::theme::Palette::DARK,
         busy,
         tick,
         model,
@@ -329,6 +324,47 @@ pub fn render_status_line(
         PermissionMode::default(),
         false,
     )
+}
+
+/// 渲染 identity 行并取出所有 span 的前景色。
+fn identity_fg_colors(palette: &crate::theme::Palette) -> Vec<Option<ratatui::style::Color>> {
+    let line = render_identity_line(
+        palette,
+        /*busy*/ true,
+        /*tick*/ 0,
+        "gpt-5",
+        "/work",
+        Some("main"),
+        /*approval_pending*/ true,
+        &ContextUsage::default(),
+        /*vim_enabled*/ false,
+        PermissionMode::Plan,
+        /*plan_enter_pending*/ false,
+    );
+    line.spans.iter().map(|s| s.style.fg).collect()
+}
+
+#[test]
+fn identity_line_colors_follow_palette() {
+    // 回归:/theme 此前只打印 "display only — palette apply not yet wired",
+    // 渲染层把颜色硬编码成 Cyan / DarkGray,换主题对界面零影响。
+    let dark = identity_fg_colors(&crate::theme::Palette::DARK);
+    let light = identity_fg_colors(&crate::theme::Palette::LIGHT);
+    let none = identity_fg_colors(&crate::theme::Palette::NONE);
+
+    assert_ne!(dark, light, "深色/浅色主题的渲染必须不同");
+    // no-color 必须全部落到 Reset。
+    assert!(
+        none.iter()
+            .all(|c| *c == Some(ratatui::style::Color::Reset)),
+        "no-color 应剥掉全部前景色: {none:?}"
+    );
+    // 深色主题不应出现 Reset(那意味着颜色被剥掉了)。
+    assert!(
+        dark.iter()
+            .any(|c| *c != Some(ratatui::style::Color::Reset)),
+        "深色主题应有实际颜色: {dark:?}"
+    );
 }
 
 #[cfg(test)]
@@ -355,6 +391,7 @@ mod tests {
     #[test]
     fn identity_line_shows_model_and_cwd() {
         let line = render_identity_line(
+            &crate::theme::Palette::DARK,
             false,
             0,
             "reflect",
@@ -378,6 +415,7 @@ mod tests {
     #[test]
     fn identity_line_with_git_branch() {
         let line = render_identity_line(
+            &crate::theme::Palette::DARK,
             false,
             0,
             "m",
@@ -396,6 +434,7 @@ mod tests {
     #[test]
     fn identity_line_busy_shows_spinner() {
         let line = render_identity_line(
+            &crate::theme::Palette::DARK,
             true,
             2,
             "m",
@@ -414,6 +453,7 @@ mod tests {
     #[test]
     fn identity_line_approval_hint() {
         let line = render_identity_line(
+            &crate::theme::Palette::DARK,
             false,
             0,
             "m",
@@ -432,6 +472,7 @@ mod tests {
     #[test]
     fn context_bar_omitted_without_data() {
         let line = render_identity_line(
+            &crate::theme::Palette::DARK,
             false,
             0,
             "m",
@@ -456,6 +497,7 @@ mod tests {
             total_cost_usd: None,
         };
         let line = render_identity_line(
+            &crate::theme::Palette::DARK,
             false,
             0,
             "m",
@@ -476,6 +518,7 @@ mod tests {
     #[test]
     fn identity_line_shows_mode_segment_for_plan() {
         let line = render_identity_line(
+            &crate::theme::Palette::DARK,
             false,
             0,
             "m",
@@ -494,6 +537,7 @@ mod tests {
     #[test]
     fn identity_line_omits_mode_segment_for_auto() {
         let line = render_identity_line(
+            &crate::theme::Palette::DARK,
             false,
             0,
             "m",
@@ -513,6 +557,7 @@ mod tests {
     #[test]
     fn identity_line_vim_normal_indicator() {
         let line = render_identity_line(
+            &crate::theme::Palette::DARK,
             false,
             0,
             "m",
@@ -536,6 +581,7 @@ mod tests {
     #[test]
     fn identity_line_shows_quit_hint() {
         let line = render_identity_line(
+            &crate::theme::Palette::DARK,
             false,
             0,
             "m",
@@ -554,6 +600,7 @@ mod tests {
     #[test]
     fn identity_line_omits_quit_hint_when_approval_pending() {
         let line = render_identity_line(
+            &crate::theme::Palette::DARK,
             false,
             0,
             "m",
@@ -594,7 +641,7 @@ mod tests {
 
     #[test]
     fn metrics_line_empty_shows_placeholder() {
-        let line = render_metrics_line(&[]);
+        let line = render_metrics_line(&crate::theme::Palette::DARK, &[]);
         let s: String = line.spans.iter().map(|s| s.content.clone()).collect();
         assert!(s.contains("no tool calls yet"), "placeholder: {s}");
     }
@@ -624,7 +671,7 @@ mod tests {
                 diff: None,
             },
         ];
-        let line = render_metrics_line(&history);
+        let line = render_metrics_line(&crate::theme::Palette::DARK, &history);
         let s: String = line.spans.iter().map(|s| s.content.clone()).collect();
         assert!(s.contains("✓ Bash ×2"), "aggregated bash: {s}");
         assert!(s.contains("✓ Glob ×1"), "glob: {s}");
@@ -639,7 +686,7 @@ mod tests {
             elapsed_ms: 1,
             diff: None,
         }];
-        let line = render_metrics_line(&history);
+        let line = render_metrics_line(&crate::theme::Palette::DARK, &history);
         let s: String = line.spans.iter().map(|s| s.content.clone()).collect();
         assert!(s.contains("✗ Bash ×1"), "failed marker: {s}");
     }
@@ -656,7 +703,7 @@ mod tests {
                 diff: None,
             })
             .collect();
-        let line = render_metrics_line(&history);
+        let line = render_metrics_line(&crate::theme::Palette::DARK, &history);
         let count = line
             .spans
             .iter()
@@ -672,7 +719,7 @@ mod tests {
             UiHistoryItem::Agent("hello".into()),
             UiHistoryItem::Notice("n".into()),
         ];
-        let line = render_metrics_line(&history);
+        let line = render_metrics_line(&crate::theme::Palette::DARK, &history);
         let s: String = line.spans.iter().map(|s| s.content.clone()).collect();
         assert!(s.contains("no tool calls yet"), "ignores non-tool: {s}");
     }

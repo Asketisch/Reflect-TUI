@@ -427,9 +427,12 @@ fn graded_levels(values: &[i64]) -> Vec<usize> {
         .iter()
         .map(|value| match (*value, max) {
             (0, _) | (_, 0) => 0,
-            (value, max) if value * 4 > max * 3 => 4,
-            (value, max) if value * 2 > max => 3,
-            (value, max) if value * 4 > max => 2,
+            // saturating_mul:用量来自服务端返回的 bucket,理论上可以很大。
+            // `value * 4` 在 overflow-checks 下会 panic,release 下回绕成负数
+            // 让比较结果反向(高用量渲染成低等级)。
+            (value, max) if value.saturating_mul(4) > max.saturating_mul(3) => 4,
+            (value, max) if value.saturating_mul(2) > max => 3,
+            (value, max) if value.saturating_mul(4) > max => 2,
             _ => 1,
         })
         .collect()
@@ -438,7 +441,8 @@ fn graded_levels(values: &[i64]) -> Vec<usize> {
 fn weekly_totals(values: &[i64]) -> Vec<i64> {
     values
         .chunks(DAY_COUNT)
-        .map(|week| week.iter().sum())
+        // fold + saturating_add:一周 7 天的累加同样可能溢出。
+        .map(|week| week.iter().fold(0i64, |acc, v| acc.saturating_add(*v)))
         .collect()
 }
 
@@ -450,7 +454,11 @@ fn bar_levels(totals: &[i64]) -> Vec<usize> {
             let height = if *value <= 0 || max <= 0 {
                 0
             } else {
-                ((*value * DAY_COUNT as i64 + max - 1) / max) as usize
+                // saturating_mul + saturating_add 后再除,避免中间量溢出。
+                ((value
+                    .saturating_mul(DAY_COUNT as i64)
+                    .saturating_add(max - 1))
+                    / max) as usize
             };
             (0..DAY_COUNT).map(move |row| if DAY_COUNT - row <= height { 4 } else { 0 })
         })

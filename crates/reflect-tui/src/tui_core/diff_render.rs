@@ -247,7 +247,14 @@ fn render_changes_block(rows: Vec<Row<'_>>, wrap_cols: usize, cwd: &Path) -> Vec
         let lang_path = r.move_path.unwrap_or(r.path);
         let lang = detect_lang_for_path(lang_path);
         let mut lines = vec![];
-        render_change(r.change, &mut lines, wrap_cols - 4, lang.as_deref());
+        // 终端宽度可能小于 4(极小分屏 / resize 过程中),`wrap_cols - 4` 会下溢
+        // panic(dev/test profile 开了 overflow-checks)。钳到至少 1 列。
+        render_change(
+            r.change,
+            &mut lines,
+            wrap_cols.saturating_sub(4).max(1),
+            lang.as_deref(),
+        );
         out.extend(prefix_lines(lines, "    ".into(), "    ".into()));
     }
 

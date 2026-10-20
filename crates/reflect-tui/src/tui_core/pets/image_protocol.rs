@@ -296,6 +296,11 @@ pub fn sixel_frame(frame_path: &Path, cache_dir: &Path, height_px: u16) -> Resul
 
     let frame =
         image::open(frame_path).with_context(|| format!("read {}", frame_path.display()))?;
+    // 高度为 0 的图片会让下面的宽高比计算除零 panic。解码器理论上不该产出
+    // 0 高度的帧,但畸形/截断的图片文件确实能走到这里。
+    if frame.height() == 0 || frame.width() == 0 {
+        anyhow::bail!("image {} has zero dimension", frame_path.display());
+    }
     let height = u32::from(height_px).max(1);
     let width = ((u64::from(frame.width()) * u64::from(height)) / u64::from(frame.height()))
         .try_into()
@@ -305,7 +310,12 @@ pub fn sixel_frame(frame_path: &Path, cache_dir: &Path, height_px: u16) -> Resul
     let (width, height) = rgba.dimensions();
     let sixel = sixel::encode_rgba(&rgba.into_raw(), width, height)?;
 
-    fs::write(&path, sixel).with_context(|| format!("write {}", path.display()))?;
+    // 原子落盘:直接 fs::write 会在崩溃时留下截断的 .six 缓存条目,而上面的
+    // `path.exists()` 快路径不校验内容,下次读取就把损坏数据当有效缓存用。
+    // 同目录 temp + rename 保证要么完整要么不存在。
+    let tmp = path.with_extension(format!("six.tmp.{}", std::process::id()));
+    fs::write(&tmp, &sixel).with_context(|| format!("write {}", tmp.display()))?;
+    fs::rename(&tmp, &path).with_context(|| format!("rename to {}", path.display()))?;
     Ok(path)
 }
 

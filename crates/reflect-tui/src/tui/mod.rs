@@ -53,6 +53,8 @@ pub async fn run_async(
     // fullscreen 为 true 时直接进备用屏(alt-screen),整个屏幕是 ratatui buffer。
     let mut guard = TerminalGuard::enter(fullscreen)?;
     let mut state = UiState::default();
+    // 启动时解析主题:NO_COLOR > REFLECT_TUI_THEME > 上次 /theme 持久化 > 深色默认。
+    state.palette = crate::theme::resolve_startup();
 
     // FrameRequester：与 Reflect 一致，供 composer 动画/ paste-burst 调度重绘。
     let (draw_tx, mut draw_rx) = broadcast::channel::<()>(16);
@@ -155,6 +157,9 @@ pub async fn run_async(
         format!("Reflect · {}", status_model)
     };
     crate::terminal::set_terminal_title(&initial_title);
+    // 记录已发出的标题,后续 model / permission mode 变化时只在真的变了才重发
+    // (OSC 序列每次都要写裸 stdout,无脑重发是浪费)。
+    let mut last_title = initial_title;
 
     // M2:resume 历史回填 —— 恢复的既往对话先于 banner 进 scrollback,
     // 让 `-c` / `--resume` 启动即有连续的视觉上下文。工具调用对只渲染
@@ -253,12 +258,38 @@ pub async fn run_async(
                 ));
                 history_tail += 1;
             }
+            // 钳内存:长会话下 history 原本无上限增长。history_tail 同步下调,
+            // 否则游标会指错位。
+            adapter::trim_history(&mut state.history, &mut history_tail);
         }
         // Plan 审批弹窗 / mode 段可能因事件改变 → 同步 composer 占位符。
         sync_plan_mode_visuals(&mut state);
+        // 终端标题跟随 model / permission mode 变化(对齐 codex / claude code:
+        // 切窗口时能从标签页看出当前在哪个模型、什么权限模式)。
+        // 此前只在启动时设一次,之后再也不更新。
+        {
+            let title = terminal_title_for(
+                &status_model,
+                &status_cwd,
+                status_git_branch.as_deref(),
+                state.permission_mode,
+            );
+            if title != last_title {
+                crate::terminal::set_terminal_title(&title);
+                last_title = title;
+            }
+        }
         // 回合完成 / 需审批 / 出错 → 终端通知(写裸 stdout,与帧缓冲分离)。
+        // 纯对话回合不通知(用户还在看屏幕);跑得够久的长回合例外。
         if let Some(msg) = notify_triggers.message() {
             history_render::notify::notify(&mut notifier, &msg);
+        } else if notify_triggers.long_turn_without_work(
+            state
+                .turn_started_at
+                .map(|t| t.elapsed().as_secs())
+                .unwrap_or(0),
+        ) {
+            history_render::notify::notify(&mut notifier, "Reflect finished.");
         }
 
         if state.composer.is_in_paste_burst() {
@@ -329,6 +360,7 @@ pub async fn run_async(
         // 优先用 SessionConfigured 提供的模型名,环境变量 fallback。
         let model_for_hud = state.status_model.as_deref().unwrap_or(&status_model);
         state.status_line = Some(history_render::statusline::render_identity_line(
+            &state.palette,
             state.busy,
             tick_frame,
             model_for_hud,
@@ -341,6 +373,7 @@ pub async fn run_async(
             state.plan_enter_request.is_some(),
         ));
         state.metrics_line = Some(history_render::statusline::render_metrics_line(
+            &state.palette,
             &state.history,
         ));
 
@@ -570,11 +603,25 @@ fn handle_event(
             if confirm {
                 let sha = state.checkpoint_rewind_sha.take().unwrap();
                 let short: String = sha.chars().take(8).collect();
-                // git reset --hard 在稳定 TUI 中通过 emit_op 触发。
-                // 目前作为占位通知,留待后续接 git 工具路径。
-                state.history.push(adapter::UiHistoryItem::Notice(format!(
-                    "⚠ rewind to {short}: git reset --hard not yet wired (sha saved)."
-                )));
+                // 真实回退:`git reset --hard <sha>`,回退前先做一次安全快照提交
+                // (git_checkpoint::rewind 内部保证),用户反悔还能再回退回去。
+                match crate::git_checkpoint::rewind(&state.cwd, &sha) {
+                    Ok((target, safety)) => {
+                        let tshort: String = target.sha.chars().take(8).collect();
+                        let mut msg = format!("⏪ rewound to {tshort}");
+                        if let Some(s) = safety {
+                            let sshort: String = s.sha.chars().take(8).collect();
+                            msg.push_str(&format!(
+                                " · pre-rewind snapshot saved as {sshort} (listed in /checkpoint)"
+                            ));
+                        }
+                        state.history.push(adapter::UiHistoryItem::Notice(msg));
+                        refresh_checkpoint_overlay(state);
+                    }
+                    Err(e) => state.history.push(adapter::UiHistoryItem::Notice(format!(
+                        "⏪ rewind to {short} failed: {e}"
+                    ))),
+                }
             }
             return Ok(false);
         }
@@ -690,6 +737,40 @@ fn handle_event(
                     _ => {}
                 }
             }
+            // v1.x:busy 回合中 Ctrl-C = 中断当前回合,而非直接退出 TUI
+            // (对齐 codex / claude code:首次 Ctrl-C 打断进行中的回合)。
+            // 空闲时 Ctrl-C 仍一次退出,行为不变。
+            //
+            // 例外:若中断请求已发出而回合仍未收尾,1.5s 内第二次 Ctrl-C 强制
+            // 退出 —— 引擎卡死时用户必须有出路,不会被 busy 状态永久锁死。
+            // picker 打开时仍走下方双击退出逻辑(不与回合中断叠加)。
+            if !any_picker_open && is_exit_key(key) && state.busy {
+                const QUIT_DOUBLE_PRESS_WINDOW: std::time::Duration =
+                    std::time::Duration::from_millis(1500);
+                let now = std::time::Instant::now();
+                let second_press = state
+                    .last_quit_press
+                    .map(|t| now.duration_since(t) <= QUIT_DOUBLE_PRESS_WINDOW)
+                    .unwrap_or(false);
+                state.last_quit_press = Some(now);
+                match crate::keymap::exit_key_action(state.busy, second_press) {
+                    crate::keymap::ExitKeyAction::Quit => {
+                        state.last_quit_press = None;
+                        return Ok(true);
+                    }
+                    crate::keymap::ExitKeyAction::Interrupt => {
+                        emit_op(
+                            thread,
+                            event_tx,
+                            reflect_protocol::Op::Interrupt { child_id: None },
+                        );
+                        state.history.push(adapter::UiHistoryItem::Notice(
+                            "⏹ 已发送中断请求,正在停止当前回合… (再按 Ctrl-C 强制退出)".into(),
+                        ));
+                        return Ok(false);
+                    }
+                }
+            }
             // picker 打开时 Ctrl+C 默认只关 picker(见下方各 picker handle_key),
             // 用户必须再按一次才能退出 —— 容易让人误以为「退不掉」。这里实现
             // 双击退出:picker 打开时若 1.5s 内第二次按 Ctrl+C,直接退出 TUI;
@@ -712,6 +793,19 @@ fn handle_event(
                 // 没有 picker 打开时清除上一次记录,避免「关 picker 后慢吞吞按
                 // Ctrl+C」被误判为双击退出(无 picker 时走 keymap 一次退出即可)。
                 state.last_quit_press = None;
+            }
+            // Ctrl-D(EOF)只在 composer 为空时退出。有草稿时交给 composer
+            // 自己处理(它的守卫会吞掉空输入上的 Ctrl-D),否则用户写了一半的
+            // 提示词会被一次误触清空并直接退出。
+            if !any_picker_open
+                && !is_exit_key(key)
+                && key.code == KeyCode::Char('d')
+                && key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::SHIFT)
+                && !state.composer.is_empty()
+            {
+                let _ = state.composer.input(key);
+                return Ok(false);
             }
             if !any_picker_open
                 && let Some(action) = crate::keymap::resolve_global_key(event.clone())
@@ -857,6 +951,33 @@ async fn expand_plugin_submission(
     }
 }
 
+/// 构造终端标签页标题。
+///
+/// 格式:`Reflect · <model> · [<mode>] · git:(<branch>)`,mode 为 `Auto` 时省略。
+/// 主循环每帧比对,只在真的变了才重发 OSC 序列。
+fn terminal_title_for(
+    model: &str,
+    cwd: &str,
+    git_branch: Option<&str>,
+    permission_mode: reflect_protocol::PermissionMode,
+) -> String {
+    let mut title = format!("Reflect · {model}");
+    if permission_mode != reflect_protocol::PermissionMode::Auto {
+        title.push_str(&format!(" · [{permission_mode:?}]"));
+    }
+    if let Some(branch) = git_branch {
+        title.push_str(&format!(" · git:({branch})"));
+    } else if !cwd.is_empty() {
+        // 非 git 仓库时用目录名,让多个标签页仍可区分。
+        let name = std::path::Path::new(cwd)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| cwd.to_string());
+        title.push_str(&format!(" · {name}"));
+    }
+    title
+}
+
 /// 同步 plan 模式的可见反馈:composer 占位符。
 ///
 /// Plan 模式时占位符改为「describe the task or /exit-plan …」,其余模式还原默认。
@@ -879,10 +1000,13 @@ fn sync_plan_mode_visuals(state: &mut UiState) {
 /// 剪贴板写入走 vendored `clipboard_copy::copy_to_clipboard`(OSC 52 + arboard
 /// 优先链),与归档 TUI 行为一致。
 fn copy_last_reply(state: &mut UiState) {
-    let Some(text) = state.history.iter().rev().find_map(|item| match item {
-        adapter::UiHistoryItem::Agent(t) => Some(t.clone()),
-        _ => None,
-    }) else {
+    // 必须走 `agent_replies_in_order`:正常(流式)路径下 agent 正文以
+    // `StreamedAgent` 片段入 history,整段 `Agent` 只在 resume 回放时出现。
+    // 只匹配 `Agent` 会让 Ctrl+O 在每次真实对话后都报「no agent reply yet」。
+    let Some(text) = adapter::agent_replies_in_order(&state.history)
+        .into_iter()
+        .next_back()
+    else {
         state
             .history
             .push(UiHistoryItem::Notice("Copy: no agent reply yet.".into()));
@@ -975,14 +1099,9 @@ fn force_redraw(frame_requester: &FrameRequester) {
 /// N=缺省 + 单条回复 → 直接复制最后一条。
 /// N=给定值 → 直接复制第 N 条。失败时推 Notice,不静默。
 fn copy_reply_n(n: Option<usize>, state: &mut UiState) {
-    let agent_replies: Vec<String> = state
-        .history
-        .iter()
-        .filter_map(|item| match item {
-            adapter::UiHistoryItem::Agent(t) => Some(t.clone()),
-            _ => None,
-        })
-        .collect();
+    // 同 `copy_last_reply`:合并连续的 `StreamedAgent` 片段,否则流式路径下
+    // 回复数恒为 0。
+    let agent_replies: Vec<String> = adapter::agent_replies_in_order(&state.history);
     if agent_replies.is_empty() {
         state
             .history
@@ -1681,7 +1800,9 @@ fn dispatch_slash_command_with_args(
 /// 打开 diff 全屏 overlay:扫 history 收集所有 ToolCall 的 unified_diff,
 /// 经 Reflect `create_diff_summary`(语法高亮 + +/- 着色)渲染成行,喂给 pager。
 fn open_diff_overlay(state: &mut UiState) {
-    let width = term_size().map(|(w, _)| w).unwrap_or(80) as usize;
+    // 钳到至少 8 列:diff 渲染自身还要减去边框/缩进,裸 width 在 resize 到
+    // 极窄分屏时会让下游 `wrap_cols - 4` 下溢 panic。
+    let width = term_size().map(|(w, _)| w as usize).unwrap_or(80).max(8);
     let mut changes: std::collections::HashMap<
         std::path::PathBuf,
         crate::tui_core::diff_model::FileChange,
@@ -1799,9 +1920,44 @@ fn open_theme_picker(state: &mut UiState) {
 
 /// v1.x Tier 5:打开 checkpoint overlay(`/checkpoint`)。
 fn open_checkpoint_overlay(state: &mut UiState) {
-    // 占位:空列表,用户可通过 c 创建首个 checkpoint。
+    // 从 git 读真实列表,不再开一个空 overlay。
     state.checkpoint_overlay =
         Some(crate::picker::checkpoint_overlay::CheckpointOverlayState::default());
+    refresh_checkpoint_overlay(state);
+}
+
+/// 用 git 里的真实 checkpoint 刷新 overlay 列表。
+fn refresh_checkpoint_overlay(state: &mut UiState) {
+    match crate::git_checkpoint::list(&state.cwd, 50) {
+        Ok(checkpoints) => {
+            let entries: Vec<crate::picker::checkpoint_overlay::CheckpointEntry> = checkpoints
+                .into_iter()
+                .map(|c| crate::picker::checkpoint_overlay::CheckpointEntry {
+                    sha: c.sha,
+                    label: if c.subject.is_empty() {
+                        None
+                    } else {
+                        Some(c.subject)
+                    },
+                    created_at: c.committed_at,
+                })
+                .collect();
+            let n = entries.len();
+            if let Some(o) = state.checkpoint_overlay.as_mut() {
+                o.entries = entries;
+                // 选中项可能越界(列表变短),钳回范围内。
+                o.selected = o.selected.min(n.saturating_sub(1));
+            }
+            if n == 0 {
+                state.history.push(adapter::UiHistoryItem::Notice(
+                    "📸 no checkpoints yet — press `c` in /checkpoint to create one.".into(),
+                ));
+            }
+        }
+        Err(e) => state.history.push(adapter::UiHistoryItem::Notice(format!(
+            "📸 cannot list checkpoints: {e}"
+        ))),
+    }
 }
 
 /// v1.x Tier 5:打开 fork select overlay(`/fork` 无参数时)。
@@ -1946,12 +2102,7 @@ fn question_panel_key(key: KeyEvent, state: &mut UiState) -> QuestionPanelAction
         return QuestionPanelAction::None;
     };
     // 勾选逻辑:单选覆盖为该下标,多选切换该下标。
-    fn apply_select(
-        selections: &mut [Vec<usize>],
-        current: usize,
-        idx: usize,
-        multi: bool,
-    ) {
+    fn apply_select(selections: &mut [Vec<usize>], current: usize, idx: usize, multi: bool) {
         let sel = &mut selections[current];
         if multi {
             if let Some(p) = sel.iter().position(|&s| s == idx) {
@@ -2154,8 +2305,19 @@ fn handle_key(
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 Some(reflect_protocol::ReviewDecision::ApproveForSession)
             }
+            // bash 审批的收窄版 always-allow:只放行本次这条命令的同类,
+            // 而不是整个 bash 工具。决策本身仍是 ApproveForSession(引擎侧
+            // 语义不变),区别只在持久化的规则范围。
+            KeyCode::Char('s') | KeyCode::Char('S')
+                if crate::approval_scope::is_bash_approval(pending) =>
+            {
+                Some(reflect_protocol::ReviewDecision::ApproveForSession)
+            }
             _ => None,
         };
+        // `[S]cope` 与 `[A]ll` 同发 ApproveForSession,但落盘范围不同。
+        let scoped_allow = matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S'))
+            && crate::approval_scope::is_bash_approval(pending);
         if let Some(decision) = decision {
             // M3:decision 会 move 进 Op,是否 always-allow 先行判定。
             let always_allow = matches!(
@@ -2208,6 +2370,19 @@ fn handle_key(
                     }
                     _ => None,
                 };
+                // 收窄范围:`[S]cope` 派生 shell_pattern,`[A]ll` 保持整工具放行。
+                // 原实现对 bash 一律写 shell_pattern: None,落到 match_rule 的
+                // 精确 tool 分支 = 放行**所有** bash 命令,而 UI 只显示一行
+                // 80 字符 JSON 摘要,用户既不知道范围也没得选。
+                let scope = if scoped_allow {
+                    crate::approval_scope::derive_allow_scope(pending)
+                } else {
+                    crate::approval_scope::AllowScope::WholeTool
+                };
+                let shell_pattern = match &scope {
+                    crate::approval_scope::AllowScope::ShellPattern(p) => Some(p.clone()),
+                    crate::approval_scope::AllowScope::WholeTool => None,
+                };
                 if let (Some(store), Some(tool)) = (state.persistent_permissions.clone(), tool_name)
                 {
                     state.background_tasks.lock().unwrap().spawn(async move {
@@ -2216,16 +2391,19 @@ fn handle_key(
                                 tool: tool.clone(),
                                 action: reflect_permissions::PermissionAction::Allow,
                                 tool_glob: None,
-                                shell_pattern: None,
+                                shell_pattern,
                             })
                             .await
                         {
                             tracing::warn!(error = %e, tool = %tool, "always-allow 规则持久化失败");
                         }
                     });
-                    state.history.push(adapter::UiHistoryItem::Notice(
-                        "always-allow: rule persisted to ~/.reflect/permissions.toml".into(),
-                    ));
+                    // Notice 必须说清放行范围 —— 这是用户唯一能核对自己
+                    // 到底授了什么权的地方。
+                    state.history.push(adapter::UiHistoryItem::Notice(format!(
+                        "always-allow: persisted to ~/.reflect/permissions.toml — {}",
+                        scope.describe()
+                    )));
                 }
             }
             state.pending_approval = None;
@@ -2349,10 +2527,27 @@ fn handle_key(
                 return Ok(false);
             }
             crate::picker::checkpoint_overlay::CheckpointAction::Create => {
-                // git auto-commit 通过 emit_op 触发,目前作为占位通知。
-                state.history.push(adapter::UiHistoryItem::Notice(
-                    "📸 checkpoint: git auto-commit not yet wired (use CLI `git commit`).".into(),
-                ));
+                // 真实落 git:`git add -A` + 带前缀的提交 + tag。
+                match crate::git_checkpoint::create(&state.cwd, "") {
+                    Ok(Some(cp)) => {
+                        let short: String = cp.sha.chars().take(8).collect();
+                        state.history.push(adapter::UiHistoryItem::Notice(format!(
+                            "📸 checkpoint created: {short} ({})",
+                            if cp.subject.is_empty() {
+                                "no label".to_string()
+                            } else {
+                                cp.subject.clone()
+                            }
+                        )));
+                        refresh_checkpoint_overlay(state);
+                    }
+                    Ok(None) => state.history.push(adapter::UiHistoryItem::Notice(
+                        "📸 checkpoint: no changes to snapshot (working tree clean).".into(),
+                    )),
+                    Err(e) => state.history.push(adapter::UiHistoryItem::Notice(format!(
+                        "📸 checkpoint failed: {e}"
+                    ))),
+                }
                 return Ok(false);
             }
             crate::picker::checkpoint_overlay::CheckpointAction::Rewind(sha) => {
@@ -2377,9 +2572,7 @@ fn handle_key(
                 return Ok(false);
             }
             crate::picker::checkpoint_overlay::CheckpointAction::Refresh => {
-                state.history.push(adapter::UiHistoryItem::Notice(
-                    "🔄 checkpoints refreshed (placeholder).".into(),
-                ));
+                refresh_checkpoint_overlay(state);
                 return Ok(false);
             }
             crate::picker::checkpoint_overlay::CheckpointAction::Nop => {}
@@ -2543,9 +2736,21 @@ fn handle_key(
             }
             crate::picker::image_picker::ImagePickerAction::Attach(path) => {
                 state.image_picker = None;
-                // 回填 @<path> 到 composer(对齐 /image 文档语义)。
-                let mention = format!("@{}", path.display());
-                state.composer.handle_paste(mention);
+                // 走 composer 的真实图片附件路径(与用户直接粘贴图片同一条路),
+                // 提交时经 Submission::user_input_items 进模型上下文。
+                // 此前这里只是往 composer 插一段 `@<path>` 文本 —— 模型看到的
+                // 是字面量路径而不是图片,附件等于被静默丢掉。
+                if state.composer.attach_image_path(path.clone()) {
+                    state.history.push(adapter::UiHistoryItem::Notice(format!(
+                        "🖼  attached: {} (submitted with your next message)",
+                        path.display()
+                    )));
+                } else {
+                    state.history.push(adapter::UiHistoryItem::Notice(format!(
+                        "🖼  cannot attach {}: not a readable image file",
+                        path.display()
+                    )));
+                }
                 return Ok(false);
             }
             crate::picker::image_picker::ImagePickerAction::Nop => {}
@@ -2597,7 +2802,6 @@ fn handle_key(
                 return Ok(false);
             }
             crate::picker::theme_picker::ThemePickerAction::Apply => {
-                // picker.current 已由 handle_key 回写;调色板真正切换留待后续。
                 let theme_id = state
                     .theme_picker
                     .as_ref()
@@ -2605,9 +2809,23 @@ fn handle_key(
                     .map(|t| t.id.clone());
                 state.theme_picker = None;
                 if let Some(id) = theme_id {
-                    state.history.push(adapter::UiHistoryItem::Notice(format!(
-                        "/theme: switched to '{id}' (display only — palette apply not yet wired)."
-                    )));
+                    // 真正切换:调色板落到 state,下一帧的 statusline / metrics
+                    // 就用新角色重绘。此前这里只打印 "display only"。
+                    state.palette = crate::theme::resolve(&id);
+                    // 持久化,重启后仍是这个主题。写失败只 warn —— 不影响本次切换。
+                    if let Err(e) = crate::theme::persist(&id) {
+                        tracing::warn!(error = %e, theme = %id, "主题持久化失败");
+                    }
+                    let note = if crate::theme::no_color_env() {
+                        format!(
+                            "/theme: '{id}' selected, but NO_COLOR is set — rendering without color."
+                        )
+                    } else {
+                        format!("/theme: switched to '{id}'.")
+                    };
+                    state.history.push(adapter::UiHistoryItem::Notice(note));
+                    // HUD 两行由主循环每帧重算(见 run_async 的 status_line /
+                    // metrics_line 赋值),所以改 palette 即下一帧生效,无需手动刷新。
                 }
                 return Ok(false);
             }
@@ -2635,6 +2853,41 @@ fn handle_key(
                 return Ok(false);
             }
             if text.is_empty() {
+                return Ok(false);
+            }
+            // 多模态提交:composer 里有图片附件时走 user_input_items,
+            // 否则图片只是 composer 里的占位符,永远不会进模型上下文。
+            let images = state.composer.attached_image_paths();
+            if !images.is_empty() && !text.starts_with('/') {
+                let mut items = vec![reflect_protocol::UserInputItem::Text { text: text.clone() }];
+                for p in &images {
+                    items.push(reflect_protocol::UserInputItem::LocalImage { path: p.clone() });
+                }
+                let names: Vec<String> = images
+                    .iter()
+                    .map(|p| {
+                        p.file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| p.display().to_string())
+                    })
+                    .collect();
+                state.history.push(adapter::UiHistoryItem::User(format!(
+                    "{text}  [🖼 {}]",
+                    names.join(", ")
+                )));
+                let thread = Arc::clone(thread);
+                let tx = event_tx.clone();
+                tokio::spawn(async move {
+                    let sub = reflect_protocol::Submission::user_input_items(items);
+                    let mut handle = thread.submit(sub).await;
+                    while let Some(protocol_event) = handle.next().await {
+                        if let Some(ui_event) = conversion::convert_event(protocol_event) {
+                            if tx.send(ui_event).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                });
                 return Ok(false);
             }
             match history_render::dispatch_slash(&text) {
@@ -2685,6 +2938,41 @@ fn handle_key(
                     state
                         .history
                         .push(adapter::UiHistoryItem::Notice(msg.into()));
+                    return Ok(false);
+                }
+                SlashOutcome::Retry => {
+                    // 重发上一条用户提示词。引擎有自己的重试(流式错误带
+                    // "will retry"),但硬失败(配额耗尽 / 认证失效 / 5xx 终结)
+                    // 之后用户此前没有任何重试入口 —— 只能把提示词重新敲一遍。
+                    let Some(last) = state.history.iter().rev().find_map(|item| match item {
+                        adapter::UiHistoryItem::User(t) => Some(t.clone()),
+                        _ => None,
+                    }) else {
+                        state.history.push(adapter::UiHistoryItem::Notice(
+                            "/retry: no previous user prompt to retry.".into(),
+                        ));
+                        return Ok(false);
+                    };
+                    state.history.push(adapter::UiHistoryItem::Notice(
+                        "↻ retrying last prompt…".into(),
+                    ));
+                    state
+                        .history
+                        .push(adapter::UiHistoryItem::User(last.clone()));
+                    let thread = Arc::clone(thread);
+                    let tx = event_tx.clone();
+                    let plugin_runtime = state.plugin_runtime.clone();
+                    tokio::spawn(async move {
+                        let sub = expand_plugin_submission(&plugin_runtime, last).await;
+                        let mut handle = thread.submit(sub).await;
+                        while let Some(protocol_event) = handle.next().await {
+                            if let Some(ui_event) = conversion::convert_event(protocol_event) {
+                                if tx.send(ui_event).is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    });
                     return Ok(false);
                 }
                 SlashOutcome::Compact => {
@@ -3222,7 +3510,8 @@ fn handle_key(
                     return Ok(false);
                 }
                 SlashOutcome::OpenMcp => {
-                    let lines = crate::picker::mcp_overlay::load_mcp_status();
+                    // 从真实连接态快照渲染,不再显示硬编码的假服务器列表。
+                    let lines = crate::picker::mcp_overlay::load_mcp_status(&state.mcp_servers);
                     state.transcript = Some(TranscriptPager::new(lines));
                     return Ok(false);
                 }
@@ -3384,11 +3673,12 @@ fn draw(
     let composer_h = state.composer.desired_height(width);
     // 两种审批条高度:approval_block 带边框需 5 行(3 行内容 + 上下边框),
     // plan_approval_prompt 无边框 3 行。二者互斥(plan 审批时 pending 为 None)。
-    let approval_h: u16 = if state.pending_approval.is_some() {
-        5 // approval_block: 标题 + 内容 + 按键 = 3 行内容 + 边框 2 行
-    } else {
-        0
-    };
+    // 高度随内容变:Edit / Write 审批带 diff 预览,硬编码 5 会把预览裁掉。
+    let approval_h: u16 = state
+        .pending_approval
+        .as_ref()
+        .map(adapter::approval_block_height)
+        .unwrap_or(0);
     let plan_approval_h: u16 = if state.plan_approval.is_some() {
         3 // plan_approval_prompt: 标题 + 来源 + 按键 = 3 行(无边框)
     } else {
@@ -3550,12 +3840,25 @@ fn draw_fullscreen(
 
     let composer_h = state.composer.desired_height(width);
     // 两种审批条高度：approval_block 带边框需 5 行，plan_approval_prompt 无边框 3 行。
-    let approval_h: u16 = if state.pending_approval.is_some() {
-        5
+    let approval_h: u16 = state
+        .pending_approval
+        .as_ref()
+        .map(adapter::approval_block_height)
+        .unwrap_or(0);
+    let plan_approval_h: u16 = if state.plan_approval.is_some() { 3 } else { 0 };
+    // 与 `draw` 对齐:问题面板 / ask_user 条在全屏模式同样必须占位渲染,
+    // 否则 `--fullscreen` 下引擎阻塞在 AskUserQuestion 时用户看到的是空白,
+    // 而键位仍被面板接管 —— 表现为「界面卡死但按键有反应」。
+    let question_h: u16 = state
+        .pending_question
+        .as_ref()
+        .map(adapter::question_panel_height)
+        .unwrap_or(0);
+    let ask_user_h: u16 = if state.pending_ask_user.is_some() {
+        adapter::ask_user_bar_height()
     } else {
         0
     };
-    let plan_approval_h: u16 = if state.plan_approval.is_some() { 3 } else { 0 };
     let status_h: u16 = history_render::statusline::hud_height(screen_height);
 
     // 历史区吃掉所有剩余空间（Min(0)），其余区域贴底，与 draw 的底部锚定一致。
@@ -3566,6 +3869,8 @@ fn draw_fullscreen(
             Constraint::Length(live_h),
             Constraint::Length(plan_approval_h),
             Constraint::Length(approval_h),
+            Constraint::Length(question_h),
+            Constraint::Length(ask_user_h),
             Constraint::Length(composer_h),
             Constraint::Length(status_h),
         ])
@@ -3606,7 +3911,13 @@ fn draw_fullscreen(
     if let Some(ref pending) = state.pending_approval {
         frame.render_widget_ref(adapter::approval_block(pending), layout[3]);
     }
-    let composer_area = layout[4];
+    if let Some(ref question) = state.pending_question {
+        frame.render_widget_ref(adapter::question_block(question), layout[4]);
+    }
+    if let Some(ref ask) = state.pending_ask_user {
+        frame.render_widget_ref(adapter::ask_user_block(ask), layout[5]);
+    }
+    let composer_area = layout[6];
     state.composer.render_ref(composer_area, frame.buffer_mut());
     if let Some((x, y)) = state.composer.cursor_pos(composer_area) {
         frame.set_cursor_position((x, y));
@@ -3623,7 +3934,7 @@ fn draw_fullscreen(
                 hud_lines.push(metrics.clone());
             }
         }
-        frame.render_widget_ref(Paragraph::new(hud_lines), layout[5]);
+        frame.render_widget_ref(Paragraph::new(hud_lines), layout[7]);
     }
 
     // 居中 overlay 与 draw 共用。
@@ -3920,6 +4231,42 @@ mod draw_tests {
         let text = terminal.backend().vt100().screen().contents();
         assert!(text.contains("hello"), "user history: {text}");
         assert!(text.contains("hi there"), "agent history: {text}");
+    }
+
+    #[test]
+    fn draw_fullscreen_renders_question_and_ask_user_panels() {
+        // 回归:draw_fullscreen 的 layout 曾漏掉 question_h / ask_user_h 两段,
+        // 于是 --fullscreen 下引擎阻塞在 AskUserQuestion 时用户看到的是空白,
+        // 而键位仍被面板接管 —— 表现为「界面卡死但按键有反应」。
+        let backend = VT100Backend::new(80, 30);
+        let mut terminal = ReflectTerminal::with_options(backend).unwrap();
+        terminal.set_viewport_area(Rect::new(0, 0, 80, 30));
+        let mut state = UiState::default();
+        state.pending_question = Some(crate::events::QuestionPromptState::new(
+            "req-1".into(),
+            vec![panel_question(false)],
+        ));
+        state.pending_ask_user = Some(crate::events::AskUserPendingState {
+            request_id: "req-1".into(),
+            prompt: "which branch should I target?".into(),
+            secret: false,
+        });
+        terminal
+            .draw(|frame| draw_fullscreen(frame, &mut state, frame.area().height, &[], 0))
+            .unwrap();
+        let text = terminal.backend().vt100().screen().contents();
+        assert!(
+            text.contains("which branch should I target?"),
+            "ask_user 条必须在全屏模式渲染: {text}"
+        );
+        assert!(
+            text.contains("Use which approach?"),
+            "question 面板题干必须在全屏模式渲染: {text}"
+        );
+        assert!(
+            text.contains("Thorough"),
+            "question 面板选项必须在全屏模式渲染: {text}"
+        );
     }
 
     #[test]
@@ -4521,6 +4868,7 @@ mod draw_tests {
             total_cost_usd: None,
         };
         let line = history_render::statusline::render_identity_line(
+            &crate::theme::Palette::DARK,
             false,
             0,
             "m",

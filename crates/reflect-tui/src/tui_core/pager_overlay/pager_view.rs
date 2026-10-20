@@ -128,6 +128,12 @@ impl PagerView {
         };
         let pct_text = format!(" {percent}% ");
         let pct_w = pct_text.chars().count() as u16;
+        // 分隔条窄于百分比文本时(极端窄终端 / resize 过程中)不得下溢 ——
+        // `width - pct_w - 1` 在 debug/overflow-checks 下 panic,release 下回绕成
+        // 巨大的 x 让 Rect::new 越界。装不下就整个不画。
+        if sep_rect.width < pct_w + 1 {
+            return;
+        }
         let pct_x = sep_rect.x + sep_rect.width - pct_w - 1;
         Span::from(pct_text)
             .dim()

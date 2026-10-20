@@ -23,6 +23,35 @@ pub struct SubagentView {
     pub total_tokens: u64,
 }
 
+/// MCP 服务器连接态投影(供 `/mcp` overlay 展示真实状态)。
+///
+/// 由 `McpServerStarted` / `McpServerFailed` 生命周期事件 upsert 累积 ——
+/// bootstrap 的连接管理器真实发这两个事件,overlay 只读快照,不再自行编造。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpServerView {
+    pub name: String,
+    /// true = 已连接;false = 启动失败。
+    pub connected: bool,
+    /// 连接成功时的工具全名列表(`server__tool`);失败时为空。
+    pub tool_names: Vec<String>,
+    /// 失败原因(连接成功时为 `None`)。
+    pub error: Option<String>,
+    /// 失败是否还会重连(HTTP 重连循环;stdio 恒 false)。
+    pub will_retry: bool,
+}
+
+impl McpServerView {
+    /// 覆盖式 upsert:同名 server 的后到事件替换先到状态。重连成功的 server
+    /// 会清掉此前的 failed 状态,反之亦然。
+    pub fn upsert(list: &mut Vec<McpServerView>, view: McpServerView) {
+        if let Some(slot) = list.iter_mut().find(|s| s.name == view.name) {
+            *slot = view;
+        } else {
+            list.push(view);
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiEventKind {
     /// 回合开始。携带 `turn_id`,供 fork overlay 建立 user prompt → turn 映射。
@@ -124,6 +153,20 @@ pub enum UiEventKind {
         window_size: Option<u32>,
         /// 模型名(来自 SessionConfiguredEvent,供状态栏显示)。
         model: Option<String>,
+    },
+    /// MCP 服务器上线:initialize + list_tools 成功。upsert `state.mcp_servers`,
+    /// 供 `/mcp` overlay 展示真实连接态(此前 overlay 硬编码了一份假列表)。
+    McpServerStarted {
+        server: String,
+        /// 该 server 暴露的工具全名(`server__tool`)。
+        tool_names: Vec<String>,
+    },
+    /// MCP 服务器启动失败(spawn / initialize / list_tools 任一阶段)。
+    McpServerFailed {
+        server: String,
+        error: String,
+        /// HTTP 重连循环是否还会继续尝试。
+        will_retry: bool,
     },
     /// 最近一次 token 用量(TokenCount 事件,供 HUD context bar)。
     TokenCount {
@@ -231,6 +274,27 @@ pub fn agent_replies_in_order(history: &[UiHistoryItem]) -> Vec<String> {
         prev_was_streamed = is_streamed;
     }
     replies
+}
+
+/// `state.history` 的内存上限(条目数)。
+///
+/// 此前无上限:每个 `StreamedAgent` 片段、每条 `Notice` 都永久留在内存里供
+/// overlay 读取,长会话会一直涨。完整内容本来就在 rollout JSONL 里
+/// (`/resume` 与 CLI `session show` 可读),所以内存里只需保留一个够用的窗口。
+pub const MAX_HISTORY_ENTRIES: usize = 5_000;
+
+/// 把 `state.history` 钳到 [`MAX_HISTORY_ENTRIES`],丢弃最旧的条目。
+///
+/// `history_tail` 是主循环的「已刷进 scrollback 的游标」,按 `history` 下标
+/// 寻址 —— 从前端裁剪必须同步下调它,否则游标会指向错位的条目(表现为
+/// scrollback 重复渲染或漏渲染)。
+pub fn trim_history(history: &mut Vec<UiHistoryItem>, history_tail: &mut usize) {
+    let excess = history.len().saturating_sub(MAX_HISTORY_ENTRIES);
+    if excess == 0 {
+        return;
+    }
+    history.drain(..excess);
+    *history_tail = history_tail.saturating_sub(excess);
 }
 
 /// 应用 UI 事件。
@@ -578,6 +642,47 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
                 }
             }
         }
+        // MCP 生命周期:upsert 连接态快照供 /mcp overlay,同时推 Notice 让用户
+        // 在对话流里看到外部服务上线/失败。二者互补,不重复渲染。
+        UiEventKind::McpServerStarted { server, tool_names } => {
+            McpServerView::upsert(
+                &mut state.mcp_servers,
+                McpServerView {
+                    name: server.clone(),
+                    connected: true,
+                    tool_names: tool_names.clone(),
+                    error: None,
+                    will_retry: false,
+                },
+            );
+            state.history.push(UiHistoryItem::Notice(format!(
+                "MCP server '{}' started ({} tools)",
+                server,
+                tool_names.len()
+            )));
+        }
+        UiEventKind::McpServerFailed {
+            server,
+            error,
+            will_retry,
+        } => {
+            McpServerView::upsert(
+                &mut state.mcp_servers,
+                McpServerView {
+                    name: server.clone(),
+                    connected: false,
+                    tool_names: Vec::new(),
+                    error: Some(error.clone()),
+                    will_retry,
+                },
+            );
+            state.history.push(UiHistoryItem::Notice(format!(
+                "MCP server '{}' failed: {}{}",
+                server,
+                error,
+                if will_retry { " (will retry)" } else { "" }
+            )));
+        }
         UiEventKind::SubagentStatusUpdate { children } => {
             // v1.4 查询通道:按 child_id upsert /tasks 的 agents 列表。
             // label 汇总 role / 在跑工具 / 迭代数 / token,终态标 Done。
@@ -780,27 +885,110 @@ pub fn approval_block(pending: &PendingApproval) -> ratatui::widgets::Paragraph<
         Style::default().fg(Color::White),
     ));
 
-    let hint = Line::from(vec![
-        Span::styled(
-            " [Y]es ",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("/ ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            " [N]o ",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("/ ", Style::default().fg(Color::DarkGray)),
-        Span::styled(" [A]lways allow ", Style::default().fg(Color::DarkGray)),
-    ]);
+    // bash 审批额外给出 `[S]cope`(只放行本次这类命令),避免用户按 `a`
+    // 时在不知情的情况下放行所有 shell 命令。
+    let hint =
+        crate::approval_scope::approval_hint(crate::approval_scope::is_bash_approval(pending));
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow));
 
-    Paragraph::new(vec![title, content, hint]).block(block)
+    let mut lines = vec![title, content];
+    // Edit / Write 审批补 diff 预览:原实现只有一行 80 字符 JSON 摘要,
+    // 用户看不到自己即将批准什么改动。
+    lines.extend(approval_diff_preview(pending));
+    lines.push(hint);
+    Paragraph::new(lines).block(block)
+}
+
+/// Edit / Write 审批的 diff 预览行(最多 6 行 +/- 摘要)。
+///
+/// 从工具参数里取 `old_string` / `new_string`(edit)或 `content`(write),
+/// 渲染成紧凑的 `+/-` 预览。取不到就返回空 —— 不编造内容。
+fn approval_diff_preview(pending: &PendingApproval) -> Vec<Line<'static>> {
+    let reflect_protocol::ApprovalKind::Tool { tool_name, args } = &pending.kind else {
+        return Vec::new();
+    };
+    let name = tool_name.to_ascii_lowercase();
+    if name != "edit" && name != "write" && name != "multiedit" {
+        return Vec::new();
+    }
+    let path = args
+        .get("path")
+        .or_else(|| args.get("file_path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unknown path)");
+
+    let mut lines = vec![Line::from(Span::styled(
+        format!("  {}", path),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ))];
+
+    // edit: old_string → new_string;write: 整份 content。
+    let (old, new): (&str, &str) = if name == "write" {
+        (
+            "",
+            args.get("content").and_then(|v| v.as_str()).unwrap_or(""),
+        )
+    } else {
+        (
+            args.get("old_string")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+            args.get("new_string")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+        )
+    };
+
+    let mut shown = 0usize;
+    for l in old.lines().take(3) {
+        lines.push(Line::from(Span::styled(
+            format!("  - {}", truncate_line(l, 60)),
+            Style::default().fg(Color::Red),
+        )));
+        shown += 1;
+    }
+    for l in new.lines().take(3) {
+        lines.push(Line::from(Span::styled(
+            format!("  + {}", truncate_line(l, 60)),
+            Style::default().fg(Color::Green),
+        )));
+        shown += 1;
+    }
+    if shown == 0 {
+        // 参数里没有可取的内容(例如 edit 只给了行号范围)。
+        lines.push(Line::from(Span::styled(
+            "  (no inline preview available)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    lines
+}
+
+/// 按字符截断到 `max`(非字节),避免 CJK 内容在字节边界 panic。
+fn truncate_line(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let head: String = s.chars().take(max).collect();
+        format!("{head}…")
+    }
+}
+
+/// 审批弹窗高度(带边框)。
+///
+/// 不能再硬编码 5:Edit / Write 审批带 diff 预览,行数随参数内容变化
+/// (路径行 + 最多 3 行 `-` + 最多 3 行 `+`)。高度算少了 ratatui 会把
+/// 预览行裁掉,用户还是看不到自己批准什么。
+pub fn approval_block_height(pending: &PendingApproval) -> u16 {
+    // 标题 + 内容 + 按键提示 = 3 行,加边框 2 行。
+    let mut rows = 3u16 + 2;
+    rows += approval_diff_preview(pending).len() as u16;
+    rows
 }
 
 /// v1.x:问题面板高度(带边框) = 标题 + 题干 + 选项数 + 按键提示 + 边框 2。
@@ -975,6 +1163,201 @@ pub fn approval_banner(pending: &PendingApproval) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trim_history_keeps_tail_cursor_consistent() {
+        // history_tail 是主循环「已刷进 scrollback 的游标」,按 history 下标
+        // 寻址。从前端裁剪必须同步下调它,否则游标指错位 —— 表现为 scrollback
+        // 重复渲染或漏渲染。
+        let mut history: Vec<UiHistoryItem> = (0..MAX_HISTORY_ENTRIES + 100)
+            .map(|i| UiHistoryItem::Notice(format!("n{i}")))
+            .collect();
+        let mut tail = history.len(); // 全部已刷
+        trim_history(&mut history, &mut tail);
+        assert_eq!(history.len(), MAX_HISTORY_ENTRIES);
+        assert_eq!(tail, MAX_HISTORY_ENTRIES, "游标应同步下调");
+        // 游标不得越过末尾(否则 while 循环会立刻越界)。
+        assert!(tail <= history.len());
+
+        // 未刷完的部分也要正确保留相对位置。
+        let mut history2: Vec<UiHistoryItem> = (0..MAX_HISTORY_ENTRIES + 100)
+            .map(|i| UiHistoryItem::Notice(format!("n{i}")))
+            .collect();
+        let mut tail2 = 10usize;
+        trim_history(&mut history2, &mut tail2);
+        assert_eq!(tail2, 0, "丢弃 100 条后原第 10 项已不在窗口内");
+        assert_eq!(history2.len(), MAX_HISTORY_ENTRIES);
+        // 保留的是最新的窗口。
+        assert!(
+            matches!(&history2[MAX_HISTORY_ENTRIES - 1], UiHistoryItem::Notice(t) if t == "n5099")
+        );
+    }
+
+    #[test]
+    fn trim_history_is_noop_below_cap() {
+        let mut history = vec![UiHistoryItem::Notice("a".into())];
+        let mut tail = 1usize;
+        trim_history(&mut history, &mut tail);
+        assert_eq!(history.len(), 1);
+        assert_eq!(tail, 1, "未超上限时不得动游标");
+    }
+
+    #[test]
+    fn agent_replies_in_order_merges_consecutive_streamed_segments() {
+        // 正常(流式)路径:一条回复被边界 flush 拆成多个连续 StreamedAgent 片段,
+        // 必须合并为一条;中间隔了别的条目则视为新回复。
+        let history = vec![
+            UiHistoryItem::User("q1".into()),
+            UiHistoryItem::StreamedAgent("hello ".into()),
+            UiHistoryItem::StreamedAgent("world".into()),
+            UiHistoryItem::ToolCall {
+                name: "read".into(),
+                output: "ok".into(),
+                error: false,
+                elapsed_ms: 12,
+                diff: None,
+            },
+            UiHistoryItem::StreamedAgent("after tool".into()),
+            UiHistoryItem::User("q2".into()),
+            UiHistoryItem::Agent("resumed reply".into()),
+        ];
+        assert_eq!(
+            agent_replies_in_order(&history),
+            vec![
+                "hello world".to_string(),
+                "after tool".to_string(),
+                "resumed reply".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn mcp_lifecycle_upserts_connection_snapshot() {
+        // 回归:/mcp overlay 曾硬编码一份假服务器列表。现在它读 state.mcp_servers,
+        // 由这两个事件真实 upsert 而成 —— 没连上就必须是空的。
+        let mut state = UiState::default();
+        assert!(state.mcp_servers.is_empty(), "初始无 MCP 连接");
+
+        apply_event(
+            &mut state,
+            UiEvent {
+                kind: UiEventKind::McpServerStarted {
+                    server: "ctx7".into(),
+                    tool_names: vec!["ctx7__search".into()],
+                },
+            },
+        );
+        assert_eq!(state.mcp_servers.len(), 1);
+        assert!(state.mcp_servers[0].connected);
+        assert_eq!(state.mcp_servers[0].tool_names, vec!["ctx7__search"]);
+
+        // 同名 server 的失败事件覆盖先前的成功态(重连失败场景)。
+        apply_event(
+            &mut state,
+            UiEvent {
+                kind: UiEventKind::McpServerFailed {
+                    server: "ctx7".into(),
+                    error: "connection refused".into(),
+                    will_retry: true,
+                },
+            },
+        );
+        assert_eq!(state.mcp_servers.len(), 1);
+        assert!(!state.mcp_servers[0].connected);
+        assert!(state.mcp_servers[0].will_retry);
+        assert_eq!(
+            state.mcp_servers[0].error.as_deref(),
+            Some("connection refused")
+        );
+    }
+
+    /// 把审批弹窗渲染成纯文本(Paragraph 不暴露内部行,只能经 buffer 渲染)。
+    fn approval_block_text(pending: &PendingApproval) -> String {
+        use ratatui::widgets::Widget;
+        let area = ratatui::layout::Rect::new(0, 0, 100, 30);
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        approval_block(pending).render(area, &mut buf);
+        (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol().to_string())
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    #[test]
+    fn approval_block_shows_diff_preview_for_edit() {
+        // 回归:Edit / Write 审批此前只有一行 80 字符 JSON 摘要,用户看不到
+        // 自己即将批准什么改动。
+        let pending = PendingApproval {
+            id: "e1".into(),
+            summary: "Edit: src/main.rs".into(),
+            kind: reflect_protocol::ApprovalKind::Tool {
+                tool_name: "edit".into(),
+                args: serde_json::json!({
+                    "path": "src/main.rs",
+                    "old_string": "let x = 1;",
+                    "new_string": "let x = compute();",
+                }),
+            },
+        };
+        let text = approval_block_text(&pending);
+        assert!(text.contains("src/main.rs"), "应显示目标路径: {text}");
+        assert!(text.contains("- let x = 1;"), "应显示删除行: {text}");
+        assert!(
+            text.contains("+ let x = compute();"),
+            "应显示新增行: {text}"
+        );
+        // 高度必须覆盖预览行,否则 ratatui 会把它们裁掉。
+        assert!(
+            approval_block_height(&pending) >= 3 + 2 + 3,
+            "高度应含 路径 + 1 删 + 1 增: {}",
+            approval_block_height(&pending)
+        );
+    }
+
+    #[test]
+    fn approval_block_diff_preview_handles_cjk_without_panic() {
+        // 预览按字符截断(非字节),CJK 内容不得在字节边界 panic。
+        let long_cjk = "中文".repeat(100);
+        let pending = PendingApproval {
+            id: "e2".into(),
+            summary: "Write: 说明.md".into(),
+            kind: reflect_protocol::ApprovalKind::Tool {
+                tool_name: "write".into(),
+                args: serde_json::json!({
+                    "path": "说明.md",
+                    "content": long_cjk,
+                }),
+            },
+        };
+        // 渲染本身不得 panic,且路径与 +/- 标记都在。
+        let text = approval_block_text(&pending);
+        assert!(text.contains("说"), "路径应渲染: {text}");
+        assert!(text.contains('+'), "应有新增行标记: {text}");
+        // 截断按字符而非字节:CJK 内容不得 panic,且必须真的截断。
+        let long = "中文".repeat(100);
+        let out = truncate_line(&long, 10);
+        assert!(
+            out.chars().count() <= 11,
+            "应按字符截断: {}",
+            out.chars().count()
+        );
+        assert!(out.ends_with('…'), "{out}");
+    }
+
+    #[test]
+    fn approval_block_non_edit_tool_has_no_diff_preview() {
+        let pending = PendingApproval {
+            id: "r1".into(),
+            summary: "Read: foo.txt".into(),
+            kind: reflect_protocol::ApprovalKind::Tool {
+                tool_name: "read".into(),
+                args: serde_json::json!({ "path": "foo.txt" }),
+            },
+        };
+        assert!(approval_diff_preview(&pending).is_empty());
+        assert_eq!(approval_block_height(&pending), 5, "无预览时保持原 5 行");
+    }
 
     #[test]
     fn approval_banner_contains_summary_and_hints() {
