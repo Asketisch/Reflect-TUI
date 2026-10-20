@@ -23,6 +23,35 @@ pub struct SubagentView {
     pub total_tokens: u64,
 }
 
+/// MCP 服务器连接态投影(供 `/mcp` overlay 展示真实状态)。
+///
+/// 由 `McpServerStarted` / `McpServerFailed` 生命周期事件 upsert 累积 ——
+/// bootstrap 的连接管理器真实发这两个事件,overlay 只读快照,不再自行编造。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpServerView {
+    pub name: String,
+    /// true = 已连接;false = 启动失败。
+    pub connected: bool,
+    /// 连接成功时的工具全名列表(`server__tool`);失败时为空。
+    pub tool_names: Vec<String>,
+    /// 失败原因(连接成功时为 `None`)。
+    pub error: Option<String>,
+    /// 失败是否还会重连(HTTP 重连循环;stdio 恒 false)。
+    pub will_retry: bool,
+}
+
+impl McpServerView {
+    /// 覆盖式 upsert:同名 server 的后到事件替换先到状态。重连成功的 server
+    /// 会清掉此前的 failed 状态,反之亦然。
+    pub fn upsert(list: &mut Vec<McpServerView>, view: McpServerView) {
+        if let Some(slot) = list.iter_mut().find(|s| s.name == view.name) {
+            *slot = view;
+        } else {
+            list.push(view);
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiEventKind {
     /// 回合开始。携带 `turn_id`,供 fork overlay 建立 user prompt → turn 映射。
@@ -124,6 +153,20 @@ pub enum UiEventKind {
         window_size: Option<u32>,
         /// 模型名(来自 SessionConfiguredEvent,供状态栏显示)。
         model: Option<String>,
+    },
+    /// MCP 服务器上线:initialize + list_tools 成功。upsert `state.mcp_servers`,
+    /// 供 `/mcp` overlay 展示真实连接态(此前 overlay 硬编码了一份假列表)。
+    McpServerStarted {
+        server: String,
+        /// 该 server 暴露的工具全名(`server__tool`)。
+        tool_names: Vec<String>,
+    },
+    /// MCP 服务器启动失败(spawn / initialize / list_tools 任一阶段)。
+    McpServerFailed {
+        server: String,
+        error: String,
+        /// HTTP 重连循环是否还会继续尝试。
+        will_retry: bool,
     },
     /// 最近一次 token 用量(TokenCount 事件,供 HUD context bar)。
     TokenCount {
@@ -578,6 +621,47 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
                 }
             }
         }
+        // MCP 生命周期:upsert 连接态快照供 /mcp overlay,同时推 Notice 让用户
+        // 在对话流里看到外部服务上线/失败。二者互补,不重复渲染。
+        UiEventKind::McpServerStarted { server, tool_names } => {
+            McpServerView::upsert(
+                &mut state.mcp_servers,
+                McpServerView {
+                    name: server.clone(),
+                    connected: true,
+                    tool_names: tool_names.clone(),
+                    error: None,
+                    will_retry: false,
+                },
+            );
+            state.history.push(UiHistoryItem::Notice(format!(
+                "MCP server '{}' started ({} tools)",
+                server,
+                tool_names.len()
+            )));
+        }
+        UiEventKind::McpServerFailed {
+            server,
+            error,
+            will_retry,
+        } => {
+            McpServerView::upsert(
+                &mut state.mcp_servers,
+                McpServerView {
+                    name: server.clone(),
+                    connected: false,
+                    tool_names: Vec::new(),
+                    error: Some(error.clone()),
+                    will_retry,
+                },
+            );
+            state.history.push(UiHistoryItem::Notice(format!(
+                "MCP server '{}' failed: {}{}",
+                server,
+                error,
+                if will_retry { " (will retry)" } else { "" }
+            )));
+        }
         UiEventKind::SubagentStatusUpdate { children } => {
             // v1.4 查询通道:按 child_id upsert /tasks 的 agents 列表。
             // label 汇总 role / 在跑工具 / 迭代数 / token,终态标 Done。
@@ -975,6 +1059,75 @@ pub fn approval_banner(pending: &PendingApproval) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_replies_in_order_merges_consecutive_streamed_segments() {
+        // 正常(流式)路径:一条回复被边界 flush 拆成多个连续 StreamedAgent 片段,
+        // 必须合并为一条;中间隔了别的条目则视为新回复。
+        let history = vec![
+            UiHistoryItem::User("q1".into()),
+            UiHistoryItem::StreamedAgent("hello ".into()),
+            UiHistoryItem::StreamedAgent("world".into()),
+            UiHistoryItem::ToolCall {
+                name: "read".into(),
+                output: "ok".into(),
+                error: false,
+                elapsed_ms: 12,
+                diff: None,
+            },
+            UiHistoryItem::StreamedAgent("after tool".into()),
+            UiHistoryItem::User("q2".into()),
+            UiHistoryItem::Agent("resumed reply".into()),
+        ];
+        assert_eq!(
+            agent_replies_in_order(&history),
+            vec![
+                "hello world".to_string(),
+                "after tool".to_string(),
+                "resumed reply".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn mcp_lifecycle_upserts_connection_snapshot() {
+        // 回归:/mcp overlay 曾硬编码一份假服务器列表。现在它读 state.mcp_servers,
+        // 由这两个事件真实 upsert 而成 —— 没连上就必须是空的。
+        let mut state = UiState::default();
+        assert!(state.mcp_servers.is_empty(), "初始无 MCP 连接");
+
+        apply_event(
+            &mut state,
+            UiEvent {
+                kind: UiEventKind::McpServerStarted {
+                    server: "ctx7".into(),
+                    tool_names: vec!["ctx7__search".into()],
+                },
+            },
+        );
+        assert_eq!(state.mcp_servers.len(), 1);
+        assert!(state.mcp_servers[0].connected);
+        assert_eq!(state.mcp_servers[0].tool_names, vec!["ctx7__search"]);
+
+        // 同名 server 的失败事件覆盖先前的成功态(重连失败场景)。
+        apply_event(
+            &mut state,
+            UiEvent {
+                kind: UiEventKind::McpServerFailed {
+                    server: "ctx7".into(),
+                    error: "connection refused".into(),
+                    will_retry: true,
+                },
+            },
+        );
+        assert_eq!(state.mcp_servers.len(), 1);
+        assert!(!state.mcp_servers[0].connected);
+        assert!(state.mcp_servers[0].will_retry);
+        assert_eq!(
+            state.mcp_servers[0].error.as_deref(),
+            Some("connection refused")
+        );
+    }
 
     #[test]
     fn approval_banner_contains_summary_and_hints() {

@@ -14,6 +14,36 @@ fn tool_stream_enabled() -> bool {
     })
 }
 
+/// 压缩策略的人读标签。协议枚举没有 `Display`,集中在这里避免散落 match。
+fn compact_strategy_label(s: &reflect_protocol::ContextCompactedStrategy) -> &'static str {
+    use reflect_protocol::ContextCompactedStrategy as S;
+    match s {
+        S::Noop => "no-op",
+        S::Microcompact => "microcompact",
+        S::SmartPrune => "smart prune",
+        S::LlMSummarize => "LLM 摘要",
+    }
+}
+
+/// cooldown 秒数 → `1h 23m 45s` 形式(0 秒时给明确结论,不输出空串)。
+fn format_window_secs(secs: u64) -> String {
+    if secs == 0 {
+        return "已重置".to_string();
+    }
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    let mut out = String::new();
+    if h > 0 {
+        out.push_str(&format!("{h}h "));
+    }
+    if h > 0 || m > 0 {
+        out.push_str(&format!("{m}m "));
+    }
+    out.push_str(&format!("{s}s"));
+    out
+}
+
 pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
     use reflect_protocol::event_msg::EventMsg::*;
     let kind = match event.msg {
@@ -163,24 +193,23 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
             }
         }
         // MCP / LSP 生命周期事件(bootstrap 接线连接管理器后真实到达):
-        // 以 Notice 行进对话流,让用户看到外部服务上线/失败。McpToolInvoked
-        // 逐调用触发,渲染过噪,留待 /mcp 详情视图。
-        McpServerStarted(e) => UiEventKind::Notice(format!(
-            "MCP server '{}' started ({} tools, {:?})",
-            e.server, e.tool_count, e.transport
-        )),
+        // 除 Notice 外,McpServerStarted/Failed 还 upsert `state.mcp_servers`
+        // 连接态快照,供 /mcp overlay 展示真实状态(此前 overlay 硬编码假列表)。
+        McpServerStarted(e) => UiEventKind::McpServerStarted {
+            server: e.server,
+            tool_names: e.tool_names,
+        },
         // 插件挂载成功(bootstrap_plugins per-plugin emit):与 MCP 上线
         // 同款通知行,让用户看到插件能力面(skills / commands 计数)。
         PluginLoaded(e) => UiEventKind::Notice(format!(
             "Plugin '{}' loaded (v{}, {}, {} skills, {} commands)",
             e.plugin, e.version, e.scope, e.skill_count, e.command_count
         )),
-        McpServerFailed(e) => UiEventKind::Notice(format!(
-            "MCP server '{}' failed: {}{}",
-            e.server,
-            e.error,
-            if e.will_retry { " (will retry)" } else { "" }
-        )),
+        McpServerFailed(e) => UiEventKind::McpServerFailed {
+            server: e.server,
+            error: e.error,
+            will_retry: e.will_retry,
+        },
         LspServerStarted(e) => UiEventKind::Notice(format!(
             "LSP server '{}' started ({})",
             e.server,
@@ -205,11 +234,29 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
         ToolExecutionRequest(_)
         | ShutdownComplete
         | PermissionBubble(_)
-        | ContextCompacted(_)
         | ConfigReloaded(_)
         | CollabMessage(_)
-        | Routing(_)
-        | QuotaExhausted(_) => return None,
+        | Routing(_) => return None,
+        // 自动压缩:必须让用户看见。此前整条丢弃,结果就是「上下文突然变短」
+        // /「模型突然不记得前面说过什么」在界面上毫无解释,用户只能猜。
+        // Claude Code 同样会显示 Compacting conversation…。
+        ContextCompacted(cc) => UiEventKind::Notice(format!(
+            "🗜 已压缩上下文:{} · 移除 {} 条消息 · {} → {} tokens",
+            compact_strategy_label(&cc.strategy),
+            cc.removed_messages,
+            cc.before_tokens,
+            cc.after_tokens
+        )),
+        // 配额耗尽:窗口上限 + 重置时间是用户唯一能据此决策的信息
+        // (等 / 换 provider / 换 credential),整条丢弃等于让回合莫名停住。
+        QuotaExhausted(qe) => UiEventKind::Notice(format!(
+            "⛔ 配额耗尽:{} credential '{}' · 已用 {}/{} tokens · 窗口 {} 后重置",
+            qe.provider,
+            qe.label,
+            qe.used_tokens,
+            qe.max_tokens,
+            format_window_secs(qe.window_ends_secs)
+        )),
         // v1.3 SDK:serve 在 per-turn 通道排空后发出的收尾标记,仅存在于
         // serve 模式的 SDK 客户端;TUI 内嵌运行不经 serve,按构造不可能收到。
         SubmissionClosed => return None,
@@ -294,6 +341,74 @@ pub(super) fn map_plan_step_status(
 mod tests {
     use super::*;
     use reflect_protocol::{ContentBlock, ToolOutput};
+
+    #[test]
+    fn format_window_secs_is_human_readable() {
+        assert_eq!(format_window_secs(0), "已重置");
+        assert_eq!(format_window_secs(45), "45s");
+        assert_eq!(format_window_secs(605), "10m 5s");
+        assert_eq!(format_window_secs(3725), "1h 2m 5s");
+    }
+
+    #[test]
+    fn compact_strategy_label_covers_all_variants() {
+        use reflect_protocol::ContextCompactedStrategy as S;
+        assert_eq!(compact_strategy_label(&S::Noop), "no-op");
+        assert_eq!(compact_strategy_label(&S::Microcompact), "microcompact");
+        assert_eq!(compact_strategy_label(&S::SmartPrune), "smart prune");
+        assert_eq!(compact_strategy_label(&S::LlMSummarize), "LLM 摘要");
+    }
+
+    #[test]
+    fn context_compacted_becomes_visible_notice() {
+        // 回归:ContextCompacted 曾被整条丢弃 —— 用户看到的是「上下文突然变短」
+        // /「模型突然不记得前面的话」,界面上没有任何解释。
+        let ev = reflect_protocol::Event::new(
+            "t",
+            reflect_protocol::event_msg::EventMsg::ContextCompacted(
+                reflect_protocol::ContextCompactedEvent {
+                    strategy: reflect_protocol::ContextCompactedStrategy::SmartPrune,
+                    removed_messages: 7,
+                    before_tokens: 90_000,
+                    after_tokens: 20_000,
+                },
+            ),
+        );
+        let out = convert_event(ev).expect("应转换为 UiEvent");
+        let text = match &out.kind {
+            UiEventKind::Notice(t) => t.clone(),
+            other => panic!("期望 Notice,得到 {other:?}"),
+        };
+        assert!(text.contains("smart prune"), "{text}");
+        assert!(text.contains("7"), "{text}");
+        assert!(text.contains("90000"), "{text}");
+        assert!(text.contains("20000"), "{text}");
+    }
+
+    #[test]
+    fn quota_exhausted_becomes_visible_notice() {
+        // 同上:配额耗尽被丢弃时,回合只会莫名停住,用户拿不到任何可决策信息。
+        let ev = reflect_protocol::Event::new(
+            "t",
+            reflect_protocol::event_msg::EventMsg::QuotaExhausted(
+                reflect_protocol::QuotaExhaustedEvent {
+                    provider: "anthropic".into(),
+                    label: "plan-a".into(),
+                    used_tokens: 1_000_000,
+                    max_tokens: 1_000_000,
+                    window_ends_secs: 3_600,
+                },
+            ),
+        );
+        let out = convert_event(ev).expect("应转换为 UiEvent");
+        let text = match &out.kind {
+            UiEventKind::Notice(t) => t.clone(),
+            other => panic!("期望 Notice,得到 {other:?}"),
+        };
+        assert!(text.contains("anthropic"), "{text}");
+        assert!(text.contains("plan-a"), "{text}");
+        assert!(text.contains("1h 0m 0s"), "{text}");
+    }
 
     fn diff_block(s: &str) -> ContentBlock {
         ContentBlock::Diff {

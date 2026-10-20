@@ -690,6 +690,40 @@ fn handle_event(
                     _ => {}
                 }
             }
+            // v1.x:busy 回合中 Ctrl-C = 中断当前回合,而非直接退出 TUI
+            // (对齐 codex / claude code:首次 Ctrl-C 打断进行中的回合)。
+            // 空闲时 Ctrl-C 仍一次退出,行为不变。
+            //
+            // 例外:若中断请求已发出而回合仍未收尾,1.5s 内第二次 Ctrl-C 强制
+            // 退出 —— 引擎卡死时用户必须有出路,不会被 busy 状态永久锁死。
+            // picker 打开时仍走下方双击退出逻辑(不与回合中断叠加)。
+            if !any_picker_open && is_exit_key(key) && state.busy {
+                const QUIT_DOUBLE_PRESS_WINDOW: std::time::Duration =
+                    std::time::Duration::from_millis(1500);
+                let now = std::time::Instant::now();
+                let second_press = state
+                    .last_quit_press
+                    .map(|t| now.duration_since(t) <= QUIT_DOUBLE_PRESS_WINDOW)
+                    .unwrap_or(false);
+                state.last_quit_press = Some(now);
+                match crate::keymap::exit_key_action(state.busy, second_press) {
+                    crate::keymap::ExitKeyAction::Quit => {
+                        state.last_quit_press = None;
+                        return Ok(true);
+                    }
+                    crate::keymap::ExitKeyAction::Interrupt => {
+                        emit_op(
+                            thread,
+                            event_tx,
+                            reflect_protocol::Op::Interrupt { child_id: None },
+                        );
+                        state.history.push(adapter::UiHistoryItem::Notice(
+                            "⏹ 已发送中断请求,正在停止当前回合… (再按 Ctrl-C 强制退出)".into(),
+                        ));
+                        return Ok(false);
+                    }
+                }
+            }
             // picker 打开时 Ctrl+C 默认只关 picker(见下方各 picker handle_key),
             // 用户必须再按一次才能退出 —— 容易让人误以为「退不掉」。这里实现
             // 双击退出:picker 打开时若 1.5s 内第二次按 Ctrl+C,直接退出 TUI;
@@ -879,10 +913,13 @@ fn sync_plan_mode_visuals(state: &mut UiState) {
 /// 剪贴板写入走 vendored `clipboard_copy::copy_to_clipboard`(OSC 52 + arboard
 /// 优先链),与归档 TUI 行为一致。
 fn copy_last_reply(state: &mut UiState) {
-    let Some(text) = state.history.iter().rev().find_map(|item| match item {
-        adapter::UiHistoryItem::Agent(t) => Some(t.clone()),
-        _ => None,
-    }) else {
+    // 必须走 `agent_replies_in_order`:正常(流式)路径下 agent 正文以
+    // `StreamedAgent` 片段入 history,整段 `Agent` 只在 resume 回放时出现。
+    // 只匹配 `Agent` 会让 Ctrl+O 在每次真实对话后都报「no agent reply yet」。
+    let Some(text) = adapter::agent_replies_in_order(&state.history)
+        .into_iter()
+        .next_back()
+    else {
         state
             .history
             .push(UiHistoryItem::Notice("Copy: no agent reply yet.".into()));
@@ -975,14 +1012,9 @@ fn force_redraw(frame_requester: &FrameRequester) {
 /// N=缺省 + 单条回复 → 直接复制最后一条。
 /// N=给定值 → 直接复制第 N 条。失败时推 Notice,不静默。
 fn copy_reply_n(n: Option<usize>, state: &mut UiState) {
-    let agent_replies: Vec<String> = state
-        .history
-        .iter()
-        .filter_map(|item| match item {
-            adapter::UiHistoryItem::Agent(t) => Some(t.clone()),
-            _ => None,
-        })
-        .collect();
+    // 同 `copy_last_reply`:合并连续的 `StreamedAgent` 片段,否则流式路径下
+    // 回复数恒为 0。
+    let agent_replies: Vec<String> = adapter::agent_replies_in_order(&state.history);
     if agent_replies.is_empty() {
         state
             .history
@@ -1681,7 +1713,9 @@ fn dispatch_slash_command_with_args(
 /// 打开 diff 全屏 overlay:扫 history 收集所有 ToolCall 的 unified_diff,
 /// 经 Reflect `create_diff_summary`(语法高亮 + +/- 着色)渲染成行,喂给 pager。
 fn open_diff_overlay(state: &mut UiState) {
-    let width = term_size().map(|(w, _)| w).unwrap_or(80) as usize;
+    // 钳到至少 8 列:diff 渲染自身还要减去边框/缩进,裸 width 在 resize 到
+    // 极窄分屏时会让下游 `wrap_cols - 4` 下溢 panic。
+    let width = term_size().map(|(w, _)| w as usize).unwrap_or(80).max(8);
     let mut changes: std::collections::HashMap<
         std::path::PathBuf,
         crate::tui_core::diff_model::FileChange,
@@ -1946,12 +1980,7 @@ fn question_panel_key(key: KeyEvent, state: &mut UiState) -> QuestionPanelAction
         return QuestionPanelAction::None;
     };
     // 勾选逻辑:单选覆盖为该下标,多选切换该下标。
-    fn apply_select(
-        selections: &mut [Vec<usize>],
-        current: usize,
-        idx: usize,
-        multi: bool,
-    ) {
+    fn apply_select(selections: &mut [Vec<usize>], current: usize, idx: usize, multi: bool) {
         let sel = &mut selections[current];
         if multi {
             if let Some(p) = sel.iter().position(|&s| s == idx) {
@@ -3222,7 +3251,8 @@ fn handle_key(
                     return Ok(false);
                 }
                 SlashOutcome::OpenMcp => {
-                    let lines = crate::picker::mcp_overlay::load_mcp_status();
+                    // 从真实连接态快照渲染,不再显示硬编码的假服务器列表。
+                    let lines = crate::picker::mcp_overlay::load_mcp_status(&state.mcp_servers);
                     state.transcript = Some(TranscriptPager::new(lines));
                     return Ok(false);
                 }
@@ -3556,6 +3586,19 @@ fn draw_fullscreen(
         0
     };
     let plan_approval_h: u16 = if state.plan_approval.is_some() { 3 } else { 0 };
+    // 与 `draw` 对齐:问题面板 / ask_user 条在全屏模式同样必须占位渲染,
+    // 否则 `--fullscreen` 下引擎阻塞在 AskUserQuestion 时用户看到的是空白,
+    // 而键位仍被面板接管 —— 表现为「界面卡死但按键有反应」。
+    let question_h: u16 = state
+        .pending_question
+        .as_ref()
+        .map(adapter::question_panel_height)
+        .unwrap_or(0);
+    let ask_user_h: u16 = if state.pending_ask_user.is_some() {
+        adapter::ask_user_bar_height()
+    } else {
+        0
+    };
     let status_h: u16 = history_render::statusline::hud_height(screen_height);
 
     // 历史区吃掉所有剩余空间（Min(0)），其余区域贴底，与 draw 的底部锚定一致。
@@ -3566,6 +3609,8 @@ fn draw_fullscreen(
             Constraint::Length(live_h),
             Constraint::Length(plan_approval_h),
             Constraint::Length(approval_h),
+            Constraint::Length(question_h),
+            Constraint::Length(ask_user_h),
             Constraint::Length(composer_h),
             Constraint::Length(status_h),
         ])
@@ -3606,7 +3651,13 @@ fn draw_fullscreen(
     if let Some(ref pending) = state.pending_approval {
         frame.render_widget_ref(adapter::approval_block(pending), layout[3]);
     }
-    let composer_area = layout[4];
+    if let Some(ref question) = state.pending_question {
+        frame.render_widget_ref(adapter::question_block(question), layout[4]);
+    }
+    if let Some(ref ask) = state.pending_ask_user {
+        frame.render_widget_ref(adapter::ask_user_block(ask), layout[5]);
+    }
+    let composer_area = layout[6];
     state.composer.render_ref(composer_area, frame.buffer_mut());
     if let Some((x, y)) = state.composer.cursor_pos(composer_area) {
         frame.set_cursor_position((x, y));
@@ -3623,7 +3674,7 @@ fn draw_fullscreen(
                 hud_lines.push(metrics.clone());
             }
         }
-        frame.render_widget_ref(Paragraph::new(hud_lines), layout[5]);
+        frame.render_widget_ref(Paragraph::new(hud_lines), layout[7]);
     }
 
     // 居中 overlay 与 draw 共用。

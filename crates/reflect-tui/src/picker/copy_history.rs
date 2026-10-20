@@ -59,16 +59,14 @@ pub fn handle_key(
 }
 
 /// 从 state.history 中收集 agent replies 填充 CopyHistoryState(最新在前)。
+///
+/// 走 `agent_replies_in_order` 把连续的 `StreamedAgent` 片段合并成一条回复 ——
+/// 正常(流式)路径下 agent 正文全部以片段形式入 history,只匹配 `Agent`
+/// 会让本 overlay 永远返回 `None`。
 pub fn populate_from_history(history: &[UiHistoryItem]) -> Option<CopyHistoryState> {
-    let entries: Vec<String> = history
-        .iter()
-        .rev()
-        .filter_map(|item| match item {
-            UiHistoryItem::Agent(t) => Some(t.clone()),
-            _ => None,
-        })
-        .take(32) // MAX_AGENT_COPY_HISTORY
-        .collect();
+    let mut entries: Vec<String> = crate::adapter::agent_replies_in_order(history);
+    entries.reverse(); // 最新在前
+    entries.truncate(32); // MAX_AGENT_COPY_HISTORY
     if entries.is_empty() {
         return None;
     }
@@ -227,6 +225,23 @@ mod tests {
     fn populate_from_history_empty_when_no_agents() {
         let history = vec![UiHistoryItem::User("hello".into())];
         assert!(populate_from_history(&history).is_none());
+    }
+
+    #[test]
+    fn populate_from_history_merges_streamed_agent_segments() {
+        // 正常(流式)路径:一条回复被边界 flush 拆成多个连续 StreamedAgent 片段。
+        // 只匹配 `Agent` 的旧实现在这里恒返回 None —— /copy 与 Ctrl+O 全废。
+        let history = vec![
+            UiHistoryItem::User("q".into()),
+            UiHistoryItem::StreamedAgent("hello ".into()),
+            UiHistoryItem::StreamedAgent("world".into()),
+            UiHistoryItem::User("q2".into()),
+            UiHistoryItem::StreamedAgent("second reply".into()),
+        ];
+        let state = populate_from_history(&history).unwrap();
+        assert_eq!(state.entries.len(), 2, "两条回复,片段应各自合并");
+        assert_eq!(state.entries[0], "second reply"); // 最新在前
+        assert_eq!(state.entries[1], "hello world");
     }
 
     #[test]

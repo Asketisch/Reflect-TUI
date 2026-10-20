@@ -5,6 +5,37 @@
 
 ## [Unreleased]
 
+### 修复（对标 codex / claude code 审计后的 TUI 层缺陷）
+
+- **Ctrl-C 不再在回合进行中直接退出 TUI**：此前 Ctrl-C 无条件映射 `Exit`，
+  长回合中误触即丢失整个会话。改为对齐 codex / claude code —— busy 时首次
+  Ctrl-C 发 `Op::Interrupt` 打断当前回合，空闲时才一次退出；中断请求已发出而
+  回合仍未收尾时，1.5s 内第二次 Ctrl-C 放行退出，保证引擎卡死时用户有出路。
+  判定逻辑收敛到 `keymap::exit_key_action` 纯函数。
+- **`/copy` 与 Ctrl+O 修复**：`adapter::agent_replies_in_order` 早已写好却零调用方，
+  而 `copy_last_reply` / `copy_reply_n` / copy-history overlay 都只匹配整段
+  `UiHistoryItem::Agent` —— 正常流式路径下 agent 正文全部以 `StreamedAgent`
+  片段入 history，导致每次真实对话后 Ctrl+O 与 `/copy` 都报「no agent reply
+  yet」。三处统一改走该辅助函数（合并连续流式片段为一条回复）。
+- **`/mcp` overlay 不再显示假数据**：此前硬编码一份
+  `[("node_repl", "Node.js REPL environment", "connected", 3)]` 虚构清单。改为
+  由 `McpServerStarted` / `McpServerFailed` 生命周期事件 upsert 出
+  `state.mcp_servers` 连接态快照，overlay 只读快照；没连上就如实显示
+  「No MCP servers connected」，连接成功时展开协议事件本就携带的 `tool_names`。
+- **全屏模式补绘 ask_user / question 面板**：`draw_fullscreen` 的 layout 漏了
+  `question_h` / `ask_user_h` 两段，`--fullscreen` 下引擎阻塞在
+  `AskUserQuestion` / `AskUser` 时用户看到的是空白，而键位仍被面板接管 ——
+  表现为「界面卡死但按键有反应」。与 inline `draw` 对齐补齐。
+- **自动压缩与配额耗尽不再静默**：`ContextCompacted` / `QuotaExhausted` 此前
+  整条 `return None` 丢弃，用户看到的是「上下文突然变短」「模型突然不记得
+  前面的话」「回合莫名停住」，界面上没有任何解释。改为 Notice，携带压缩策略 /
+  移除消息数 / token 前后对比，以及配额 provider / credential / 用量 / 窗口
+  重置时间。
+- **`/diff` 窄终端下溢 panic**：`diff_render::render_change` 的 `wrap_cols - 4`
+  在终端宽度 ≤ 4 时下溢（dev/test profile 开了 overflow-checks）。钳到
+  `saturating_sub(4).max(1)`，调用侧 `open_diff_overlay` 的 width 也钳到 ≥ 8。
+- `cargo fmt` 收口：`question_panel_key` 内 `apply_select` 签名单行化。
+
 ### 能力接线（对齐 headless reflect-exec，引擎能力在 TUI 内真正可用）
 
 - M4 完整装配：agent 定义（`.reflect/agents/`）、技能系统（扫描 + 内置技能包 +

@@ -100,6 +100,31 @@ fn is_exit_key(key: KeyEvent) -> bool {
     key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
+/// 退出键在「回合进行中」时的行为。
+///
+/// 对齐 codex / claude code / pi:**busy 时首次 Ctrl-C 中断当前回合,而不是直接
+/// 退出 TUI**;空闲时才一次退出。理由:harness 里一个回合可能跑几分钟,把
+/// 「我想停掉这个回合」和「我想退出程序」混为一个按键,会让用户在长回合中
+/// 意外丢失整个会话。
+///
+/// `second_press` = 中断请求已发出而回合仍未收尾时,双击窗口内的第二次按下 ——
+/// 此时放行退出,保证引擎卡死时用户永远有出路,不会被 busy 状态永久锁死。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitKeyAction {
+    /// 中断当前回合(主循环发 `Op::Interrupt { child_id: None }`)。
+    Interrupt,
+    /// 退出 TUI。
+    Quit,
+}
+
+pub fn exit_key_action(busy: bool, second_press: bool) -> ExitKeyAction {
+    if busy && !second_press {
+        ExitKeyAction::Interrupt
+    } else {
+        ExitKeyAction::Quit
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,5 +247,15 @@ mod tests {
     fn non_key_event_returns_none() {
         // 窗口调整事件不应被解释为按键动作。
         assert_eq!(resolve_global_key(Event::Resize(80, 24)), None);
+    }
+
+    #[test]
+    fn exit_key_interrupts_when_busy_and_quits_when_idle() {
+        // 回归:Ctrl-C 曾无条件映射 Exit,busy 回合中误触即丢失整个会话。
+        // 对齐 codex / claude code:busy 首次中断,空闲一次退出。
+        assert_eq!(exit_key_action(true, false), ExitKeyAction::Interrupt);
+        assert_eq!(exit_key_action(false, false), ExitKeyAction::Quit);
+        // 中断请求已发出而回合未收尾时,第二次按下必须放行退出(防锁死)。
+        assert_eq!(exit_key_action(true, true), ExitKeyAction::Quit);
     }
 }

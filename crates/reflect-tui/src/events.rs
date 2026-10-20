@@ -207,6 +207,9 @@ pub struct UiState {
     pub(crate) plan_steps: Vec<PlanStep>,
     /// 子 agent / 协作参与者(供 /tasks overlay 的 agent 面板)。
     pub(crate) agents: Vec<AgentEntry>,
+    /// MCP 服务器连接态快照(由 McpServerStarted / McpServerFailed upsert,
+    /// 供 `/mcp` overlay 展示真实状态)。
+    pub(crate) mcp_servers: Vec<crate::adapter::McpServerView>,
     /// `/tasks` overlay(alt-screen,左 message_list + 右 task/agent 面板)。
     pub(crate) tasks_overlay: Option<crate::tasks_pager::TasksPager>,
     /// Vim 模式开关(底部状态行右侧显示 `INSERT` / `NORMAL`)。
@@ -602,6 +605,7 @@ impl Default for UiState {
             context_usage: ContextUsage::default(),
             plan_steps: Vec::new(),
             agents: Vec::new(),
+            mcp_servers: Vec::new(),
             tasks_overlay: None,
             vim_enabled: false,
             pending_clear_confirm: false,
