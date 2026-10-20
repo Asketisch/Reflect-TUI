@@ -1787,6 +1787,22 @@ fn dispatch_slash_command_with_args(
                 )));
             }
         }
+        SlashCommand::Prompt => {
+            // v1.6:弹窗路径无参 → 默认 List(带参解析在
+            // history_render::dispatch_slash 的 /prompt 臂)。应答事件经
+            // 会话泵回流为 Notice,per-submission handle 立即 drop
+            // (与 SlashOutcome::Prompt 处理臂同款,防 Notice 重复)。
+            let thread = Arc::clone(thread);
+            tokio::spawn(async move {
+                let sub = Submission::with_id(
+                    uuid::Uuid::new_v4().to_string(),
+                    reflect_protocol::Op::PromptCommand {
+                        action: reflect_protocol::PromptAction::List,
+                    },
+                );
+                drop(thread.submit(sub).await);
+            });
+        }
         _ => {
             // 兜底（带参版）：明确告知未实现，用 command() 显示命令名。
             state.history.push(UiHistoryItem::Notice(format!(
@@ -3080,6 +3096,26 @@ fn handle_key(
                 }
                 SlashOutcome::CycleMode => {
                     emit_op(thread, event_tx, reflect_protocol::Op::CyclePermissionMode);
+                    return Ok(false);
+                }
+                SlashOutcome::Prompt { action } => {
+                    // v1.6.1:/prompt → Op::PromptCommand(submission_loop 单点
+                    // 处理,不开 turn)。应答事件 PromptList/PromptSwitched 由
+                    // 引擎经 per-submission 通道 + 会话扇出双路发送,而 TUI 的
+                    // 会话泵(subscribe_session)已在消费 —— 因此 per-submission
+                    // handle 必须立即 drop,否则同一条 Notice 会重复入列
+                    // (emit_op 的排空路径与本路径二选一,这里选会话泵)。
+                    use reflect_protocol::{Op, Submission};
+                    let thread = Arc::clone(thread);
+                    tokio::spawn(async move {
+                        let sub = Submission::with_id(
+                            uuid::Uuid::new_v4().to_string(),
+                            Op::PromptCommand {
+                                action: action.into_protocol(),
+                            },
+                        );
+                        drop(thread.submit(sub).await);
+                    });
                     return Ok(false);
                 }
                 SlashOutcome::ShowStatus => {

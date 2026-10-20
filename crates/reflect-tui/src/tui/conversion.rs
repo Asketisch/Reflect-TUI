@@ -260,8 +260,33 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
         // v1.3 SDK:serve 在 per-turn 通道排空后发出的收尾标记,仅存在于
         // serve 模式的 SDK 客户端;TUI 内嵌运行不经 serve,按构造不可能收到。
         SubmissionClosed => return None,
+        // v1.6.1 `/prompt list` 的应答:可用提示词层 + 当前模型生效层。
+        // active_layers 只记录用户目录层的命中(内嵌层不记录),空 = 全部
+        // 走内嵌默认。作为 Notice 进对话流(选择 overlay 留待后续迭代)。
+        PromptList(pl) => UiEventKind::Notice(format!(
+            "📋 提示词层 · 模型 {} · 生效: {} · 可用: {}",
+            pl.current_spec,
+            format_prompt_layers(&pl.active_layers),
+            pl.available.join(", "),
+        )),
+        // v1.6.1 `/prompt reload` 的应答:提示词库已重扫,下一 turn 即用
+        // 新文案。action 为触发词(`reload`,预留聚焦切换的层名)。
+        PromptSwitched(ps) => UiEventKind::Notice(format!(
+            "🔄 提示词已重扫({})· 生效层: {}",
+            ps.action,
+            format_prompt_layers(&ps.active_layers),
+        )),
     };
     Some(UiEvent { kind })
+}
+
+/// 提示词层命中列表的人读形式:空列表 = 全部走内嵌默认层。
+fn format_prompt_layers(layers: &[String]) -> String {
+    if layers.is_empty() {
+        "(内嵌默认)".to_string()
+    } else {
+        layers.join(", ")
+    }
 }
 
 pub(super) fn format_content_blocks(blocks: &[ContentBlock]) -> String {
@@ -408,6 +433,67 @@ mod tests {
         assert!(text.contains("anthropic"), "{text}");
         assert!(text.contains("plan-a"), "{text}");
         assert!(text.contains("1h 0m 0s"), "{text}");
+    }
+
+    #[test]
+    fn prompt_list_becomes_visible_notice() {
+        // v1.6.1:`/prompt list` 的应答必须可见 —— 可用层 + 生效层是用户
+        // 编辑 `.reflect/prompts/*.md` 时唯一的事实来源。
+        let ev = reflect_protocol::Event::new(
+            "t",
+            reflect_protocol::event_msg::EventMsg::PromptList(reflect_protocol::PromptListEvent {
+                available: vec!["default".into(), "claude".into()],
+                current_spec: "anthropic/claude-sonnet-5-5".into(),
+                active_layers: vec!["claude".into()],
+            }),
+        );
+        let out = convert_event(ev).expect("应转换为 UiEvent");
+        let text = match &out.kind {
+            UiEventKind::Notice(t) => t.clone(),
+            other => panic!("期望 Notice,得到 {other:?}"),
+        };
+        assert!(text.contains("claude-sonnet-5-5"), "{text}");
+        assert!(text.contains("claude"), "{text}");
+        assert!(text.contains("default"), "{text}");
+    }
+
+    #[test]
+    fn prompt_list_empty_active_layers_means_embedded_default() {
+        let ev = reflect_protocol::Event::new(
+            "t",
+            reflect_protocol::event_msg::EventMsg::PromptList(reflect_protocol::PromptListEvent {
+                available: vec!["default".into()],
+                current_spec: "openai/gpt-5.6".into(),
+                active_layers: vec![],
+            }),
+        );
+        let out = convert_event(ev).unwrap();
+        let text = match &out.kind {
+            UiEventKind::Notice(t) => t.clone(),
+            other => panic!("期望 Notice,得到 {other:?}"),
+        };
+        assert!(text.contains("(内嵌默认)"), "{text}");
+    }
+
+    #[test]
+    fn prompt_switched_becomes_visible_notice() {
+        // v1.6.1:`/prompt reload` 的应答 —— 用户需要确认重扫已生效。
+        let ev = reflect_protocol::Event::new(
+            "t",
+            reflect_protocol::event_msg::EventMsg::PromptSwitched(
+                reflect_protocol::PromptSwitchedEvent {
+                    action: "reload".into(),
+                    active_layers: vec!["claude".into()],
+                },
+            ),
+        );
+        let out = convert_event(ev).expect("应转换为 UiEvent");
+        let text = match &out.kind {
+            UiEventKind::Notice(t) => t.clone(),
+            other => panic!("期望 Notice,得到 {other:?}"),
+        };
+        assert!(text.contains("reload"), "{text}");
+        assert!(text.contains("claude"), "{text}");
     }
 
     fn diff_block(s: &str) -> ContentBlock {

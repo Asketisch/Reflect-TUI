@@ -318,10 +318,35 @@ pub enum SlashOutcome {
     OpenPlugin,
     /// v1.x `/mcp`：打开 mcp overlay（显示 MCP 服务器状态）。
     OpenMcp,
+    /// v1.6 `/prompt [list|reload|<layer>]`：提示词层管理（发
+    /// `Op::PromptCommand`，不开 turn，应答 `PromptList`/`PromptSwitched`
+    /// 经会话通道回流为 Notice）。
+    Prompt { action: PromptSlashAction },
     /// 显示完整状态信息。
     ShowStatus,
     /// 不是已知 slash，原样提交。
     SubmitAsUser(String),
+}
+
+/// v1.6：`/prompt` 子命令动作（镜像 `reflect_protocol::PromptAction`；
+/// 协议类型未派生 `PartialEq`/`Eq`，不能直接进 `SlashOutcome`）。
+///
+/// 解析语义与 headless 的 `expand_prompt_slash` 一致：`list`（含空参）查询，
+/// `reload`/`rescan` 全量重扫，其他词作为层名透传（预留聚焦切换）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptSlashAction {
+    List,
+    Switch { layer: Option<String> },
+}
+
+impl PromptSlashAction {
+    /// 映射到协议 `PromptAction`（构造 `Op::PromptCommand` 时消费）。
+    pub fn into_protocol(self) -> reflect_protocol::PromptAction {
+        match self {
+            Self::List => reflect_protocol::PromptAction::List,
+            Self::Switch { layer } => reflect_protocol::PromptAction::Switch { layer },
+        }
+    }
 }
 
 /// v1.x：reasoning effort（映射到 `Op::SetEffort::effort`）。
@@ -770,6 +795,21 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         "/plugin" => SlashOutcome::OpenPlugin,
         // /mcp — 打开 mcp overlay（显示 MCP 服务器状态）
         "/mcp" => SlashOutcome::OpenMcp,
+        // /prompt [list|reload|<layer>] — 提示词层管理（v1.6.1，引擎内置
+        // 命令，不开 turn）。解析语义与 headless 的 expand_prompt_slash 一致。
+        "/prompt" => {
+            let arg = trimmed.split_whitespace().nth(1).unwrap_or("list");
+            // 关键字(list/reload/rescan)大小写不敏感;层名透传保留原样
+            // (层名是文件名,大小写敏感)。
+            let action = match arg.to_ascii_lowercase().as_str() {
+                "list" => PromptSlashAction::List,
+                "reload" | "rescan" => PromptSlashAction::Switch { layer: None },
+                _ => PromptSlashAction::Switch {
+                    layer: Some(arg.to_string()),
+                },
+            };
+            SlashOutcome::Prompt { action }
+        }
 
         _ => {
             // 未知 slash：仍作为用户消息提交，让 runtime / agent 处理。
@@ -833,6 +873,7 @@ pub fn help_lines() -> Vec<Line<'static>> {
         Line::from("  /think        Toggle thinking blocks display"),
         Line::from("  /theme [n]    Switch theme (or picker)"),
         Line::from("  /personality  Set personality"),
+        Line::from("  /prompt [a]   List/rescan prompt layers (list|reload)"),
         Line::from("  /version      Show TUI version + git sha"),
         Line::from("  /doctor       Environment self-check"),
         Line::from("  /history [N]  Show last N user messages"),
@@ -966,6 +1007,59 @@ mod sanitize_tests {
         match dispatch_slash("/cost") {
             SlashOutcome::ShowCost => {}
             other => panic!("/cost 应产出 ShowCost, 实为 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dispatch_slash_prompt_actions_parse() {
+        // v1.6:与 headless expand_prompt_slash 同语义 —— 空参/list 查询,
+        // reload/rescan 全量重扫,其他词透传为层名。
+        for input in ["/prompt", "/prompt list"] {
+            match dispatch_slash(input) {
+                SlashOutcome::Prompt {
+                    action: PromptSlashAction::List,
+                } => {}
+                other => panic!("{input} 应产出 Prompt::List, 实为 {other:?}"),
+            }
+        }
+        for input in ["/prompt reload", "/prompt rescan"] {
+            match dispatch_slash(input) {
+                SlashOutcome::Prompt {
+                    action: PromptSlashAction::Switch { layer: None },
+                } => {}
+                other => panic!("{input} 应产出 Prompt::Switch(None), 实为 {other:?}"),
+            }
+        }
+        match dispatch_slash("/prompt claude") {
+            SlashOutcome::Prompt {
+                action: PromptSlashAction::Switch { layer },
+            } => assert_eq!(layer.as_deref(), Some("claude")),
+            other => panic!("/prompt claude 应产出 Prompt::Switch(Some), 实为 {other:?}"),
+        }
+        // 大小写不敏感;相近词(/prompts)不得误命中,原样提交。
+        match dispatch_slash("/PROMPT LIST") {
+            SlashOutcome::Prompt {
+                action: PromptSlashAction::List,
+            } => {}
+            other => panic!("/PROMPT LIST 应产出 Prompt::List, 实为 {other:?}"),
+        }
+        assert!(matches!(
+            dispatch_slash("/prompts"),
+            SlashOutcome::SubmitAsUser(_)
+        ));
+    }
+
+    #[test]
+    fn prompt_slash_action_maps_to_protocol() {
+        assert!(matches!(
+            PromptSlashAction::List.into_protocol(),
+            reflect_protocol::PromptAction::List
+        ));
+        match (PromptSlashAction::Switch { layer: None }).into_protocol() {
+            reflect_protocol::PromptAction::Switch { layer } => {
+                assert_eq!(layer, None);
+            }
+            other => panic!("Switch(None) 映射错误: {other:?}"),
         }
     }
 

@@ -512,6 +512,16 @@ impl ChatWidget {
             SlashCommand::Mcp => {
                 self.add_mcp_output(McpServerStatusDetail::ToolsAndAuthOnly);
             }
+            SlashCommand::Prompt => {
+                // v1.6:稳定主循环的文本路径(/prompt → SlashOutcome::Prompt)
+                // 已接 Op::PromptCommand;chatwidget 嵌入路径无引擎句柄,与
+                // /rewind 同款引导用户走主循环路径。
+                self.add_error_message(
+                    "/prompt is not wired in this embed mode yet. Use the stable \
+                     composer path (/prompt list · /prompt reload) instead."
+                        .to_string(),
+                );
+            }
             SlashCommand::Apps => {
                 self.add_connectors_output();
             }
@@ -1101,6 +1111,7 @@ impl ChatWidget {
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate
             | SlashCommand::Mcp
+            | SlashCommand::Prompt
             | SlashCommand::Apps
             | SlashCommand::Plugins
             | SlashCommand::Rollout

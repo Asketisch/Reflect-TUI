@@ -26,24 +26,10 @@ use reflect_task::coordinator::{CoordinatorConfig, build_scratchpad_path, ensure
 use reflect_tools::{SanitizeConfig, Sanitizer, ToolRegistry, ToolSource};
 use tokio_util::sync::CancellationToken;
 
-/// 默认 agent 系统提示(用户未提供 `.reflect/agents/<name>.md` 时的 fallback)。
-///
-/// 与 `reflect-exec` 的 `DEFAULT_SYSTEM_PROMPT` 保持同一份文本:只覆盖 5 条
-/// 最通用的编码 agent 行为约束,具体能力由工具和 skills 在运行时叠加。
-pub(crate) const DEFAULT_SYSTEM_PROMPT: &str = "你是一名编码助手。在回答用户请求时遵守以下约定:\n\
-\n\
-1. 先读后改:编辑文件前先用 `read` 读目标文件;做有针对性的修改,而非整文件重写。\n\
-2. 先约定后实现:不要假设库或工具可用。从 README、package manifest(如 \
-Cargo.toml / package.json)、邻近文件确认约定与风格,模仿现有代码的命名与惯用法。\n\
-3. 不过度设计:只做被要求的事,不主动增加范围外的功能、重构或抽象。三行重复 \
-优于过早抽象。任务完成后不要顺手创建未要求的 README / 测试 / 文档。\n\
-4. 注释克制:除非用户要求,不要写注释;需要写注释时,只解释「为什么」, \
-不要复述代码「是什么」。\n\
-5. 破坏性操作前确认:对难以撤销或对外可见的操作,先说明再执行。典型例子包括 \
-`rm -rf`、`git reset --hard`、删除分支、`git push`(含 `--force`)、 \
-发送外部请求或提交等。\n\
-\n\
-语言:用与用户提问相同的语言回答。";
+// v1.6 起 `DEFAULT_SYSTEM_PROMPT` 本地副本删除:默认 agent 不再携带固定
+// 文案,`SystemPromptSource::BuiltinDefault` 标记让 pre_loop 按当前模型
+// spec 从提示词库(`reflect_prompt::library()`)解析 `system.main`,
+// 与 headless(`reflect-exec` bootstrap_m4)同款。
 
 // ── 无 LLM 客户端时的 fallback 摘要器 ──────────────────────────────────
 
@@ -264,16 +250,36 @@ pub(crate) fn build_m4(
     // Agent 定义:workspace + home 两个目录合并,同名时 workspace 覆盖 home。
     let home = std::env::var("HOME").unwrap_or_default();
     let home_path = std::path::Path::new(&home);
+
+    // v1.6:按模型匹配的外置提示词库(对齐 exec bootstrap_m4)。home 在前、
+    // workspace 在后(workspace 同名层优先),另兼容旧版 `~/.reflect/prompts.md`
+    // 降级为 default 层。进程级全局句柄,pre_loop 每轮 resolve。
+    let ws_prompts = workspace.join(".reflect").join("prompts");
+    let home_prompts = home_path.join(".reflect").join("prompts");
+    let legacy_prompts_md = home_path.join(".reflect").join("prompts.md");
+    let legacy = std::fs::read_to_string(&legacy_prompts_md).ok();
+    if legacy.is_some() {
+        tracing::warn!(
+            path = %legacy_prompts_md.display(),
+            "~/.reflect/prompts.md is deprecated; migrate to ~/.reflect/prompts/default.md"
+        );
+    }
+    reflect_prompt::init_library(&[&home_prompts, &ws_prompts], legacy.as_deref());
+
     let ws_agents = workspace.join(".reflect").join("agents");
     let home_agents = home_path.join(".reflect").join("agents");
     let mut agents = reflect_agent_def::load_agents_dir(&ws_agents).unwrap_or_default();
     agents.extend(reflect_agent_def::load_agents_dir(&home_agents).unwrap_or_default());
     #[allow(clippy::field_reassign_with_default)] // 与 exec 同款,耐字段增减
     let active_def = agents.remove(agent_name).unwrap_or_else(|| {
+        // v1.6:默认 agent 不再携带固定文案 —— `BuiltinDefault` 来源标记让
+        // pre_loop 按当前模型 spec 从提示词库解析 `system.main`(用户自定义
+        // `.reflect/agents/<name>.md` 的 `Custom` 来源则原文不动)。
         let mut d = AgentDefinition::default();
         d.name = agent_name.to_string();
         d.description = "default agent".into();
-        d.system_prompt = DEFAULT_SYSTEM_PROMPT.into();
+        d.system_prompt = String::new();
+        d.source = reflect_agent_def::SystemPromptSource::BuiltinDefault;
         d
     });
     let active_def = Arc::new(active_def);
@@ -390,6 +396,9 @@ pub(crate) fn build_m4(
         note_store,
         file_recovery,
         subagent_registry,
+        // v1.6.1:`/prompt` Switch 重扫用的目录序(home 在前、workspace 在后,
+        // 与启动时 init_library 同序)。
+        prompt_dirs: vec![home_prompts, ws_prompts],
     }
 }
 

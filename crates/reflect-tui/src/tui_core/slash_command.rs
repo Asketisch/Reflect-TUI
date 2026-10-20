@@ -68,6 +68,10 @@ pub enum SlashCommand {
     Apps,
     #[strum(to_string = "plugins", serialize = "plugin")]
     Plugins,
+    /// v1.6 `/prompt [list|reload]` —— 提示词层管理：列出可用层/当前生效层，
+    /// 或改完 `.reflect/prompts/*.md` 后重扫即时生效（发 `Op::PromptCommand`，
+    /// 不开 turn，应答 `PromptList`/`PromptSwitched` 回流为 Notice）。
+    Prompt,
     Logout,
     Quit,
     Exit,
@@ -151,6 +155,7 @@ impl SlashCommand {
             SlashCommand::AutoReview => "approve one retry of a recent auto-review denial",
             SlashCommand::Memories => "configure memory use and generation",
             SlashCommand::Mcp => "list configured MCP tools; use /mcp verbose for details",
+            SlashCommand::Prompt => "manage prompt layers: /prompt list · /prompt reload",
             SlashCommand::Apps => "manage apps",
             SlashCommand::Plugins => "browse plugins",
             SlashCommand::Logout => "log out of Reflect",
@@ -176,6 +181,7 @@ impl SlashCommand {
                 | SlashCommand::Ide
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
+                | SlashCommand::Prompt
                 | SlashCommand::Raw
                 | SlashCommand::Usage
                 | SlashCommand::Pets
@@ -243,6 +249,7 @@ impl SlashCommand {
             | SlashCommand::Goal
             | SlashCommand::Loop
             | SlashCommand::Mcp
+            | SlashCommand::Prompt
             | SlashCommand::Apps
             | SlashCommand::Plugins
             | SlashCommand::Title

@@ -5,6 +5,25 @@
 
 ## [Unreleased]
 
+### submodule 接线（reflect-agent 3cb791f → 46dc156）
+
+- **提示词分层库进 TUI（v1.6）**：`build_m4` 对齐 headless `bootstrap_m4` ——
+  启动期 `init_library`（home 在前、workspace 在后，另兼容旧版
+  `~/.reflect/prompts.md` 降级为 default 层并打 deprecation 日志），默认 agent
+  不再携带本地硬编码 `DEFAULT_SYSTEM_PROMPT` 副本（exec 侧已删除），改标
+  `SystemPromptSource::BuiltinDefault`，由 pre_loop 按当前模型 spec 从提示词库
+  解析 `system.main`（default → 厂商 → 精确模型名三级回退）。TUI 会话由此获得
+  9 厂商层（claude / gpt / gemini / kimi / qwen / grok / glm / minimax）与用户
+  目录层（`.reflect/prompts/*.md`）的按模型命中。
+- **`/prompt` 运行时管理（v1.6.1）**：`/prompt [list|reload|<layer>]` 解析语义
+  与 headless `expand_prompt_slash` 一致（关键字大小写不敏感，层名透传保留
+  原样），发 `Op::PromptCommand`（不开 turn）；应答 `PromptList` /
+  `PromptSwitched` 经会话泵回流为 Notice（可用层 + 当前模型生效层 / 重扫确认）。
+  `M4Deps.prompt_dirs` 记录启动目录序供 reload 重扫。per-submission handle
+  立即 drop —— 引擎双路发送（per-submission + 会话扇出），TUI 只消费会话泵，
+  避免 Notice 重复入列。`/prompt` 已登记进 SlashCommand 枚举（弹窗可发现、
+  支持内联参数、任务进行中可用）与 `/help`。
+
 ### 能力补齐（对标 codex / claude code / pi 审计后）
 
 - **prompt 历史召回**：Up / Ctrl+P / Ctrl+N / Ctrl+R 此前全是死键 —— vendored
