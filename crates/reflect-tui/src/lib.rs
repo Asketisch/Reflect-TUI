@@ -21,6 +21,7 @@
 //! 事件循环、布局与 event/adapter 边界。
 
 mod adapter;
+mod approval_scope;
 mod bootstrap;
 mod bootstrap_wiring;
 mod events;
@@ -52,6 +53,7 @@ pub mod exec_server;
 pub mod features;
 pub mod feedback;
 pub mod file_search;
+pub mod git_checkpoint;
 pub mod git_utils;
 pub mod install_context;
 pub mod login;
@@ -62,6 +64,7 @@ pub mod model_provider_info;
 pub mod models_manager;
 pub mod otel;
 pub mod plugin;
+pub mod prompt_history;
 pub mod protocol_compat;
 pub mod random_range_compat;
 pub mod rollout;

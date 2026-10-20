@@ -37,6 +37,16 @@ pub struct ComposerInput {
     inner: ChatComposer,
     _tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
     rx: tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+    /// 跨会话 prompt 历史(Up / Ctrl+P / Ctrl+R 召回)。
+    ///
+    /// 自包含实现而非 vendored `ChatComposerHistory`:后者跑在
+    /// `LookupMessageHistoryEntry` → `ThreadHistoryEntryResponse` 往返上,
+    /// 对面是未接线的 vendored `App`,本路径把那些 AppEvent 全当空操作丢掉。
+    history: crate::prompt_history::PromptHistory,
+    /// 历史落盘路径(`None` = 不落盘,仅内存)。
+    history_path: Option<std::path::PathBuf>,
+    /// Ctrl+R 反向搜索会话。`Some` 时按键先归搜索,不进编辑器。
+    search: Option<crate::prompt_history::HistorySearch>,
 }
 
 impl ComposerInput {
@@ -80,7 +90,29 @@ impl ComposerInput {
         // 启用 /plugin 命令 —— 打开真实已装插件 overlay(与 submodule 的
         // 插件系统接线配套;ChatComposer 默认 false,留给宿主自行开启)。
         inner.set_plugins_command_enabled(true);
-        Self { inner, _tx: tx, rx }
+        // 跨会话 prompt 历史:从磁盘加载(坏文件退化为空,不阻断启动)。
+        let history_path = crate::prompt_history::default_path();
+        let history = match &history_path {
+            Some(p) => crate::prompt_history::PromptHistory::load(p),
+            None => crate::prompt_history::PromptHistory::default(),
+        };
+        Self {
+            inner,
+            _tx: tx,
+            rx,
+            history,
+            history_path,
+            search: None,
+        }
+    }
+
+    /// 用显式的历史文件路径创建(测试用;生产路径走 `default_path()`)。
+    #[cfg(test)]
+    pub(crate) fn new_with_history_path(path: std::path::PathBuf) -> Self {
+        let mut s = Self::new_with_config(String::new(), /*disable_paste_burst*/ true);
+        s.history = crate::prompt_history::PromptHistory::load(&path);
+        s.history_path = Some(path);
+        s
     }
 
     /// 若输入为空则返回 true。
@@ -123,8 +155,27 @@ impl ComposerInput {
     /// `Command(cmd)`。当用户输入带参数的斜杠命令（例如 `/plan refactor`）时返回
     /// `CommandWithArgs(cmd, args)`。当用户提交普通文本消息时返回 `Submitted(text)`。
     pub fn input(&mut self, key: KeyEvent) -> ComposerAction {
+        // Ctrl+R 反向搜索:必须在 vendored composer 之前拦截。它自带的
+        // `begin_history_search` 会开一个搜索会话,然后把遍历委托给
+        // `ChatComposerHistory` —— 后者要 `ThreadHistoryEntryResponse` 往返,
+        // 而本路径把那些 AppEvent 当空操作丢掉,于是会话开着但永远出不来匹配。
+        // 自己实现一套,让 Ctrl+R 真的能用。
+        if self.try_history_search(&key) {
+            self.handle_app_events();
+            return ComposerAction::None;
+        }
+        // Up / Down / Ctrl+P / Ctrl+N 在**单行**输入时归 prompt 历史;
+        // 多行时仍归 composer 做光标移动(否则多行草稿没法用方向键编辑)。
+        // 正在浏览历史时同样优先归历史,保证能一路 Down 回到草稿。
+        if self.try_history_navigation(&key) {
+            self.handle_app_events();
+            return ComposerAction::None;
+        }
         let action = match self.inner.handle_key_event(key).0 {
-            InputResult::Submitted { text, .. } => ComposerAction::Submitted(text),
+            InputResult::Submitted { text, .. } => {
+                self.record_submitted(&text);
+                ComposerAction::Submitted(text)
+            }
             InputResult::Command(cmd) => ComposerAction::Command(cmd),
             InputResult::CommandWithArgs(cmd, args, _) => {
                 ComposerAction::CommandWithArgs(cmd, args)
@@ -133,6 +184,177 @@ impl ComposerInput {
         };
         self.handle_app_events();
         action
+    }
+
+    /// 是否单行输入(无换行)。多行时 Up/Down 必须留给 composer 移动光标。
+    fn is_single_line(&self) -> bool {
+        !self.inner.current_text().contains('\n')
+    }
+
+    /// 尝试把按键当历史导航消费。命中返回 `true`(调用方不应再交给 composer)。
+    ///
+    /// 键位对齐 shell / readline / claude code:
+    /// - `Up` / `Ctrl+P` → 更旧的一条
+    /// - `Down` / `Ctrl+N` → 更新的一条(越过最新一条还原草稿)
+    fn try_history_navigation(&mut self, key: &KeyEvent) -> bool {
+        if key.kind == KeyEventKind::Release {
+            return false;
+        }
+        // 带 Alt/Ctrl(除 P/N)修饰的组合键不抢 —— 留给 composer 的词级移动等。
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        if alt {
+            return false;
+        }
+        let go_older = match key.code {
+            KeyCode::Up => true,
+            KeyCode::Char('p') if ctrl => true,
+            _ => false,
+        };
+        let go_newer = match key.code {
+            KeyCode::Down => true,
+            KeyCode::Char('n') if ctrl => true,
+            _ => false,
+        };
+        if !go_older && !go_newer {
+            return false;
+        }
+        // 多行且不在浏览历史 → 方向键归 composer。
+        if !self.is_single_line() && !self.history.is_browsing() {
+            return false;
+        }
+        if self.history.is_empty() && !self.history.is_browsing() {
+            return false;
+        }
+        if go_older {
+            let text = self.inner.current_text();
+            match self.history.navigate_up(&text) {
+                Some(entry) => {
+                    self.set_text(&entry);
+                    true
+                }
+                None => false, // 已到最旧:不消费,让 composer 正常处理(无副作用)
+            }
+        } else {
+            match self.history.navigate_down() {
+                Some(entry) => {
+                    self.set_text(&entry);
+                    true
+                }
+                None => false,
+            }
+        }
+    }
+
+    /// 整段替换 composer 文本(历史导航用)。
+    fn set_text(&mut self, text: &str) {
+        self.inner
+            .set_text_content(text.to_string(), Vec::new(), Vec::new());
+    }
+
+    /// Ctrl+R 反向搜索。命中(消费了按键)返回 `true`。
+    ///
+    /// 键位对齐 readline / zsh / claude code:
+    /// - `Ctrl+R` 开搜索;搜索中再按 = 更旧的匹配
+    /// - `Ctrl+S` / `Down` = 更新的匹配
+    /// - 普通字符追加到 query;`Backspace` 退格
+    /// - `Enter` 接受当前匹配并退出;`Esc` / `Ctrl+C` 还原草稿并退出
+    fn try_history_search(&mut self, key: &KeyEvent) -> bool {
+        use crate::prompt_history::SearchStep;
+        if key.kind == KeyEventKind::Release {
+            return false;
+        }
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        if alt {
+            return false;
+        }
+        let is_ctrl_r = ctrl && matches!(key.code, KeyCode::Char('r' | 'R'));
+        let is_ctrl_s = ctrl && matches!(key.code, KeyCode::Char('s' | 'S'));
+
+        // 开搜索:仅当有历史可搜,且当前没有 slash/mention 弹窗占用字符键。
+        if is_ctrl_r && self.search.is_none() {
+            if self.history.is_empty() {
+                return false;
+            }
+            self.search = Some(crate::prompt_history::HistorySearch::new(
+                self.inner.current_text(),
+            ));
+            return true;
+        }
+
+        let Some(search) = self.search.as_mut() else {
+            return false;
+        };
+        let entries = self.history.entries().to_vec();
+
+        // 取消:还原草稿。
+        if key.code == KeyCode::Esc || (ctrl && matches!(key.code, KeyCode::Char('c' | 'C'))) {
+            let draft = search.original_draft.clone();
+            self.search = None;
+            self.set_text(&draft);
+            return true;
+        }
+        // 接受当前匹配。
+        if key.code == KeyCode::Enter && key.modifiers == KeyModifiers::NONE {
+            let accepted = match search.match_idx {
+                Some(i) => entries.get(i).cloned(),
+                None => None,
+            };
+            self.search = None;
+            if let Some(text) = accepted {
+                self.set_text(&text);
+            }
+            return true;
+        }
+        // 更旧 / 更新。
+        if is_ctrl_r || key.code == KeyCode::Up {
+            if let SearchStep::Matched(t) = search.older(&entries) {
+                self.set_text(&t);
+            }
+            return true;
+        }
+        if is_ctrl_s || key.code == KeyCode::Down {
+            if let SearchStep::Matched(t) = search.newer(&entries) {
+                self.set_text(&t);
+            }
+            return true;
+        }
+        // query 编辑。
+        match key.code {
+            KeyCode::Char(c) if !ctrl => {
+                if let SearchStep::Matched(t) = search.push_char(c, &entries) {
+                    self.set_text(&t);
+                }
+                true
+            }
+            KeyCode::Backspace if !ctrl => {
+                if let SearchStep::Matched(t) = search.pop_char(&entries) {
+                    self.set_text(&t);
+                }
+                true
+            }
+            _ => true, // 搜索中吞掉其余键,不让它们漏进编辑器
+        }
+    }
+
+    /// 当前是否处于 Ctrl+R 搜索会话(供宿主渲染 `(reverse-i-search)` 提示)。
+    pub fn history_search_query(&self) -> Option<&str> {
+        self.search.as_ref().map(|s| s.query())
+    }
+
+    /// 记录一条已提交的提示词进历史并落盘。
+    fn record_submitted(&mut self, text: &str) {
+        self.history.reset_cursor();
+        if let Some(p) = self.history_path.clone() {
+            self.history.record(&p, text);
+        }
+    }
+
+    /// 历史条目数(测试 / 诊断用)。
+    #[cfg(test)]
+    pub(crate) fn history_len(&self) -> usize {
+        self.history.entries().len()
     }
 
     pub fn handle_paste(&mut self, pasted: String) -> bool {
@@ -344,5 +566,173 @@ mod tests {
         input.clear();
         assert_eq!(input.current_text(), "");
         assert!(input.is_empty());
+    }
+
+    fn up() -> KeyEvent {
+        KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)
+    }
+    fn down() -> KeyEvent {
+        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
+    }
+    fn ctrl(ch: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn up_down_recalls_submitted_prompts_and_restores_draft() {
+        // 回归:Up / Ctrl+P / Ctrl+R 此前全是死键 —— vendored 历史机制跑在
+        // 未接线的 AppEvent 往返上,外层主循环把那些事件当空操作丢掉。
+        let dir = std::env::temp_dir().join("reflect-composer-history-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prompt_history.jsonl");
+
+        let mut input = ComposerInput::new_with_history_path(path.clone());
+        // 提交两条提示词(经 input() 走 Submitted 路径,自动入历史)。
+        input.handle_paste("first prompt".to_string());
+        assert!(matches!(
+            input.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            ComposerAction::Submitted(_)
+        ));
+        input.handle_paste("second prompt".to_string());
+        input.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(input.history_len(), 2);
+        assert!(input.is_empty(), "提交后 composer 应清空");
+
+        // 写个草稿,然后 Up 召回。
+        input.handle_paste("wip draft".to_string());
+        input.input(up());
+        assert_eq!(input.current_text(), "second prompt");
+        input.input(up());
+        assert_eq!(input.current_text(), "first prompt");
+        // 已到最旧:再 Up 不改变内容。
+        input.input(up());
+        assert_eq!(input.current_text(), "first prompt");
+        // Down 回到 second,再 Down 越过最新一条 → 还原草稿。
+        input.input(down());
+        assert_eq!(input.current_text(), "second prompt");
+        input.input(down());
+        assert_eq!(
+            input.current_text(),
+            "wip draft",
+            "必须还原用户原本在写的草稿"
+        );
+    }
+
+    #[test]
+    fn ctrl_p_and_ctrl_n_alias_up_down() {
+        let dir = std::env::temp_dir().join("reflect-composer-history-ctrlnp");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prompt_history.jsonl");
+
+        let mut input = ComposerInput::new_with_history_path(path);
+        input.handle_paste("only one".to_string());
+        input.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        input.input(ctrl('p'));
+        assert_eq!(input.current_text(), "only one", "Ctrl+P 应等价 Up");
+        input.input(ctrl('n'));
+        assert_eq!(input.current_text(), "", "Ctrl+N 越过最新一条应还原空草稿");
+    }
+
+    #[test]
+    fn multiline_input_keeps_arrow_keys_for_cursor() {
+        // 多行草稿里 Up/Down 必须归 composer 移动光标,不能被历史抢走 ——
+        // 否则用户没法用方向键编辑多行提示词。
+        let dir = std::env::temp_dir().join("reflect-composer-history-multiline");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prompt_history.jsonl");
+
+        let mut input = ComposerInput::new_with_history_path(path);
+        input.handle_paste("history entry".to_string());
+        input.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // 造一个两行草稿。
+        input.handle_paste("line one".to_string());
+        input.input(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::SHIFT, // Shift+Enter = 换行
+        ));
+        input.handle_paste("line two".to_string());
+        assert!(input.current_text().contains('\n'), "应为多行草稿");
+
+        // Up 不得把历史条目灌进来。
+        input.input(up());
+        assert!(
+            !input.current_text().contains("history entry"),
+            "多行时 Up 必须归 composer: {}",
+            input.current_text()
+        );
+    }
+
+    #[test]
+    fn empty_history_leaves_arrows_to_composer() {
+        let dir = std::env::temp_dir().join("reflect-composer-history-empty");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prompt_history.jsonl");
+
+        let mut input = ComposerInput::new_with_history_path(path);
+        input.handle_paste("draft".to_string());
+        input.input(up());
+        assert_eq!(input.current_text(), "draft", "空历史不得改写草稿");
+    }
+
+    #[test]
+    fn ctrl_r_reverse_search_accepts_and_cancels() {
+        // 回归:Ctrl+R 此前开的是 vendored 搜索会话,遍历委托给
+        // ChatComposerHistory,而后者要 ThreadHistoryEntryResponse 往返 ——
+        // 本路径把那些 AppEvent 当空操作丢掉,于是会话开着但永远出不来匹配。
+        let dir = std::env::temp_dir().join("reflect-composer-history-ctrlr");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prompt_history.jsonl");
+
+        let mut input = ComposerInput::new_with_history_path(path);
+        for p in ["fix the parser", "add tests for parser", "write docs"] {
+            input.handle_paste(p.to_string());
+            input.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        }
+
+        // 开搜索,输入 "par" → 最新匹配 "add tests for parser"。
+        input.input(ctrl('r'));
+        assert_eq!(input.history_search_query(), Some(""));
+        input.input(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        input.input(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        input.input(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert_eq!(input.history_search_query(), Some("par"));
+        assert_eq!(input.current_text(), "add tests for parser");
+
+        // 再按 Ctrl+R → 更旧的匹配。
+        input.input(ctrl('r'));
+        assert_eq!(input.current_text(), "fix the parser");
+
+        // Enter 接受并退出搜索。
+        input.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(input.history_search_query(), None, "Enter 后应退出搜索");
+        assert_eq!(input.current_text(), "fix the parser");
+    }
+
+    #[test]
+    fn ctrl_r_esc_restores_original_draft() {
+        let dir = std::env::temp_dir().join("reflect-composer-history-ctrlesc");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prompt_history.jsonl");
+
+        let mut input = ComposerInput::new_with_history_path(path);
+        input.handle_paste("old prompt".to_string());
+        input.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        input.handle_paste("my wip draft".to_string());
+        input.input(ctrl('r'));
+        input.input(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        assert_eq!(input.current_text(), "old prompt", "搜索命中应预览");
+        // Esc 必须还原进搜索前的草稿,不能把用户正在写的东西弄丢。
+        input.input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(input.history_search_query(), None);
+        assert_eq!(input.current_text(), "my wip draft");
     }
 }

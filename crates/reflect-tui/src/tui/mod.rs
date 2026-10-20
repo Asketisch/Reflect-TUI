@@ -570,11 +570,25 @@ fn handle_event(
             if confirm {
                 let sha = state.checkpoint_rewind_sha.take().unwrap();
                 let short: String = sha.chars().take(8).collect();
-                // git reset --hard 在稳定 TUI 中通过 emit_op 触发。
-                // 目前作为占位通知,留待后续接 git 工具路径。
-                state.history.push(adapter::UiHistoryItem::Notice(format!(
-                    "⚠ rewind to {short}: git reset --hard not yet wired (sha saved)."
-                )));
+                // 真实回退:`git reset --hard <sha>`,回退前先做一次安全快照提交
+                // (git_checkpoint::rewind 内部保证),用户反悔还能再回退回去。
+                match crate::git_checkpoint::rewind(&state.cwd, &sha) {
+                    Ok((target, safety)) => {
+                        let tshort: String = target.sha.chars().take(8).collect();
+                        let mut msg = format!("⏪ rewound to {tshort}");
+                        if let Some(s) = safety {
+                            let sshort: String = s.sha.chars().take(8).collect();
+                            msg.push_str(&format!(
+                                " · pre-rewind snapshot saved as {sshort} (listed in /checkpoint)"
+                            ));
+                        }
+                        state.history.push(adapter::UiHistoryItem::Notice(msg));
+                        refresh_checkpoint_overlay(state);
+                    }
+                    Err(e) => state.history.push(adapter::UiHistoryItem::Notice(format!(
+                        "⏪ rewind to {short} failed: {e}"
+                    ))),
+                }
             }
             return Ok(false);
         }
@@ -1833,9 +1847,44 @@ fn open_theme_picker(state: &mut UiState) {
 
 /// v1.x Tier 5:打开 checkpoint overlay(`/checkpoint`)。
 fn open_checkpoint_overlay(state: &mut UiState) {
-    // 占位:空列表,用户可通过 c 创建首个 checkpoint。
+    // 从 git 读真实列表,不再开一个空 overlay。
     state.checkpoint_overlay =
         Some(crate::picker::checkpoint_overlay::CheckpointOverlayState::default());
+    refresh_checkpoint_overlay(state);
+}
+
+/// 用 git 里的真实 checkpoint 刷新 overlay 列表。
+fn refresh_checkpoint_overlay(state: &mut UiState) {
+    match crate::git_checkpoint::list(&state.cwd, 50) {
+        Ok(checkpoints) => {
+            let entries: Vec<crate::picker::checkpoint_overlay::CheckpointEntry> = checkpoints
+                .into_iter()
+                .map(|c| crate::picker::checkpoint_overlay::CheckpointEntry {
+                    sha: c.sha,
+                    label: if c.subject.is_empty() {
+                        None
+                    } else {
+                        Some(c.subject)
+                    },
+                    created_at: c.committed_at,
+                })
+                .collect();
+            let n = entries.len();
+            if let Some(o) = state.checkpoint_overlay.as_mut() {
+                o.entries = entries;
+                // 选中项可能越界(列表变短),钳回范围内。
+                o.selected = o.selected.min(n.saturating_sub(1));
+            }
+            if n == 0 {
+                state.history.push(adapter::UiHistoryItem::Notice(
+                    "📸 no checkpoints yet — press `c` in /checkpoint to create one.".into(),
+                ));
+            }
+        }
+        Err(e) => state.history.push(adapter::UiHistoryItem::Notice(format!(
+            "📸 cannot list checkpoints: {e}"
+        ))),
+    }
 }
 
 /// v1.x Tier 5:打开 fork select overlay(`/fork` 无参数时)。
@@ -2183,8 +2232,19 @@ fn handle_key(
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 Some(reflect_protocol::ReviewDecision::ApproveForSession)
             }
+            // bash 审批的收窄版 always-allow:只放行本次这条命令的同类,
+            // 而不是整个 bash 工具。决策本身仍是 ApproveForSession(引擎侧
+            // 语义不变),区别只在持久化的规则范围。
+            KeyCode::Char('s') | KeyCode::Char('S')
+                if crate::approval_scope::is_bash_approval(pending) =>
+            {
+                Some(reflect_protocol::ReviewDecision::ApproveForSession)
+            }
             _ => None,
         };
+        // `[S]cope` 与 `[A]ll` 同发 ApproveForSession,但落盘范围不同。
+        let scoped_allow = matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S'))
+            && crate::approval_scope::is_bash_approval(pending);
         if let Some(decision) = decision {
             // M3:decision 会 move 进 Op,是否 always-allow 先行判定。
             let always_allow = matches!(
@@ -2237,6 +2297,19 @@ fn handle_key(
                     }
                     _ => None,
                 };
+                // 收窄范围:`[S]cope` 派生 shell_pattern,`[A]ll` 保持整工具放行。
+                // 原实现对 bash 一律写 shell_pattern: None,落到 match_rule 的
+                // 精确 tool 分支 = 放行**所有** bash 命令,而 UI 只显示一行
+                // 80 字符 JSON 摘要,用户既不知道范围也没得选。
+                let scope = if scoped_allow {
+                    crate::approval_scope::derive_allow_scope(pending)
+                } else {
+                    crate::approval_scope::AllowScope::WholeTool
+                };
+                let shell_pattern = match &scope {
+                    crate::approval_scope::AllowScope::ShellPattern(p) => Some(p.clone()),
+                    crate::approval_scope::AllowScope::WholeTool => None,
+                };
                 if let (Some(store), Some(tool)) = (state.persistent_permissions.clone(), tool_name)
                 {
                     state.background_tasks.lock().unwrap().spawn(async move {
@@ -2245,16 +2318,19 @@ fn handle_key(
                                 tool: tool.clone(),
                                 action: reflect_permissions::PermissionAction::Allow,
                                 tool_glob: None,
-                                shell_pattern: None,
+                                shell_pattern,
                             })
                             .await
                         {
                             tracing::warn!(error = %e, tool = %tool, "always-allow 规则持久化失败");
                         }
                     });
-                    state.history.push(adapter::UiHistoryItem::Notice(
-                        "always-allow: rule persisted to ~/.reflect/permissions.toml".into(),
-                    ));
+                    // Notice 必须说清放行范围 —— 这是用户唯一能核对自己
+                    // 到底授了什么权的地方。
+                    state.history.push(adapter::UiHistoryItem::Notice(format!(
+                        "always-allow: persisted to ~/.reflect/permissions.toml — {}",
+                        scope.describe()
+                    )));
                 }
             }
             state.pending_approval = None;
@@ -2378,10 +2454,27 @@ fn handle_key(
                 return Ok(false);
             }
             crate::picker::checkpoint_overlay::CheckpointAction::Create => {
-                // git auto-commit 通过 emit_op 触发,目前作为占位通知。
-                state.history.push(adapter::UiHistoryItem::Notice(
-                    "📸 checkpoint: git auto-commit not yet wired (use CLI `git commit`).".into(),
-                ));
+                // 真实落 git:`git add -A` + 带前缀的提交 + tag。
+                match crate::git_checkpoint::create(&state.cwd, "") {
+                    Ok(Some(cp)) => {
+                        let short: String = cp.sha.chars().take(8).collect();
+                        state.history.push(adapter::UiHistoryItem::Notice(format!(
+                            "📸 checkpoint created: {short} ({})",
+                            if cp.subject.is_empty() {
+                                "no label".to_string()
+                            } else {
+                                cp.subject.clone()
+                            }
+                        )));
+                        refresh_checkpoint_overlay(state);
+                    }
+                    Ok(None) => state.history.push(adapter::UiHistoryItem::Notice(
+                        "📸 checkpoint: no changes to snapshot (working tree clean).".into(),
+                    )),
+                    Err(e) => state.history.push(adapter::UiHistoryItem::Notice(format!(
+                        "📸 checkpoint failed: {e}"
+                    ))),
+                }
                 return Ok(false);
             }
             crate::picker::checkpoint_overlay::CheckpointAction::Rewind(sha) => {
@@ -2406,9 +2499,7 @@ fn handle_key(
                 return Ok(false);
             }
             crate::picker::checkpoint_overlay::CheckpointAction::Refresh => {
-                state.history.push(adapter::UiHistoryItem::Notice(
-                    "🔄 checkpoints refreshed (placeholder).".into(),
-                ));
+                refresh_checkpoint_overlay(state);
                 return Ok(false);
             }
             crate::picker::checkpoint_overlay::CheckpointAction::Nop => {}
@@ -3414,11 +3505,12 @@ fn draw(
     let composer_h = state.composer.desired_height(width);
     // 两种审批条高度:approval_block 带边框需 5 行(3 行内容 + 上下边框),
     // plan_approval_prompt 无边框 3 行。二者互斥(plan 审批时 pending 为 None)。
-    let approval_h: u16 = if state.pending_approval.is_some() {
-        5 // approval_block: 标题 + 内容 + 按键 = 3 行内容 + 边框 2 行
-    } else {
-        0
-    };
+    // 高度随内容变:Edit / Write 审批带 diff 预览,硬编码 5 会把预览裁掉。
+    let approval_h: u16 = state
+        .pending_approval
+        .as_ref()
+        .map(adapter::approval_block_height)
+        .unwrap_or(0);
     let plan_approval_h: u16 = if state.plan_approval.is_some() {
         3 // plan_approval_prompt: 标题 + 来源 + 按键 = 3 行(无边框)
     } else {
@@ -3580,11 +3672,11 @@ fn draw_fullscreen(
 
     let composer_h = state.composer.desired_height(width);
     // 两种审批条高度：approval_block 带边框需 5 行，plan_approval_prompt 无边框 3 行。
-    let approval_h: u16 = if state.pending_approval.is_some() {
-        5
-    } else {
-        0
-    };
+    let approval_h: u16 = state
+        .pending_approval
+        .as_ref()
+        .map(adapter::approval_block_height)
+        .unwrap_or(0);
     let plan_approval_h: u16 = if state.plan_approval.is_some() { 3 } else { 0 };
     // 与 `draw` 对齐:问题面板 / ask_user 条在全屏模式同样必须占位渲染,
     // 否则 `--fullscreen` 下引擎阻塞在 AskUserQuestion 时用户看到的是空白,

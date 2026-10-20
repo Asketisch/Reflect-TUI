@@ -864,27 +864,110 @@ pub fn approval_block(pending: &PendingApproval) -> ratatui::widgets::Paragraph<
         Style::default().fg(Color::White),
     ));
 
-    let hint = Line::from(vec![
-        Span::styled(
-            " [Y]es ",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("/ ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            " [N]o ",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("/ ", Style::default().fg(Color::DarkGray)),
-        Span::styled(" [A]lways allow ", Style::default().fg(Color::DarkGray)),
-    ]);
+    // bash 审批额外给出 `[S]cope`(只放行本次这类命令),避免用户按 `a`
+    // 时在不知情的情况下放行所有 shell 命令。
+    let hint =
+        crate::approval_scope::approval_hint(crate::approval_scope::is_bash_approval(pending));
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow));
 
-    Paragraph::new(vec![title, content, hint]).block(block)
+    let mut lines = vec![title, content];
+    // Edit / Write 审批补 diff 预览:原实现只有一行 80 字符 JSON 摘要,
+    // 用户看不到自己即将批准什么改动。
+    lines.extend(approval_diff_preview(pending));
+    lines.push(hint);
+    Paragraph::new(lines).block(block)
+}
+
+/// Edit / Write 审批的 diff 预览行(最多 6 行 +/- 摘要)。
+///
+/// 从工具参数里取 `old_string` / `new_string`(edit)或 `content`(write),
+/// 渲染成紧凑的 `+/-` 预览。取不到就返回空 —— 不编造内容。
+fn approval_diff_preview(pending: &PendingApproval) -> Vec<Line<'static>> {
+    let reflect_protocol::ApprovalKind::Tool { tool_name, args } = &pending.kind else {
+        return Vec::new();
+    };
+    let name = tool_name.to_ascii_lowercase();
+    if name != "edit" && name != "write" && name != "multiedit" {
+        return Vec::new();
+    }
+    let path = args
+        .get("path")
+        .or_else(|| args.get("file_path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unknown path)");
+
+    let mut lines = vec![Line::from(Span::styled(
+        format!("  {}", path),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ))];
+
+    // edit: old_string → new_string;write: 整份 content。
+    let (old, new): (&str, &str) = if name == "write" {
+        (
+            "",
+            args.get("content").and_then(|v| v.as_str()).unwrap_or(""),
+        )
+    } else {
+        (
+            args.get("old_string")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+            args.get("new_string")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+        )
+    };
+
+    let mut shown = 0usize;
+    for l in old.lines().take(3) {
+        lines.push(Line::from(Span::styled(
+            format!("  - {}", truncate_line(l, 60)),
+            Style::default().fg(Color::Red),
+        )));
+        shown += 1;
+    }
+    for l in new.lines().take(3) {
+        lines.push(Line::from(Span::styled(
+            format!("  + {}", truncate_line(l, 60)),
+            Style::default().fg(Color::Green),
+        )));
+        shown += 1;
+    }
+    if shown == 0 {
+        // 参数里没有可取的内容(例如 edit 只给了行号范围)。
+        lines.push(Line::from(Span::styled(
+            "  (no inline preview available)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    lines
+}
+
+/// 按字符截断到 `max`(非字节),避免 CJK 内容在字节边界 panic。
+fn truncate_line(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let head: String = s.chars().take(max).collect();
+        format!("{head}…")
+    }
+}
+
+/// 审批弹窗高度(带边框)。
+///
+/// 不能再硬编码 5:Edit / Write 审批带 diff 预览,行数随参数内容变化
+/// (路径行 + 最多 3 行 `-` + 最多 3 行 `+`)。高度算少了 ratatui 会把
+/// 预览行裁掉,用户还是看不到自己批准什么。
+pub fn approval_block_height(pending: &PendingApproval) -> u16 {
+    // 标题 + 内容 + 按键提示 = 3 行,加边框 2 行。
+    let mut rows = 3u16 + 2;
+    rows += approval_diff_preview(pending).len() as u16;
+    rows
 }
 
 /// v1.x:问题面板高度(带边框) = 标题 + 题干 + 选项数 + 按键提示 + 边框 2。
@@ -1127,6 +1210,94 @@ mod tests {
             state.mcp_servers[0].error.as_deref(),
             Some("connection refused")
         );
+    }
+
+    /// 把审批弹窗渲染成纯文本(Paragraph 不暴露内部行,只能经 buffer 渲染)。
+    fn approval_block_text(pending: &PendingApproval) -> String {
+        use ratatui::widgets::Widget;
+        let area = ratatui::layout::Rect::new(0, 0, 100, 30);
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        approval_block(pending).render(area, &mut buf);
+        (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol().to_string())
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    #[test]
+    fn approval_block_shows_diff_preview_for_edit() {
+        // 回归:Edit / Write 审批此前只有一行 80 字符 JSON 摘要,用户看不到
+        // 自己即将批准什么改动。
+        let pending = PendingApproval {
+            id: "e1".into(),
+            summary: "Edit: src/main.rs".into(),
+            kind: reflect_protocol::ApprovalKind::Tool {
+                tool_name: "edit".into(),
+                args: serde_json::json!({
+                    "path": "src/main.rs",
+                    "old_string": "let x = 1;",
+                    "new_string": "let x = compute();",
+                }),
+            },
+        };
+        let text = approval_block_text(&pending);
+        assert!(text.contains("src/main.rs"), "应显示目标路径: {text}");
+        assert!(text.contains("- let x = 1;"), "应显示删除行: {text}");
+        assert!(
+            text.contains("+ let x = compute();"),
+            "应显示新增行: {text}"
+        );
+        // 高度必须覆盖预览行,否则 ratatui 会把它们裁掉。
+        assert!(
+            approval_block_height(&pending) >= 3 + 2 + 3,
+            "高度应含 路径 + 1 删 + 1 增: {}",
+            approval_block_height(&pending)
+        );
+    }
+
+    #[test]
+    fn approval_block_diff_preview_handles_cjk_without_panic() {
+        // 预览按字符截断(非字节),CJK 内容不得在字节边界 panic。
+        let long_cjk = "中文".repeat(100);
+        let pending = PendingApproval {
+            id: "e2".into(),
+            summary: "Write: 说明.md".into(),
+            kind: reflect_protocol::ApprovalKind::Tool {
+                tool_name: "write".into(),
+                args: serde_json::json!({
+                    "path": "说明.md",
+                    "content": long_cjk,
+                }),
+            },
+        };
+        // 渲染本身不得 panic,且路径与 +/- 标记都在。
+        let text = approval_block_text(&pending);
+        assert!(text.contains("说"), "路径应渲染: {text}");
+        assert!(text.contains('+'), "应有新增行标记: {text}");
+        // 截断按字符而非字节:CJK 内容不得 panic,且必须真的截断。
+        let long = "中文".repeat(100);
+        let out = truncate_line(&long, 10);
+        assert!(
+            out.chars().count() <= 11,
+            "应按字符截断: {}",
+            out.chars().count()
+        );
+        assert!(out.ends_with('…'), "{out}");
+    }
+
+    #[test]
+    fn approval_block_non_edit_tool_has_no_diff_preview() {
+        let pending = PendingApproval {
+            id: "r1".into(),
+            summary: "Read: foo.txt".into(),
+            kind: reflect_protocol::ApprovalKind::Tool {
+                tool_name: "read".into(),
+                args: serde_json::json!({ "path": "foo.txt" }),
+            },
+        };
+        assert!(approval_diff_preview(&pending).is_empty());
+        assert_eq!(approval_block_height(&pending), 5, "无预览时保持原 5 行");
     }
 
     #[test]
