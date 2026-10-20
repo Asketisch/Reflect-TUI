@@ -157,6 +157,9 @@ pub async fn run_async(
         format!("Reflect · {}", status_model)
     };
     crate::terminal::set_terminal_title(&initial_title);
+    // 记录已发出的标题,后续 model / permission mode 变化时只在真的变了才重发
+    // (OSC 序列每次都要写裸 stdout,无脑重发是浪费)。
+    let mut last_title = initial_title;
 
     // M2:resume 历史回填 —— 恢复的既往对话先于 banner 进 scrollback,
     // 让 `-c` / `--resume` 启动即有连续的视觉上下文。工具调用对只渲染
@@ -261,9 +264,32 @@ pub async fn run_async(
         }
         // Plan 审批弹窗 / mode 段可能因事件改变 → 同步 composer 占位符。
         sync_plan_mode_visuals(&mut state);
+        // 终端标题跟随 model / permission mode 变化(对齐 codex / claude code:
+        // 切窗口时能从标签页看出当前在哪个模型、什么权限模式)。
+        // 此前只在启动时设一次,之后再也不更新。
+        {
+            let title = terminal_title_for(
+                &status_model,
+                &status_cwd,
+                status_git_branch.as_deref(),
+                state.permission_mode,
+            );
+            if title != last_title {
+                crate::terminal::set_terminal_title(&title);
+                last_title = title;
+            }
+        }
         // 回合完成 / 需审批 / 出错 → 终端通知(写裸 stdout,与帧缓冲分离)。
+        // 纯对话回合不通知(用户还在看屏幕);跑得够久的长回合例外。
         if let Some(msg) = notify_triggers.message() {
             history_render::notify::notify(&mut notifier, &msg);
+        } else if notify_triggers.long_turn_without_work(
+            state
+                .turn_started_at
+                .map(|t| t.elapsed().as_secs())
+                .unwrap_or(0),
+        ) {
+            history_render::notify::notify(&mut notifier, "Reflect finished.");
         }
 
         if state.composer.is_in_paste_burst() {
@@ -768,6 +794,19 @@ fn handle_event(
                 // Ctrl+C」被误判为双击退出(无 picker 时走 keymap 一次退出即可)。
                 state.last_quit_press = None;
             }
+            // Ctrl-D(EOF)只在 composer 为空时退出。有草稿时交给 composer
+            // 自己处理(它的守卫会吞掉空输入上的 Ctrl-D),否则用户写了一半的
+            // 提示词会被一次误触清空并直接退出。
+            if !any_picker_open
+                && !is_exit_key(key)
+                && key.code == KeyCode::Char('d')
+                && key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::SHIFT)
+                && !state.composer.is_empty()
+            {
+                let _ = state.composer.input(key);
+                return Ok(false);
+            }
             if !any_picker_open
                 && let Some(action) = crate::keymap::resolve_global_key(event.clone())
             {
@@ -910,6 +949,33 @@ async fn expand_plugin_submission(
             Submission::user_input(text)
         }
     }
+}
+
+/// 构造终端标签页标题。
+///
+/// 格式:`Reflect · <model> · [<mode>] · git:(<branch>)`,mode 为 `Auto` 时省略。
+/// 主循环每帧比对,只在真的变了才重发 OSC 序列。
+fn terminal_title_for(
+    model: &str,
+    cwd: &str,
+    git_branch: Option<&str>,
+    permission_mode: reflect_protocol::PermissionMode,
+) -> String {
+    let mut title = format!("Reflect · {model}");
+    if permission_mode != reflect_protocol::PermissionMode::Auto {
+        title.push_str(&format!(" · [{permission_mode:?}]"));
+    }
+    if let Some(branch) = git_branch {
+        title.push_str(&format!(" · git:({branch})"));
+    } else if !cwd.is_empty() {
+        // 非 git 仓库时用目录名,让多个标签页仍可区分。
+        let name = std::path::Path::new(cwd)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| cwd.to_string());
+        title.push_str(&format!(" · {name}"));
+    }
+    title
 }
 
 /// 同步 plan 模式的可见反馈:composer 占位符。
@@ -2872,6 +2938,41 @@ fn handle_key(
                     state
                         .history
                         .push(adapter::UiHistoryItem::Notice(msg.into()));
+                    return Ok(false);
+                }
+                SlashOutcome::Retry => {
+                    // 重发上一条用户提示词。引擎有自己的重试(流式错误带
+                    // "will retry"),但硬失败(配额耗尽 / 认证失效 / 5xx 终结)
+                    // 之后用户此前没有任何重试入口 —— 只能把提示词重新敲一遍。
+                    let Some(last) = state.history.iter().rev().find_map(|item| match item {
+                        adapter::UiHistoryItem::User(t) => Some(t.clone()),
+                        _ => None,
+                    }) else {
+                        state.history.push(adapter::UiHistoryItem::Notice(
+                            "/retry: no previous user prompt to retry.".into(),
+                        ));
+                        return Ok(false);
+                    };
+                    state.history.push(adapter::UiHistoryItem::Notice(
+                        "↻ retrying last prompt…".into(),
+                    ));
+                    state
+                        .history
+                        .push(adapter::UiHistoryItem::User(last.clone()));
+                    let thread = Arc::clone(thread);
+                    let tx = event_tx.clone();
+                    let plugin_runtime = state.plugin_runtime.clone();
+                    tokio::spawn(async move {
+                        let sub = expand_plugin_submission(&plugin_runtime, last).await;
+                        let mut handle = thread.submit(sub).await;
+                        while let Some(protocol_event) = handle.next().await {
+                            if let Some(ui_event) = conversion::convert_event(protocol_event) {
+                                if tx.send(ui_event).is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    });
                     return Ok(false);
                 }
                 SlashOutcome::Compact => {

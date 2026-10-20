@@ -15,7 +15,18 @@ pub struct NotifyTriggers {
     pub turn_completed: bool,
     pub approval_needed: Option<String>,
     pub error: Option<String>,
+    /// 本回合是否出现过工具调用 / 子代理活动 —— 用来判断「值得通知」。
+    ///
+    /// 对齐 claude code:不是每个回合结束都响。用户刚敲了回车、盯着屏幕等
+    /// 结果时来一条 "Reflect finished." 是纯噪音;真正的价值是「你切去别的
+    /// 窗口干活,这边跑完了」。
+    pub did_work: bool,
 }
+
+/// 回合时长阈值(秒):超过它才在无工具调用时也通知。
+///
+/// 纯对话回合通常几秒内结束,用户还在看屏幕;跑很久的回合才需要把人叫回来。
+pub const LONG_TURN_SECS: u64 = 30;
 
 impl NotifyTriggers {
     pub fn new() -> Self {
@@ -37,11 +48,18 @@ impl NotifyTriggers {
             UiEventKind::Error(msg) => {
                 self.error = Some(msg.clone());
             }
+            // 工具调用 / 子代理活动说明这一回合干了实事,值得把人叫回来。
+            UiEventKind::ToolStarted { .. }
+            | UiEventKind::ToolCompleted { .. }
+            | UiEventKind::SubagentStatusUpdate { .. } => self.did_work = true,
             _ => {}
         }
     }
 
     /// 优先级:错误 > 审批 > 回合完成(一次只发一条,避免连响)。
+    ///
+    /// 回合完成**不是**无条件通知:只有干了实事(工具调用 / 子代理)或跑得够久
+    /// 才发。否则用户刚敲完回车盯着屏幕,每轮都响一声是纯噪音。
     pub fn message(&self) -> Option<String> {
         if let Some(e) = &self.error {
             return Some(format!("Reflect error: {e}"));
@@ -49,10 +67,17 @@ impl NotifyTriggers {
         if let Some(a) = &self.approval_needed {
             return Some(format!("Reflect needs approval: {a}"));
         }
-        if self.turn_completed {
+        if self.turn_completed && self.did_work {
             return Some("Reflect finished.".to_string());
         }
         None
+    }
+
+    /// 回合完成且**没有**工具活动时的通知判定(供主循环结合回合时长决定)。
+    ///
+    /// 返回 `true` 表示「这一轮虽然没调工具,但跑得够久,仍值得通知」。
+    pub fn long_turn_without_work(&self, elapsed_secs: u64) -> bool {
+        self.turn_completed && !self.did_work && elapsed_secs >= LONG_TURN_SECS
     }
 }
 
@@ -73,10 +98,75 @@ mod tests {
     }
 
     #[test]
+    fn turn_completed_notifies_only_when_real_work_happened() {
+        // 回归:此前每个回合结束都发 "Reflect finished." —— 用户刚敲完回车
+        // 盯着屏幕等结果时,这是纯噪音。对齐 claude code:只在干了实事
+        // (工具调用 / 子代理)或跑得够久时才通知。
+        let mut t = NotifyTriggers::new();
+        t.observe(&UiEventKind::TurnCompleted);
+        assert_eq!(t.message(), None, "纯对话回合不应通知");
+
+        // 有工具调用 → 通知。
+        t.observe(&UiEventKind::ToolStarted {
+            call_id: "c1".into(),
+            name: "bash".into(),
+        });
+        assert_eq!(t.message().as_deref(), Some("Reflect finished."));
+
+        // 长回合例外:没调工具但跑得够久,仍值得把人叫回来。
+        let mut long = NotifyTriggers::new();
+        long.observe(&UiEventKind::TurnCompleted);
+        assert!(!long.long_turn_without_work(LONG_TURN_SECS - 1));
+        assert!(long.long_turn_without_work(LONG_TURN_SECS));
+        assert!(long.long_turn_without_work(LONG_TURN_SECS + 600));
+    }
+
+    #[test]
+    fn error_and_approval_outrank_turn_completed() {
+        let mut t = NotifyTriggers::new();
+        t.observe(&UiEventKind::TurnCompleted);
+        t.observe(&UiEventKind::ToolStarted {
+            call_id: "c".into(),
+            name: "read".into(),
+        });
+        t.observe(&UiEventKind::Error("boom".into()));
+        assert_eq!(t.message().as_deref(), Some("Reflect error: boom"));
+
+        let mut t2 = NotifyTriggers::new();
+        t2.observe(&UiEventKind::ApprovalNeeded {
+            id: "a".into(),
+            summary: "Bash: rm -rf /".into(),
+            kind: reflect_protocol::ApprovalKind::Tool {
+                tool_name: "bash".into(),
+                args: serde_json::json!({"cmd": "rm -rf /"}),
+            },
+        });
+        assert_eq!(
+            t2.message().as_deref(),
+            Some("Reflect needs approval: Bash: rm -rf /")
+        );
+    }
+
+    #[test]
+    fn subagent_activity_counts_as_work() {
+        let mut t = NotifyTriggers::new();
+        t.observe(&UiEventKind::TurnCompleted);
+        t.observe(&UiEventKind::SubagentStatusUpdate { children: vec![] });
+        assert_eq!(t.message().as_deref(), Some("Reflect finished."));
+    }
+
+    #[test]
     fn turn_completed_triggers_message() {
         let mut t = NotifyTriggers::new();
         t.observe(&UiEventKind::TurnCompleted);
         assert!(t.any());
+        // 纯对话回合不再通知(见 turn_completed_notifies_only_when_real_work_happened);
+        // 这里只断言触发集被记录,以及有工具活动时才产出消息。
+        assert_eq!(t.message(), None);
+        t.observe(&UiEventKind::ToolStarted {
+            call_id: "c1".into(),
+            name: "bash".into(),
+        });
         assert_eq!(t.message().as_deref(), Some("Reflect finished."));
     }
 

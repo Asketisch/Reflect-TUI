@@ -51,8 +51,12 @@ pub fn resolve_global_key(key: Event) -> Option<KeyAction> {
     if is_exit_key(key) {
         return Some(KeyAction::Exit);
     }
-    // Ctrl-D(不含 Shift):也退出(类 shell EOF)。Ctrl-Shift-D 仍归 OpenDiff,
+    // Ctrl-D(不含 Shift):类 shell EOF,退出。Ctrl-Shift-D 仍归 OpenDiff,
     // 故此处要求不含 SHIFT,避免与 diff overlay 快捷键冲突。
+    //
+    // 注意:composer 里有草稿时**不应**走到这里 —— 主循环在调用本函数前先
+    // 检查 `composer.is_empty()`(见 handle_event 的 Ctrl-D 分支),否则用户
+    // 写了一半的提示词会被一次误触清空且直接退出。
     if key.code == KeyCode::Char('d')
         && key.modifiers.contains(KeyModifiers::CONTROL)
         && !key.modifiers.contains(KeyModifiers::SHIFT)

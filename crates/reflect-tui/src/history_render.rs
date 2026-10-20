@@ -230,6 +230,9 @@ pub enum SlashOutcome {
     ToggleVim { now_enabled: bool },
     /// 压缩上下文:发送 Op::Compact 到 agent thread,清空历史。
     Compact,
+    /// `/retry`:重发上一条用户提示词(硬失败后的人工重试入口)。
+    /// 调用方从 history 里找最近一条 `User` 项重新提交。
+    Retry,
     /// 显示成本信息(由调用方从 state.context_usage.total_cost_usd 取数)。
     ShowCost,
     /// 显示用量信息(由调用方从 state.context_usage 取数)。
@@ -432,6 +435,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
             // 占位:实际值由 handle_event 填入;dispatch 仅作意图标识。
             now_enabled: false,
         },
+        // `/retry` 重发上一条用户提示词(硬失败后的人工重试入口)。
+        "/retry" => SlashOutcome::Retry,
         "/compact" => SlashOutcome::Compact,
         "/cost" => SlashOutcome::ShowCost,
         "/usage" => SlashOutcome::ShowUsage,
@@ -803,6 +808,7 @@ pub fn help_lines() -> Vec<Line<'static>> {
         Line::from("  /clear        Clear scrollback + session history"),
         Line::from("  /status       Show TUI status"),
         Line::from("  /compact      Request context compaction"),
+        Line::from("  /retry        Re-send the last user prompt (after a hard failure)"),
         Line::from("  /diff         Show diff overlay (tool patches)"),
         Line::from("  /tasks        Show tasks & agents overlay"),
         Line::from("  /plan <t>     Enter plan mode for a task"),
@@ -938,6 +944,20 @@ mod sanitize_tests {
         match dispatch_slash("/COMPACT") {
             SlashOutcome::Compact => {}
             other => panic!("/COMPACT 大小写不敏感, 实为 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dispatch_slash_retry_produces_retry() {
+        // /retry 是硬失败(配额耗尽 / 认证失效 / 5xx 终结)后的人工重试入口;
+        // 此前用户没有任何重试手段,只能把提示词重新敲一遍。
+        match dispatch_slash("/retry") {
+            SlashOutcome::Retry => {}
+            other => panic!("/retry 应产出 Retry, 实为 {other:?}"),
+        }
+        match dispatch_slash("  /RETRY  ") {
+            SlashOutcome::Retry => {}
+            other => panic!("大小写不敏感且容忍首尾空白, 实为 {other:?}"),
         }
     }
 
