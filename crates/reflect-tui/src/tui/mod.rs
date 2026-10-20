@@ -3974,6 +3974,42 @@ mod draw_tests {
     }
 
     #[test]
+    fn draw_fullscreen_renders_question_and_ask_user_panels() {
+        // 回归:draw_fullscreen 的 layout 曾漏掉 question_h / ask_user_h 两段,
+        // 于是 --fullscreen 下引擎阻塞在 AskUserQuestion 时用户看到的是空白,
+        // 而键位仍被面板接管 —— 表现为「界面卡死但按键有反应」。
+        let backend = VT100Backend::new(80, 30);
+        let mut terminal = ReflectTerminal::with_options(backend).unwrap();
+        terminal.set_viewport_area(Rect::new(0, 0, 80, 30));
+        let mut state = UiState::default();
+        state.pending_question = Some(crate::events::QuestionPromptState::new(
+            "req-1".into(),
+            vec![panel_question(false)],
+        ));
+        state.pending_ask_user = Some(crate::events::AskUserPendingState {
+            request_id: "req-1".into(),
+            prompt: "which branch should I target?".into(),
+            secret: false,
+        });
+        terminal
+            .draw(|frame| draw_fullscreen(frame, &mut state, frame.area().height, &[], 0))
+            .unwrap();
+        let text = terminal.backend().vt100().screen().contents();
+        assert!(
+            text.contains("which branch should I target?"),
+            "ask_user 条必须在全屏模式渲染: {text}"
+        );
+        assert!(
+            text.contains("Use which approach?"),
+            "question 面板题干必须在全屏模式渲染: {text}"
+        );
+        assert!(
+            text.contains("Thorough"),
+            "question 面板选项必须在全屏模式渲染: {text}"
+        );
+    }
+
+    #[test]
     fn legacy_markers_rewrite_history_prefixes() {
         // 历史 user/agent 经 history_item_to_lines 应得到老字形 ▶ / ●。
         let cwd = std::path::Path::new(".");
