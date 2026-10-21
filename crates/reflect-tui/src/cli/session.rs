@@ -604,11 +604,31 @@ fn find_session_file(
     Ok(found)
 }
 
+/// 取出一条 message record 的正文预览。
+///
+/// `content` 有三种历史形态,都要认:
+/// - **字符串**:最早的纯文本记录;
+/// - **对象** `{ "text": "..." }`:单块结构;
+/// - **数组** `[{ "type": "text", "text": "..." }, ...]`:**当前形态**
+///   (v1.2 起引擎把 ContentBlock 数组整个写进 `content`)。
+///
+/// 此前只认前两种,遇到第三种(也就是**所有真实会话**)会取到空串 ——
+/// `session show` 的消息预览永远是空的。本函数按数组顺序拼接其中的
+/// 文本块,非文本块(图片 / 工具载荷)跳过。
 fn preview_message_body(v: &serde_json::Value) -> String {
     let body = v
         .get("content")
         .and_then(|c| match c {
             serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Array(items) => {
+                let mut parts: Vec<String> = Vec::new();
+                for item in items {
+                    if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
+                        parts.push(t.to_string());
+                    }
+                }
+                Some(parts.join(" "))
+            }
             other => other
                 .get("text")
                 .and_then(|t| t.as_str())
@@ -710,6 +730,56 @@ mod tests {
         assert_eq!(format_with_thousands("0"), "0");
         assert_eq!(format_with_thousands("1234"), "1,234");
         assert_eq!(format_with_thousands("1234567"), "1,234,567");
+    }
+
+    // ── 消息预览:三种 content 形态都要认 ────────────────────────────
+
+    #[test]
+    fn preview_message_body_accepts_plain_string() {
+        let v = serde_json::json!({"content": "hello"});
+        assert_eq!(preview_message_body(&v), "hello");
+    }
+
+    #[test]
+    fn preview_message_body_accepts_text_object() {
+        let v = serde_json::json!({"content": {"text": "hello"}});
+        assert_eq!(preview_message_body(&v), "hello");
+    }
+
+    #[test]
+    fn preview_message_body_accepts_content_block_array() {
+        // v1.2 起引擎把 ContentBlock 数组写进 `content` —— 这是**真实会话**
+        // 的形态。此前只认字符串 / 单块对象,导致 `session show` 的消息
+        // 预览对所有真实会话都是空的。
+        let v = serde_json::json!({
+            "content": [
+                {"type": "text", "text": "第一块"},
+                {"type": "image", "image_url": "data:..."},
+                {"type": "text", "text": "第二块"},
+            ]
+        });
+        assert_eq!(preview_message_body(&v), "第一块 第二块");
+    }
+
+    #[test]
+    fn preview_message_body_truncates_and_flattens_newlines() {
+        let v = serde_json::json!({
+            "content": [{"type": "text", "text": "line1\nline2"}]
+        });
+        assert_eq!(preview_message_body(&v), "line1 line2");
+
+        let long = serde_json::json!({
+            "content": [{"type": "text", "text": "x".repeat(200)}]
+        });
+        let out = preview_message_body(&long);
+        assert!(out.ends_with('…'), "超长应截断并加省略号: {out}");
+        assert_eq!(out.chars().count(), 81);
+    }
+
+    #[test]
+    fn preview_message_body_empty_for_unrelated_shape() {
+        let v = serde_json::json!({"content": 42});
+        assert_eq!(preview_message_body(&v), "");
     }
 
     #[test]
