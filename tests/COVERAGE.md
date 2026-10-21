@@ -17,9 +17,9 @@
 
 | 层 | 位置 | 测谁 | 依赖 SDK? | 规模 |
 |---|---|---|---|---|
-| **能力覆盖层**(主) | `tests/functional/` | **Rust 代码在真产物上的行为**(真二进制 + pty + pyte 屏幕快照) | ❌ | 165 条 |
+| **能力覆盖层**(主) | `tests/functional/` | **Rust 代码在真产物上的行为**(真二进制 + pty + pyte 屏幕快照) | ❌ | 199 条 |
 | **覆盖自审层** | `tests/tools/coverage_audit.py` | 「声明了什么」× 「测了什么」的**机械差集** | ❌ | 4 条门禁 |
-| CLI 参数面 | `tests/rust/cli_core.sh`、`cli_modules.sh` | 17 个子命令的**参数矩阵**与输出契约(bash) | ❌ | 60+ 断言 |
+| CLI 参数面 | `tests/rust/cli_core.sh`、`cli_modules.sh` | 17 个子命令的**参数矩阵**与输出契约(bash,含退出码) | ❌ | 101 断言 |
 | CLI 语义面 | `tests/functional/test_cli.py` | CLI 输出的**语义**(列结构、预览条数、统计口径) | ❌ | 10 条 |
 | Rust 单测 | `crates/reflect-tui/src/**` | 内部单元与集成(既有基线) | — | 332 条(自有)+ vendored |
 | live 端到端 | `tests/live/` | 真实 LLM + 真实工具(需 API key) | — | 手动跑 |
@@ -41,11 +41,15 @@
 
 | 能力域 | 能力覆盖层 | CLI 参数面 | 覆盖自审 |
 |---|---|---|---|
-| 启动 / 渲染锚点 / 退出生命周期 | B1–B10 | cli_core(`--help`/`--version`) | — |
-| slash 命令面(84 条命令) | S1–S8 | — | ✅ 全覆盖门禁 || 弹层 / 浮层 / 选择器 | O1–O11 | — | ✅ picker 数门禁 |
+| 启动 / 渲染锚点 / 退出生命周期 / 全屏模式 | B1–B12 | cli_core(`--help`/`--version`) | — |
+| slash 命令面(84 条命令) | S1–S8 | — | ✅ 全覆盖门禁 |
+| 弹层 / 浮层 / 选择器 / 鼠标反向门禁 | O1–O12 | — | ✅ picker 数门禁 |
 | 对话轮次 / 流式 / 工具 / 统计 | T1–T10 | — | — |
 | 会话持久化 / 恢复 / plan 落盘 | P1–P7 | cli_modules(session) | — |
 | headless CLI 语义 | C1–C10 | cli_modules(traces) | — |
+| 键盘交互(权限循环 / 历史召回 / 编辑器 / 复制 / 多行 / vim) | K1–K11(无 K6) | — | — |
+| 渲染与视觉(宽字符 / 折行 / markdown / 主题 / resize / 小窗) | V1–V9 | — | — |
+| 工作流与容错(审批 / AskUser / loop / 恢复边界 / 坏输入 / 信号) | W1–W12 | — | — |
 | Rust 编译面 | — | workspace_tests(cargo test/clippy/fmt/doc) | — |
 
 ---
@@ -66,6 +70,8 @@
 | B8 | Ctrl+D 退出 | 退出码 0 |
 | B9 | 窗口 resize 重绘 | 进程存活 + 无 panic |
 | B10 | 缺 provider 快速失败 | 非 0 退出 + 错误含 `provider` |
+| B11 | `--fullscreen` 进备用屏 | raw 含 `ESC[?1049h` + banner 块字 + composer 占位符(`draw_fullscreen` 独立渲染路径) |
+| B12 | 全屏模式退出还原主屏 | raw 含 `ESC[?1049l` + 退出码 0 |
 
 ### S 组 slash 命令面(`test_slash.py`,**数据驱动全量矩阵**)
 
@@ -119,10 +125,12 @@
 | O9 | `/rm-session` 二次确认 | `Permanently delete current session files and exit?` |
 | O10 | overlay 遮蔽全局键 | overlay 打开时 Ctrl+T 不生效 |
 | O11 | 9 条未接线弹层保持不可达 | 标题**不**出现 |
+| O12 | 鼠标序列无副作用 | SGR/X10 鼠标序列注入后:进程存活、无 panic、composer 完好、无弹层打开 |
 
-> O11 是**反向门禁**:Image / Keymap / Statusline / Theme / Checkpoint /
+> O11 / O12 是**反向门禁**:Image / Keymap / Statusline / Theme / Checkpoint /
 > Skills Hub / MCP / Traces / Sessions 八个弹层的渲染代码存在且有 Rust
-> 单测,但运行时不可达。将来接线后本用例会失败并提醒更新矩阵。
+> 单测,但运行时不可达;鼠标则整体未接入(无 `EnableMouseCapture`)。
+> 将来接线后对应用例会失败并提醒更新矩阵。
 
 ### T 组 对话轮次(`test_turn.py`)
 
@@ -146,9 +154,12 @@
 > `Hello from mock LLM!`。一次用户提交会让引擎**多次**调用模型
 > (实测 4 次),所以:
 > - 屏幕上的回复是**多次调用结果的拼接**;
-> - 落盘的 assistant 消息是**最后一轮**的回复;
+> - 落盘的 assistant 消息是**最后一轮**的回复 —— 要断言落盘正文,脚本须
+>   给足**同款行**(如 `[text_reply(x)] * 6`),否则落盘的是回退文本;
 > - 要让工具在第一轮就执行,`tool_call` 必须是脚本**第一行**。
 > - `echo` 工具的参数名是 `text`(不是 `message`)。
+> - **工具名全小写且大小写敏感**:`bash` / `ask_user` / `ask_user_question`;
+>   写成 `Bash` 会得到 `✗ Bash (0ms) tool not found: Bash`。
 
 ### P 组 会话持久化(`test_session.py`)
 
@@ -175,6 +186,61 @@
 | C8 | `session stats` | per-model 表 + TOTAL 行 + token 总量 |
 | C9 | `traces spans` 过滤 | 按 session 前缀命中 / 未命中占位 |
 | C10 | `session show` 不存在的 id | 非 0 + 可读错误 |
+
+### K 组 键盘交互(`test_keys.py`)
+
+`KEY_SEQS` 里定义但此前无用例引用的按键,逐一变成行为断言。
+
+| # | 用例 | 断言锚点 |
+|---|---|---|
+| K1 | Shift+Tab 循环权限模式 | identity 行 `[accept_edits]` → `[plan]` → 无标记(Auto),实测三态循环(见 §6 D11) |
+| K2 | Ctrl+O 复制最后回复 | `⚠ Copied last reply (N chars) to clipboard.` |
+| K3 | Ctrl+G 外部编辑器往返 | `⚠ External editor closed; content loaded into composer.` + `▶ TEXT_FROM_EDITOR` 提交 |
+| K4 | Ctrl+R 反向搜索历史 | composer 回填命中条目(`beta probe two`) |
+| K5 | Up 召回最近历史 | composer 回填 `HIST_LAST_ENTRY` |
+| K7 | alt+enter 多行输入 | composer 两行 + 落盘消息体含 `\n`(shift+enter 依赖 kitty 协议,哑 pty 用等价路径) |
+| K8 | 大段粘贴 300+ 字符 | 落盘内容逐字符完整 |
+| K9 | vim 模式编辑行为 | `⚠ Vim mode enabled` + HUD `[NORMAL]` + `x` 删除末字符 |
+| K10 | 行内编辑(Ctrl+A 行首) | 落盘文本 = 前缀 + 原文 |
+| K11 | 粘连突发多段输入 | 三段按序拼合,无丢失 |
+
+> K6(Ctrl+C busy 首按中断)不设用例:mock 回复瞬时完成,离线无法
+> 确定性制造 busy 窗口(空闲态 Ctrl+C 是退出,语义不可区分)。
+> Esc 中断已由 T9 覆盖,空闲退出由 B7 覆盖。
+
+### V 组 渲染与视觉(`test_render.py`)
+
+| # | 用例 | 断言锚点 |
+|---|---|---|
+| V1 | 中文往返 | 中文输入/回复上屏 + 落盘 + 无 panic |
+| V2 | emoji(含 ZWJ 组合) | 上屏 + 无 panic |
+| V3 | 超长回复折行 | `V3_HEAD` 与 `V3_TAIL` 都在屏幕上(无整段丢失) |
+| V4 | markdown 代码块 | 围栏内容(`fn probe_render_fn`)上屏 |
+| V5 | markdown 表格 / 列表 | `CELLKEY42` / `LISTITEM_*` 上屏 |
+| V6 | `NO_COLOR=1` 分支 | 首屏锚点齐全(theme.rs `resolve_startup`) |
+| V7 | `REFLECT_TUI_THEME=light` 分支 | 首屏锚点齐全 |
+| V8 | resize 布局锚点 | 80x24 → 120x40 → 80x24,HUD 模型名 + composer 占位符始终可见(升级 B9) |
+| V9 | 极小窗口 40x10 | 存活 + 有渲染输出 + 交互不崩 |
+
+### W 组 工作流与容错(`test_flow.py`)
+
+| # | 用例 | 断言锚点 |
+|---|---|---|
+| W1 | 审批批准链路 | `⚠ APPROVAL NEEDED` + `Tool: bash({…})` + `[Y]es/[N]o/[A]ll/[S]cope` → y → `✓ bash` + 输出上屏 |
+| W2 | 审批拒绝链路 | n → `✗ bash (0ms)` + `Approval denied: denied by user`,命令未执行 |
+| W3 | AskUserQuestion 面板 | `❓ QUESTION 1/1 · <header> · 单选` + 选项列表 → 数字勾选 + Enter → `✓ ask_user_question` + 回合继续 |
+| W4 | ask_user 自由文本条 | `❓ AGENT 等待你的回答` → 输入回车 → `▶ (回答) <text>` + `✓ ask_user` + 回合继续 |
+| W5 | `/loop` 离线定时触发 | raw 流 `LOOPFIRE` 标记 ≥8(≥2 轮,视口计数会漏须用 raw);`/loop stop` → `⚠ /loop: stopped (was: /status every 3s)` |
+| W6 | `-c` 无历史会话 | 非 0 退出 + `no sessions found` + `nothing to resume` |
+| W7 | `--resume` 短前缀拒绝 | 非 0 退出 + `invalid thread id`(只认完整 UUID) |
+| W8 | 200 条消息大会话恢复 | 不挂死、可继续对话、无 panic(旧消息进原生 scrollback,pyte 视口不可见) |
+| W9 | 坏 config.toml | **静默回落默认配置**,TUI 照常启动(锁定现状,见 §6 D9) |
+| W10 | 非法 `REFLECT_MODEL` | 非 0 退出 + 错误含 `provider` |
+| W11 | SIGTERM | rc=-15(死于信号)+ 无 panic + 会话文件已落盘 |
+| W12 | stdin 非 tty(管道) | 非 0 退出 + `Error: Device not configured`,不挂死 |
+
+> W5 的 stop 需要**空闲窗口**:busy 期间 composer 的提交会被吞且草稿
+> 保留(§6 D10),用例内先等 HUD spinner 消失再提交(带重试)。
 
 ---
 
@@ -274,6 +340,13 @@
   `input_starts_with_space` 只影响「未知命令」的拦截;legacy 通道的
   `dispatch_slash` 入口做了 `trim()`,所以 `" /clear"` 仍会弹二次确认。
 - **`/prompt` 子命令**(`list` / `reload` / `rescan`)在当前构建未接线。
+- **`--resume` 只认完整 UUID**:3 字符或 8 字符前缀都报 `invalid thread id
+  … invalid length`;前缀解析只在 headless `session show` 里有(W7 锁定)。
+- **Shift+Tab 实际是三态循环**(Auto → AcceptEdits → Plan → Auto):
+  `keymap.rs` 注释宣称五模式(含 Prompt / Bypass),但循环到不了后两者
+  (K1 锁定,见 §6 D11)。
+- **坏 `config.toml` 静默回落默认配置**:解析失败无任何用户可见告警,
+  TUI 照常启动(W9 锁定「不崩」,见 §6 D9)。
 
 ---
 
@@ -289,6 +362,9 @@
 | D6 | **`REFLECT_TUI_UPDATE_CHECK` 无人读取**:旧 harness 设它以屏蔽启动期更新探测,但本 fork 的 `update_action.rs:29-33` 恒返回 `None` | `crates/reflect-tui/src/tui_core/update_action.rs:29-33` | 未修(记录)。无害,但属残留 |
 | D7 | **mock provider 一次提交触发多次模型调用**:实测 4 次,导致脚本行与最终落盘的 assistant 消息不是一一对应 | `reflect-agent/crates/abilities/reflect-llm/src/providers/mock.rs:163` | 引擎侧行为,记录 |
 | D8 | **`Ctrl+Shift+D` 快捷键在真实终端不可达**:终端无法区分 Ctrl+D 与 Ctrl+Shift+D(同为字节 `0x04`),crossterm 把 `0x04` 解析成 `Char('d') + CONTROL`(**不带 SHIFT**),而 `keymap.rs` 的 `OpenDiff` 分支要求 `CONTROL|SHIFT` —— 该分支永远命中不了,实际落到 `Ctrl+D → Exit` | `crates/reflect-tui/src/keymap.rs:88-94`(要求 SHIFT)vs `:60-65`(Ctrl+D 排除 SHIFT);实测见 `test_overlay.py::test_ctrl_shift_d_is_unreachable_from_a_terminal` | 未修(记录)。diff overlay 的实际入口只有 `/diff` |
+| D9 | **坏 `config.toml` 静默回落**:`this is [ not valid toml {{{` 这类非法内容不产生任何用户可见告警,TUI 以默认配置照常启动 —— 用户改了配置却不生效时无从得知 | W9 实证(2026-10):进程存活、无 panic、raw 无 config 相关输出 | 未修(记录) |
+| D10 | **busy 窗口内的 composer 提交被吞且草稿保留**:回合进行中按 Enter,提交内容不上传也不清框;`/loop stop` 在迭代 busy 窗口内提交即失效,且残留草稿会污染后续输入(与 `/loop` 的自动提交叠加尤其明显) | W5 调试实证(2026-10):第 2 轮触发后立刻 stop 无效,拖到空闲窗口才生效;残留草稿使后续 stop 拼成非法命令 | 未修(记录) |
+| D11 | **Shift+Tab 权限模式循环与注释不符**:`keymap.rs:45-100` 注释宣称 Plan/Auto/Prompt/AcceptEdits/Bypass 五模式循环,实测 HUD 可见循环只有三态 Auto → AcceptEdits → Plan → Auto,Prompt / Bypass 到不了 | K1 实证(2026-10):连续 6 次 Shift+Tab 交替出现 `[accept_edits]`/`[plan]`/无标记 | 未修(记录) |
 
 ---
 
@@ -297,17 +373,20 @@
 | 文件 | 规模 |
 |---|---|
 | `functional/test_slash.py` | 92 条(85 行命令矩阵覆盖 84 条命令 + 7 条独立用例) |
-| `functional/test_overlay.py` | 19 条(10 条可达弹层 + 9 条不可达弹层反向门禁) |
+| `functional/test_overlay.py` | 20 条(10 条可达弹层 + 9 条不可达弹层反向门禁 + 1 条鼠标反向门禁) |
+| `functional/test_boot.py` | 12 条(含 2 条全屏模式) |
+| `functional/test_flow.py` | 12 条(审批 / AskUser / loop / 恢复边界 / 容错 / 信号) |
 | `functional/test_turn.py` | 11 条 |
+| `functional/test_keys.py` | 10 条(键盘交互) |
 | `functional/test_cli.py` | 10 条 |
-| `functional/test_boot.py` | 10 条 |
+| `functional/test_render.py` | 9 条(渲染与视觉) |
 | `functional/test_pty_helpers.py` | 8 条 |
 | `functional/test_session.py` | 7 条 |
 | `functional/test_plugin.py` | 4 条 |
 | `functional/test_coverage_audit.py` | 4 条 |
-| **能力覆盖层合计** | **165 条** |
-| `rust/cli_core.sh` | 40+ 断言 |
-| `rust/cli_modules.sh` | 55 断言 |
+| **能力覆盖层合计** | **199 条** |
+| `rust/cli_core.sh` | 45 断言(含退出码) |
+| `rust/cli_modules.sh` | 56 断言(含退出码) |
 | 另有 `cargo test --workspace` / clippy / fmt / doc | 既有基线 |
 
 ---
@@ -319,17 +398,24 @@
 - **一次性提交触发多次模型调用的原因**:实测引擎在一次用户提交里调用
   模型 4 次(落盘 4 条 `token_count`),但未定位到是哪几条辅助调用
   (title 生成 / compact 判定 / auto-review?),故未对调用次数做断言。
-- **审批链路(`⚠ APPROVAL NEEDED`)**:需要 `REFLECT_APPROVALS=1` +
-  会触发审批的工具;本仓 TUI 已固定 `.with_approvals(true)`,但离线
-  mock 脚本难以稳定触发审批请求,未覆盖。
-- **`AskUserQuestion` / `AskUserInput` 面板**:同上,离线难稳定触发。
+- **Ctrl+C busy 首按中断**:mock 回复瞬时完成,离线无法确定性制造 busy
+  窗口;空闲态 Ctrl+C 是退出,两种结局不可区分。Esc 中断由 T9 覆盖。
+- **真实 shift+enter 序列**:依赖 kitty 键盘协议(`ESC[13;2u`),哑 pty
+  发不出;K7 用 composer 支持的等价路径 alt+enter 锁定多行语义。
+- **系统剪贴板真实内容**:K2 只断言 `Copied last reply` 通知,未读回
+  系统剪贴板(跨平台剪贴板后端在 CI 哑终端下不可靠)。
 - **并行远程工具调用**:TUI 不注册远程工具(仅 serve 模式有)。
-- **窗口 resize 的完整布局断言**:只验「不崩、不 panic」,未断言重排后的
-  具体版面。
-- **终端能力分支**(kitty 图形协议 / sixel 图片 / OSC 9 通知):依赖真实
-  终端,哑 pty 无法验证。
+- **resize 后的具体版面**:V8 断言锚点仍可见,不断言行列位置。
+- **终端能力分支**(kitty 图形协议 / sixel 图片 / OSC 9 通知 / 真实
+  alt-screen 语义):依赖真实终端;B11/B12 只验 `ESC[?1049h/l` 序列发出。
 - **subagent 真实派发**:需引擎侧的 `call_<role>` 工具被模型选中,离线
   mock 只能脚本化单个 `tool_call`,派发链路未覆盖。
+- **鼠标正向交互**:鼠标整体未接入,O12 只做反向门禁。
 - **vendored 上游测试(约 760 条)**:受 feature `tui-upstream-tests` 门控,
   且测的是**运行时不可达**的 `tui_core/bottom_pane` / `chatwidget` 一族,
   不宜当作「已覆盖」。
+
+> 已从本清单移出(2026-10 离线实证可测,已纳入 W 组):审批链路
+> `⚠ APPROVAL NEEDED`(W1/W2)、`AskUserQuestion` / `ask_user` 面板
+> (W3/W4)—— 此前登记为「离线难稳定触发」,实际 mock 脚本注入小写
+> 工具名的 `tool_call` 即可稳定触发。

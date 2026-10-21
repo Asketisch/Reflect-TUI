@@ -131,3 +131,33 @@ def test_missing_provider_exits_with_error(sandbox: Sandbox) -> None:
         assert rc != 0, f"无 provider 应以非 0 退出,实际 {rc}"
         raw = s.raw_output()
         assert "provider" in raw.lower(), f"错误信息应提到 provider:\n{raw[-600:]}"
+
+
+def test_fullscreen_enters_alt_screen(tui) -> None:
+    """B11 `--fullscreen` 启动:进备用屏(ESC[?1049h),首屏锚点齐全。
+
+    全屏走 `draw_fullscreen`(tui/mod.rs,与 inline 视口不同的渲染路径),
+    此前只有 clap 参数互斥测试,从未真正跑过这条路径。
+    """
+    with tui(args=["--fullscreen"]) as s:
+        s.wait_text("/help for commands", timeout=30)
+        txt = s.normalized()
+        assert "███" in txt, "全屏模式 banner 块字应渲染"
+        assert "Send a message" in txt, "全屏模式 composer 占位符应渲染"
+        # alt-screen 进入序列必须出现在原始字节流里。
+        assert "\x1b[?1049h" in s.raw_output(), "应发送 ESC[?1049h 进入备用屏"
+        assert not s.has_panic()
+
+
+def test_fullscreen_exit_restores_main_screen(tui) -> None:
+    """B12 全屏模式退出:还原主屏(ESC[?1049l),退出码 0。"""
+    import time as _time
+
+    with tui(args=["--fullscreen"]) as s:
+        s.wait_text("/help for commands", timeout=30)
+        rc = s.quit(timeout=10)
+        assert rc == 0, f"全屏模式退出码应为 0,实际 {rc}"
+        # 退出序列在进程退出前写出;给读线程一点排空时间再检查。
+        _time.sleep(0.5)
+        assert "\x1b[?1049l" in s.raw_output(), "退出时应发送 ESC[?1049l 还原主屏"
+        assert not s.has_panic()

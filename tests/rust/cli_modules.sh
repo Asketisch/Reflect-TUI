@@ -61,9 +61,12 @@ seed_session() {
 }
 
 # run_cli <输出文件> <参数...>:在隔离 HOME 下跑 CLI。
+# 真实退出码记入 LAST_RC —— 注意 `set -u` 下脚手架不会中断,必须显式捕获,
+# 否则后续 `$?` 拿到的是上一条断言(grep)的返回码,形成恒过的伪断言。
 run_cli() {
     local out="$1"; shift
     HOME="$HOME_DIR" REFLECT_MODEL=mock/mock-1 "$BIN" "$@" > "$out" 2>&1
+    LAST_RC=$?
 }
 
 # ok <名称> <条件结果 0/1>:记一条通过/失败。
@@ -79,7 +82,7 @@ ok() {
 
 run_cli "$TMP/ls_empty.txt" session ls
 assert_contains "session ls 空目录给占位文案" "no sessions found" "$TMP/ls_empty.txt"
-ok "session ls 空目录退出码为 0" "$?"
+assert_exit "session ls 空目录退出码为 0" 0 "$LAST_RC"
 
 seed_session "$SESSION_FILE" "$SESSION_ID"
 
@@ -111,11 +114,12 @@ run_cli "$TMP/show_prefix.txt" session show "11111111"
 assert_contains "session show 支持前缀解析" "probe user message" "$TMP/show_prefix.txt"
 
 run_cli "$TMP/show_missing.txt" session show "00000000-0000-4000-8000-000000000000"
-ok "session show 不存在 id 时非 0 退出" "$([ -s "$TMP/show_missing.txt" ] && echo 0 || echo 1)"
+assert_exit_nonzero "session show 不存在 id 时非 0 退出" "$LAST_RC"
 assert_contains "session show 不存在 id 有错误文案" "not found" "$TMP/show_missing.txt"
 
 run_cli "$TMP/show_badid.txt" session show "not-a-uuid"
-ok "session show 非法 id 有诊断输出" "$([ -s "$TMP/show_badid.txt" ] && echo 0 || echo 1)"
+assert_exit_nonzero "session show 非法 id 时非 0 退出" "$LAST_RC"
+assert_contains "session show 非法 id 有前缀诊断" "no session matches prefix" "$TMP/show_badid.txt"
 
 # ── 3. session rename ────────────────────────────────────────────────────
 
@@ -205,7 +209,7 @@ run_cli "$TMP/traces_show_prefix.txt" traces show "22222222"
 assert_contains "traces show 支持前缀解析" "Session:" "$TMP/traces_show_prefix.txt"
 
 run_cli "$TMP/traces_show_missing.txt" traces show "00000000-0000-4000-8000-000000000000"
-ok "traces show 不存在 id 有错误输出" "$([ -s "$TMP/traces_show_missing.txt" ] && echo 0 || echo 1)"
+assert_exit_nonzero "traces show 不存在 id 时非 0 退出" "$LAST_RC"
 assert_contains "traces show 不存在 id 报 no trace session" "no trace session" "$TMP/traces_show_missing.txt"
 
 SPAN_DIR="$HOME_DIR/.reflect/traces/log"

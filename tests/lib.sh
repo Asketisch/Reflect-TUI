@@ -127,6 +127,17 @@ assert_exit() {
     return 1
 }
 
+# assert_exit_nonzero <名称> <实际退出码>:退出码非 0(错误路径契约)。
+assert_exit_nonzero() {
+    local name="$1" got="$2"
+    if [ "$got" -ne 0 ]; then
+        _record "$name" 0
+        return 0
+    fi
+    _record "$name" 1 "期望非 0 退出码,实际 $got(命令意外成功)"
+    return 1
+}
+
 # assert_nonempty <名称> <文件>:文件非空。
 assert_nonempty() {
     local name="$1" file="$2"

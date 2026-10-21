@@ -39,10 +39,11 @@ cat > "$SESS_DIR/2026/01/01/$SESSION_ID.jsonl" <<EOF
 EOF
 
 # run_cli <输出文件> <参数...>:在隔离 HOME 下跑一次 CLI,落 stdout+stderr。
-# 返回 CLI 自身的退出码。
+# 返回 CLI 自身的退出码;真实退出码同时记入 LAST_RC 供断言使用。
 run_cli() {
     local out="$1"; shift
     HOME="$HOME_DIR" REFLECT_MODEL=mock/mock-1 "$BIN" "$@" > "$out" 2>&1
+    LAST_RC=$?
 }
 
 # ── 1. help / version 输出契约 ────────────────────────────────────────────
@@ -63,9 +64,11 @@ assert_matches "version 输出含版本号形状" "reflect-tui [0-9]+\.[0-9]+" "
 
 run_cli "$TMP/bad_sub.txt" definitely-not-a-command
 assert_contains "未知子命令打印用法" "Usage:" "$TMP/bad_sub.txt"
+assert_exit_nonzero "未知子命令非 0 退出" "$LAST_RC"
 
 run_cli "$TMP/bad_flag.txt" --definitely-not-a-flag
 assert_nonempty "未知参数给出错误输出" "$TMP/bad_flag.txt"
+assert_exit_nonzero "未知参数非 0 退出" "$LAST_RC"
 
 # ── 3. 子命令层级 ─────────────────────────────────────────────────────────
 
@@ -95,6 +98,7 @@ for args in "session show" "session rm" "session fork" "session rename" \
     # shellcheck disable=SC2086
     run_cli "$TMP/missing.txt" $args
     assert_nonempty "缺参数有诊断输出: $args" "$TMP/missing.txt"
+    assert_exit_nonzero "缺参数非 0 退出: $args" "$LAST_RC"
 done
 
 # ── 5. 全局 --cwd / -C 生效 ──────────────────────────────────────────────
@@ -111,6 +115,7 @@ assert_contains "-C 短选项等价 --cwd" "session_id" "$TMP/cwd_short.txt"
 
 run_cli "$TMP/cwd_bad.txt" --cwd "$TMP/definitely-missing-dir" session ls
 assert_nonempty "非法 --cwd 给出错误输出" "$TMP/cwd_bad.txt"
+assert_exit_nonzero "非法 --cwd 非 0 退出" "$LAST_RC"
 
 # ── 7. TUI 模式参数的存在性(clap 解析层)────────────────────────────────
 

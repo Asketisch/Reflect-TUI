@@ -15,10 +15,6 @@ import pytest
 from tui_pty import DRAIN_TIMEOUT, REFLECT_TUI_BIN, Sandbox, TuiSession, text_reply, tool_call
 
 
-def pytest_configure(config: pytest.Config) -> None:
-    config.addinivalue_line("markers", "slow: 需要较长时间的用例(默认跑)")
-
-
 @pytest.fixture(scope="session", autouse=True)
 def _require_binary() -> None:
     """被测二进制不存在时跳过整个模块(而不是失败)。

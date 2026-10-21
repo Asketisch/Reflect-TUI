@@ -229,3 +229,30 @@ def test_unreachable_overlays_stay_unreachable(tui, command: str, title: str) ->
             f"{command} 打开了 {title} 弹层 —— 覆盖矩阵需更新(见 COVERAGE.md §S 组)"
         )
         assert not s.has_panic(), f"{command} 不应 panic:\n{s.raw_output()[-600:]}"
+
+
+def test_mouse_events_are_inert(tui) -> None:
+    """O12 鼠标未接线门禁:注入鼠标序列应无副作用(不弹层、不崩、composer 完好)。
+
+    全 crate 无 `EnableMouseCapture`,`Event::Mouse` 被 `handle_event` 兜底
+    静默吞掉(COVERAGE §5)。将来接入鼠标后本用例会失败,提醒补正向用例
+    并更新覆盖矩阵 —— 与 O11 同一思路的反向门禁。
+    """
+    with _boot(tui) as s:
+        # SGR 编码:左键按下/释放、滚轮上/下;外加 X10 legacy 序列。
+        for seq in (
+            b"\x1b[<0;5;3M",
+            b"\x1b[<0;5;3m",
+            b"\x1b[<64;5;3M",
+            b"\x1b[<65;5;3M",
+            b"\x1b[M !!",
+        ):
+            s._send(seq)
+            time.sleep(0.1)
+        s._pump(settle=1.0, max_wait=1.5)
+        txt = s.normalized()
+        assert s.alive(), "鼠标序列不应崩掉进程"
+        assert not s.has_panic(), f"鼠标序列不应 panic:\n{s.raw_output()[-600:]}"
+        assert "Send a message" in txt, "composer 应不受鼠标序列干扰"
+        for _cmd, title in UNREACHABLE:
+            assert title not in txt, f"鼠标序列不应打开任何弹层(出现 {title})"

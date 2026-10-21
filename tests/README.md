@@ -1,7 +1,8 @@
 # tests/ —— Reflect-TUI 全功能测试套件
 
 本目录是仓库的**统一测试入口**,覆盖 TUI 表现层的全部对外功能:
-启动与渲染、84 条 slash 命令、11 个弹层、对话轮次、会话持久化、
+启动与渲染(含全屏模式)、84 条 slash 命令、11 个弹层、对话轮次、
+键盘交互、渲染与视觉、审批 / AskUser 工作流、容错与信号、会话持久化、
 headless CLI,以及 Rust 编译面。
 
 全程**离线**(`REFLECT_MODEL=mock/mock-1`,零网络、零 API key)+
@@ -37,7 +38,7 @@ make coverage-audit    # = 覆盖自审(有未覆盖命令即失败)
 
 | 层 | 位置 | 测什么 | 规模 |
 |------|------|--------|--------|
-| **能力覆盖层**(主) | `functional/` | **真二进制 + pty 上的行为**:渲染出的文字、按键路由、落盘的文件 | 165 条 |
+| **能力覆盖层**(主) | `functional/` | **真二进制 + pty 上的行为**:渲染出的文字、按键路由、落盘的文件 | 199 条 |
 | **覆盖自审层** | `tools/coverage_audit.py` | 「声明了什么」×「测了什么」的**机械差集** | 4 条门禁 |
 | **CLI 参数面** | `rust/*.sh` | 子命令的**参数矩阵**与输出契约(bash) | 100+ 断言 |
 | Rust 编译面 | `rust/workspace_tests.sh` | `cargo test` / `clippy -D warnings` / `fmt` / `doc` | 既有基线 |
@@ -57,12 +58,15 @@ make coverage-audit    # = 覆盖自审(有未覆盖命令即失败)
 | `functional/` | 能力覆盖层(主) |
 | `functional/tui_pty.py` | pty 会话设施(pyte 屏幕快照 + 原始字节流 + 等待/超时) |
 | `functional/conftest.py` | pytest fixture:隔离 HOME、mock 脚本、TUI 会话工厂 |
-| `functional/test_boot.py` | B 组:启动 / 渲染锚点 / 退出生命周期 |
+| `functional/test_boot.py` | B 组:启动 / 渲染锚点 / 退出生命周期 / 全屏模式 |
 | `functional/test_slash.py` | S 组:**slash 命令全量矩阵**(84 条,数据驱动) |
-| `functional/test_overlay.py` | O 组:弹层 / 浮层 / 选择器 + 未接线弹层的反向门禁 |
+| `functional/test_overlay.py` | O 组:弹层 / 浮层 / 选择器 + 未接线弹层与鼠标的反向门禁 |
 | `functional/test_turn.py` | T 组:对话轮次 / 流式 / 工具调用 / 统计 |
 | `functional/test_session.py` | P 组:会话持久化 / 恢复 / fork / plan 落盘 |
 | `functional/test_cli.py` | C 组:headless CLI 的**语义**断言 |
+| `functional/test_keys.py` | K 组:键盘交互(权限循环 / 历史召回 / 外部编辑器 / 复制 / 多行 / vim) |
+| `functional/test_render.py` | V 组:渲染与视觉(宽字符 / 折行 / markdown / 主题 / resize / 小窗) |
+| `functional/test_flow.py` | W 组:工作流与容错(审批 / AskUser / loop / 恢复边界 / 坏输入 / 信号) |
 | `functional/test_coverage_audit.py` | 覆盖自审门禁(新增命令忘了加用例 → 失败) |
 | `rust/run.sh` | Rust 侧总入口 |
 | `rust/workspace_tests.sh` | `cargo test` + `clippy` + `fmt` + `doc` |
@@ -103,7 +107,7 @@ make coverage-audit    # = 覆盖自审(有未覆盖命令即失败)
 | 测什么 | agent 基座的 headless `reflect serve` | 终端 TUI 的表现层 |
 | 怎么驱动 | 原始 JSONL wire(`subprocess` + `json`) | pty + pyte 屏幕快照 |
 | 客户端 SDK | Python / TS 两套绑定层 | 无(本仓不提供 SDK) |
-| 覆盖面 | 17 个子命令 + 19 Op + 工具 + 编排 | 84 条 slash + 11 弹层 + 轮次 + 持久化 + CLI |
+| 覆盖面 | 17 个子命令 + 19 Op + 工具 + 编排 | 84 条 slash + 11 弹层 + 轮次 + 按键 + 渲染 + 审批/AskUser + 容错 + 持久化 + CLI |
 
 ## 相关文档
 
