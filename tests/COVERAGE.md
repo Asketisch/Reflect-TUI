@@ -1,0 +1,335 @@
+# 功能覆盖矩阵(测试 ↔ 功能面映射)
+
+本矩阵回答一个问题:**当前测试是否完整覆盖了全部对外功能**(而非冒烟)。
+
+覆盖口径:每条功能面至少有一个**字段级 / 行为级断言**(非「退出码 0」)
+的用例;断言失败即失败。全程离线(`REFLECT_MODEL=mock/mock-1`,零网络、
+零 API key)+ 隔离 HOME(mktemp,不污染真实 `~/.reflect`)。
+
+> 本文件的结构与判据对齐 submodule `reflect-agent/tests/COVERAGE.md`,
+> 但**覆盖对象不同**:submodule 是 agent 基座(测 headless `reflect serve`
+> 的 JSONL wire);本仓是终端 TUI(测 pty 上的真实渲染、真实按键路由、
+> 真实文件落盘)。
+
+---
+
+## 0. 覆盖分层:谁测什么
+
+| 层 | 位置 | 测谁 | 依赖 SDK? | 规模 |
+|---|---|---|---|---|
+| **能力覆盖层**(主) | `tests/functional/` | **Rust 代码在真产物上的行为**(真二进制 + pty + pyte 屏幕快照) | ❌ | 165 条 |
+| **覆盖自审层** | `tests/tools/coverage_audit.py` | 「声明了什么」× 「测了什么」的**机械差集** | ❌ | 4 条门禁 |
+| CLI 参数面 | `tests/rust/cli_core.sh`、`cli_modules.sh` | 17 个子命令的**参数矩阵**与输出契约(bash) | ❌ | 60+ 断言 |
+| CLI 语义面 | `tests/functional/test_cli.py` | CLI 输出的**语义**(列结构、预览条数、统计口径) | ❌ | 10 条 |
+| Rust 单测 | `crates/reflect-tui/src/**` | 内部单元与集成(既有基线) | — | 332 条(自有)+ vendored |
+| live 端到端 | `tests/live/` | 真实 LLM + 真实工具(需 API key) | — | 手动跑 |
+
+**判据**:
+- 断言「用户真的看到了什么 / 真的落了什么盘」→ **能力覆盖层**;
+- 断言「某个 CLI 参数组合的输出契约」→ bash 参数面;
+- 断言「CLI 输出的语义口径」→ CLI 语义面;
+- **新增能力断言只落能力覆盖层一处** —— 不要在多处重复写。
+
+> 为什么要把能力面与参数面分开:参数面只验「命令跑通了」,能力面验
+> 「跑通之后的**语义**正确」。例如 `session show` 能跑通(cli_modules 绿),
+> 但对真实会话(ContentBlock 数组形态)的消息预览曾恒为空 —— 只有能力面
+> 用**真实落盘形态**的 fixture 才测得出来(见 §6 D1,已修)。
+
+---
+
+## 1. 能力 × 覆盖层矩阵
+
+| 能力域 | 能力覆盖层 | CLI 参数面 | 覆盖自审 |
+|---|---|---|---|
+| 启动 / 渲染锚点 / 退出生命周期 | B1–B10 | cli_core(`--help`/`--version`) | — |
+| slash 命令面(84 条命令) | S1–S8 | — | ✅ 全覆盖门禁 || 弹层 / 浮层 / 选择器 | O1–O11 | — | ✅ picker 数门禁 |
+| 对话轮次 / 流式 / 工具 / 统计 | T1–T10 | — | — |
+| 会话持久化 / 恢复 / plan 落盘 | P1–P7 | cli_modules(session) | — |
+| headless CLI 语义 | C1–C10 | cli_modules(traces) | — |
+| Rust 编译面 | — | workspace_tests(cargo test/clippy/fmt/doc) | — |
+
+---
+
+## 2. 能力覆盖层明细(`tests/functional/`)
+
+### B 组 启动与生命周期(`test_boot.py`)
+
+| # | 用例 | 断言锚点 |
+|---|---|---|
+| B1 | 启动到稳定首屏 | `Reflect` + `/help for commands` |
+| B2 | banner 块字形画 | `█` / `╗` |
+| B3 | HUD identity 行 | `mock/mock-1` + `Ctrl+C to quit`(statusline.rs:218) |
+| B4 | HUD metrics 行 | `no tool calls yet`(statusline.rs:273) |
+| B5 | composer 占位符 | `Send a message… (shift+enter for newline)`(events.rs:593) |
+| B6 | 终端标题(OSC 0) | `Reflect · mock/mock-1 · …`(tui/mod.rs:958-971) |
+| B7 | Ctrl+C 退出 | 退出码 0 + 无 panic |
+| B8 | Ctrl+D 退出 | 退出码 0 |
+| B9 | 窗口 resize 重绘 | 进程存活 + 无 panic |
+| B10 | 缺 provider 快速失败 | 非 0 退出 + 错误含 `provider` |
+
+### S 组 slash 命令面(`test_slash.py`,**数据驱动全量矩阵**)
+
+84 条命令逐条断言运行时结局(矩阵 85 行 —— `/side` 测了带参与不带参两种)。
+矩阵是**单一事实源**,由 `tests/tools/coverage_audit.py` 静态核对「Rust 里
+声明的命令」与「矩阵覆盖的命令」,缺口直接判失败。
+
+四类结局(实测于 release 二进制):
+
+| 类别 | 行数 | 运行时表现 | 断言 |
+|---|---|---|---|
+| `wired` | 25 | 有真实行为 | 屏幕出现指定文本 |
+| `placeholder` | 34 | 命令被识别,但本构建未接线 | `⚠ /<cmd>: 此命令在当前构建中尚未接入分发` |
+| `unrecognized` | 17 | 命令未被识别,提交被静默吞掉 | 输入留在框内 + **无任何 notice** |
+| `panel` | 7 | 打开弹层 | 面板标题出现 |
+| `exit` | 2 | 退出 TUI | 退出码 0 |
+
+另有 7 条独立用例:命令弹窗列出 / 过滤 / 未知命令静默拒绝 /
+`/mode` 切权限模式 / 含 `/` 的名字不按命令解析 / 行首空格的两种结局。
+
+**关键机制(测试必须知道,否则会写错断言)**:
+
+1. **两条分发通道**。composer 敲下的命令名命中
+   `is_legacy_passthrough_slash` 白名单(`help ? tasks agents cost
+   exit-plan exitplan mode effort ref rm-session`)→ 原样提交走
+   `history_render::dispatch_slash`;否则命中可见的 `SlashCommand`
+   枚举 → 走 `tui/mod.rs` 的 `dispatch_slash_command`。
+2. **枚举通道只实现了部分命令**。其余落到兜底文案
+   「`/<cmd>: 此命令在当前构建中尚未接入分发`」。
+3. **两条通道的行为不一致**。例:`/mode` 在 legacy 通道真切权限模式;
+   `/model` 在枚举通道真切模型(`switched to '…'`),在 legacy 通道才
+   校验 registry。
+4. **不可见命令 = 未识别**。feature 门控隐藏的命令(`/apps` `/rollout`
+   `/test-approval` `/setup-default-sandbox` `/sandbox-add-read-dir`)
+   与 legacy 死代码臂(`/version` `/doctor` `/history` `/files` `/branch`
+   `/image` `/img` `/checkpoint` `/traces` `/think` `/thinking` `/retry`)
+   都在 composer 层被拒收,输入留在框里。
+
+### O 组 弹层 / 浮层(`test_overlay.py`)
+
+| # | 用例 | 断言锚点 |
+|---|---|---|
+| O1 | Ctrl+T 打开 transcript | `Transcript (Esc / Ctrl+T to close)` |
+| O2 | `/help` 打开帮助页 | 同上 + 命令说明 |
+| O3 | `/diff` 打开 diff | `Diff (Esc / Ctrl+T to close · /diff)` + `no diffs in this session` |
+| O4 | Ctrl+Shift+D 不可达 | `0x04` 被解析成 Ctrl+D → 退出,不是打开 diff(见 §6 D8) |
+| O5 | `/tasks` 打开任务面板 | `Tasks & Agents (Esc / Ctrl+T to close · /tasks)` + 分区 |
+| O6 | `/plugin` 打开插件面板 | `Installed Plugins` + `No plugins installed` + 安装指引 |
+| O7 | `/rewind` 需历史 | `no user prompts to rewind to yet` |
+| O8 | `/clear` 二次确认 | `Clear scrollback?` → `Clear cancelled.` |
+| O9 | `/rm-session` 二次确认 | `Permanently delete current session files and exit?` |
+| O10 | overlay 遮蔽全局键 | overlay 打开时 Ctrl+T 不生效 |
+| O11 | 9 条未接线弹层保持不可达 | 标题**不**出现 |
+
+> O11 是**反向门禁**:Image / Keymap / Statusline / Theme / Checkpoint /
+> Skills Hub / MCP / Traces / Sessions 八个弹层的渲染代码存在且有 Rust
+> 单测,但运行时不可达。将来接线后本用例会失败并提醒更新矩阵。
+
+### T 组 对话轮次(`test_turn.py`)
+
+| # | 用例 | 断言锚点 |
+|---|---|---|
+| T1 | 一次往返 | 用户消息 + mock 回复上屏 |
+| T2 | agent 流式前缀 | `• `(marker.rs:28-29;`● ` 只作用于整段 `Agent` 历史项) |
+| T2b | 用户消息前缀 | `▶ `(marker.rs:28) |
+| T3 | 流式逐行落 scrollback | 三个标记都在 |
+| T4 | 工具调用成功行 | `✓ echo (<N>ms)` + 输出正文 |
+| T5 | HUD metrics 更新 | `×1` |
+| T6 | 回合分隔线 | `─ ─ ─`(cells.rs:182) |
+| T7 | 多轮保留 | 两轮回复都在 |
+| T8 | 脚本耗尽回退 | `Hello from mock LLM!` |
+| T9 | Esc 打断回合 | 回合收尾 / 中断提示 |
+| T10 | 回合后 HUD 用量段 | `context left` |
+
+> **mock provider 的语义(测试必须知道)**:
+> `REFLECT_MOCK_SCRIPT` 是 JSONL,**每次模型调用消费一行**
+> (mock.rs:163 `script.pop_front()`);脚本耗尽回退
+> `Hello from mock LLM!`。一次用户提交会让引擎**多次**调用模型
+> (实测 4 次),所以:
+> - 屏幕上的回复是**多次调用结果的拼接**;
+> - 落盘的 assistant 消息是**最后一轮**的回复;
+> - 要让工具在第一轮就执行,`tool_call` 必须是脚本**第一行**。
+> - `echo` 工具的参数名是 `text`(不是 `message`)。
+
+### P 组 会话持久化(`test_session.py`)
+
+| # | 用例 | 断言 |
+|---|---|---|
+| P1 | 会话落盘 | `~/.reflect/sessions/YYYY/MM/DD/*.jsonl`;首行 `session_meta`;user/assistant 消息;`token_count` 带嵌套 `usage` |
+| P2 | prompt 历史落盘 | `~/.reflect/prompt_history.jsonl` |
+| P3 | `-c` 恢复 | 「已恢复历史会话」+ 既往消息上屏 |
+| P4 | `--resume <id>` 恢复 | 同上 |
+| P5 | 非法 `--resume` id | 快速失败(非 0),不挂死 |
+| P6 | 会话名落盘 | `~/.reflect/sessions/_names/<id>.name` |
+| P7 | Plan 落盘 | `<workspace>/.reflect/plan/*.md` + 正文 |
+
+### C 组 headless CLI 语义(`test_cli.py`)
+| # | 用例 | 断言 |
+|---|---|---|
+| C1 | `session ls` 六列 | session_id/model/started/msgs/tokens/cost |
+| C2 | token 列 | 累计 token 可见 |
+| C3 | `session show` 预览 | 元数据 + 消息正文(**真实 ContentBlock 数组形态**) |
+| C4 | `session show` 统计 | `Tokens:` + in/out 拆分 |
+| C5 | `session show` per-model 表 | `Per-model usage:` + 模型名 |
+| C6 | `session export` markdown | 角色标题 + 正文 |
+| C7 | `session export --out` | 落盘非空 + **无 `.tmp` 残留**(原子写) |
+| C8 | `session stats` | per-model 表 + TOTAL 行 + token 总量 |
+| C9 | `traces spans` 过滤 | 按 session 前缀命中 / 未命中占位 |
+| C10 | `session show` 不存在的 id | 非 0 + 可读错误 |
+
+---
+
+## 2b. 其余两组
+
+### G 组 插件面(`test_plugin.py`)
+
+| # | 用例 | 断言 |
+|---|---|---|
+| G1 | 启动通知 | scrollback 出现 `Plugin 'demo@inline' loaded …` |
+| G2 | slash 弹窗注入插件命令 | 弹窗列出 `demo:hello` |
+| G3 | 插件命令不被未知命令校验拦下 | 无 `Unrecognized`,命令上屏 |
+| G4 | `/plugin` overlay | 展示真实已装插件(id / version / enabled) |
+
+> 前置:submodule 构建出的 `reflect` CLI(用于安装示例插件)。缺失则整组 SKIP。
+
+### U 组 测试设施自身(`test_pty_helpers.py`)
+
+| # | 用例 | 断言 |
+|---|---|---|
+| U1 | `normalize` 折叠空白 | 折行/多空白 → 单空格 |
+| U2 | Sandbox 隔离 | 两个沙箱 HOME / cwd 互不相同 + 预写空 config |
+| U3 | `Sandbox.env()` | HOME 指向隔离目录,TERM 可渲染,宿主 HOME 不泄漏 |
+| U4 | `cleanup()` | 隔离目录整体删除,不留残留 |
+| U5 | `session_files()` | 按 `YYYY/MM/DD/<id>.jsonl` 层级找会话文件 |
+| U6 | 按键表覆盖 | TUI 用到的全部快捷键都有非空字节序列 |
+| U7 | mock 脚本助手 | 产出引擎能解析的 JSONL 行 |
+| U8 | 无参 `tool_call` | 也产出合法 JSON |
+
+> 这一组守的是**测试基础设施的正确性** —— 设施坏了,上面所有能力断言都会
+> 变成「假绿」。
+
+---
+
+## 3. CLI 子命令(10 个,不含 help)
+
+| 子命令 | 参数矩阵(bash) | 语义断言(Python) |
+|---|---|---|
+| `session ls` | cli_modules | C1, C2 |
+| `session show` | cli_modules | C3, C4, C5, C10 |
+| `session rm` | cli_modules | — |
+| `session fork` | cli_modules | — |
+| `session rename` | cli_modules | P6 |
+| `session export` | cli_modules | C6, C7 |
+| `session stats` | cli_modules | C8 |
+| `traces ls` | cli_modules | — |
+| `traces show` | cli_modules | — |
+| `traces spans` | cli_modules | C9 |
+
+顶层:`--help` / `-h` / `--version` / `--cwd` / `-C` / TUI 参数
+(`--prompt` / `-c` / `-r` / `--resume` / `--plan-mode` /
+`--ephemeral-tasks` / `--ephemeral-teams` / `--auto-root` / `--fullscreen`)
+→ cli_core。
+
+---
+
+## 4. 集成面
+
+本仓是表现层,引擎能力由 submodule 提供。**接线面**的可观测点:
+
+| 能力 | 接线位置 | 黑盒可观测点 |
+|---|---|---|
+| 内置工具(18 个) | `bootstrap.rs:119-142` | `✓ <tool> (<N>ms)` 行 |
+| Task / Team 工具 | `bootstrap.rs:168` | `/tasks` 面板的 Tasks 分区 |
+| Skills 工具 | `bootstrap_wiring.rs:313-320` | `/skills`(当前未接线) |
+| Session note 工具 | `bootstrap_wiring.rs:332-334` | 工具行 |
+| 子代理 `call_<role>` | `bootstrap_wiring.rs:487-511` | `/subagents` 面板 + `[子代理 <role>]` 通知 |
+| MCP 资源 / Prompts 工具 | `bootstrap.rs:392-407` | `/mcp` 面板 |
+| Plan 工具组 | `bootstrap.rs:130-140` | Plan 审批条 + `.reflect/plan/*.md` |
+| LSP 工具 | `bootstrap_wiring.rs:691-693` | `LSP server 'x' started` 通知 |
+| 插件能力 | `bootstrap.rs:409-426` | `Plugin 'x' loaded (…)` 通知 + `/plugin` 面板 |
+| Telemetry | `bootstrap_wiring.rs:75-129` | `~/.reflect/traces/` 产物 + `traces spans` |
+| 压缩 | `bootstrap.rs` + `reflect-compact` | `🗜 已压缩上下文:…` 通知 |
+| 权限模式 | `Op::CyclePermissionMode` | HUD `[plan]` / `[accept_edits]` 段 |
+
+---
+
+## 5. 已知产品限制(测试断言当前行为,防退化)
+
+- **大部分 slash 命令未接线**:枚举通道的 `dispatch_slash_command` 只实现了
+  少数命令,其余落到「尚未接入分发」兜底(36 条)。这是**当前构建的真实
+  状态**,不是测试缺陷。
+- **8 个弹层运行时不可达**(O11):渲染代码 + Rust 单测都在,但命令到不了。
+- **`/theme` `/keymap` `/statusline` 等的配置持久化是桩**
+  (`tui_core/legacy_core.rs:362-372` 的 `ConfigEditsBuilder`):`/theme` 的
+  apply 只回写内存态并提示「display only」。
+- **feature flag 恒全关**(`features.rs:22-31`):15 个 flag 的 `is_enabled`
+  恒 `false`,且**没有任何切换途径**(不读 config / env / CLI)。
+- **`login.rs` / `cloud_config.rs` / `models_manager.rs` / `connectors.rs` /
+  `core_plugins.rs` 都是桩**:鉴权只有 API key 一条路径。
+- **`tui_core/chatwidget/` 整体不可达**:live TUI 只用 `tui_core` 的呈现
+  原语;模型弹窗 / service tier / onboarding 都在未接线路径上。
+  `tui_core/app.rs:1-5` 自述是「桩」。
+- **鼠标完全未接入**:全 crate 无 `EnableMouseCapture`,`Event::Mouse`
+  被 `handle_event` 的兜底分支静默吞掉。
+- **行首空格不阻止已知命令被解析**:`validate_submission` 的
+  `input_starts_with_space` 只影响「未知命令」的拦截;legacy 通道的
+  `dispatch_slash` 入口做了 `trim()`,所以 `" /clear"` 仍会弹二次确认。
+- **`/prompt` 子命令**(`list` / `reload` / `rescan`)在当前构建未接线。
+
+---
+
+## 6. 已知缺陷
+
+| # | 缺陷 | 证据 | 状态 |
+|---|---|---|---|
+| D1 | **`session show` 对真实会话的消息预览恒为空**:`preview_message_body` 只认 `content` 为字符串 / `{text}` 对象,认不出 v1.2 起的 **ContentBlock 数组**形态 —— 而那正是引擎的实际落盘形态 | `crates/reflect-tui/src/cli/session.rs:607`(修复前) | **已修**(`crates/reflect-tui/src/cli/session.rs:607-641` + 4 条单测)。同款缺陷在 submodule `reflect-cli` 亦存在,未同步修复 |
+| D2 | **未知 slash 命令的拒绝提示被丢弃**:`chat_composer.rs:2801-2806` 发出的 `AppEvent::InsertHistoryCell("Unrecognized command '/x'")` 没有消费方(`ComposerInput::handle_app_events` 只处理 `StartFileSearch`),`src/tui/mod.rs` 也从不调 `take_app_events` | `tui_core/public_widgets/composer_input.rs:483-493` | 未修(记录)。用户只看到「输入还在框里、没发出去」 |
+| D3 | **`TurnAborted` 与 `TurnComplete` 折叠**:协议两者都映射 `UiEventKind::TurnCompleted`,屏幕无法区分「正常结束」与「被 Esc/Ctrl-C 中断」 | `tui/conversion.rs:53-54` | 未修(记录)。只能靠中断瞬间的 `⏹ 已发送中断请求…` notice 间接区分 |
+| D4 | **4 个协议事件被静默丢弃**:`McpToolInvoked` / `PermissionBubble` / `ConfigReloaded` / `CollabMessage` / `Routing` 在 `convert_event` 里返回 `None`,屏幕无任何痕迹 | `tui/conversion.rs:226-241` | 未修(记录) |
+| D5 | **picker 的 `Nop` 键位不吞键**:在 image/keymap/statusline/theme/skills_hub 里按 `j`/`k` 既移动选择又往 composer 输入框打字;keymap / skills_hub / statusline 的 `Enter` 也是 `Nop`(会提交草稿) | `tui/mod.rs:2594, 2721, 2737, 2772, 2788, 2804, 2848` | 未修(记录)。本套件一律用 `Esc` 关闭弹层以规避 |
+| D6 | **`REFLECT_TUI_UPDATE_CHECK` 无人读取**:旧 harness 设它以屏蔽启动期更新探测,但本 fork 的 `update_action.rs:29-33` 恒返回 `None` | `crates/reflect-tui/src/tui_core/update_action.rs:29-33` | 未修(记录)。无害,但属残留 |
+| D7 | **mock provider 一次提交触发多次模型调用**:实测 4 次,导致脚本行与最终落盘的 assistant 消息不是一一对应 | `reflect-agent/crates/abilities/reflect-llm/src/providers/mock.rs:163` | 引擎侧行为,记录 |
+| D8 | **`Ctrl+Shift+D` 快捷键在真实终端不可达**:终端无法区分 Ctrl+D 与 Ctrl+Shift+D(同为字节 `0x04`),crossterm 把 `0x04` 解析成 `Char('d') + CONTROL`(**不带 SHIFT**),而 `keymap.rs` 的 `OpenDiff` 分支要求 `CONTROL|SHIFT` —— 该分支永远命中不了,实际落到 `Ctrl+D → Exit` | `crates/reflect-tui/src/keymap.rs:88-94`(要求 SHIFT)vs `:60-65`(Ctrl+D 排除 SHIFT);实测见 `test_overlay.py::test_ctrl_shift_d_is_unreachable_from_a_terminal` | 未修(记录)。diff overlay 的实际入口只有 `/diff` |
+
+---
+
+## 7. 用例规模汇总
+
+| 文件 | 规模 |
+|---|---|
+| `functional/test_slash.py` | 92 条(85 行命令矩阵覆盖 84 条命令 + 7 条独立用例) |
+| `functional/test_overlay.py` | 19 条(10 条可达弹层 + 9 条不可达弹层反向门禁) |
+| `functional/test_turn.py` | 11 条 |
+| `functional/test_cli.py` | 10 条 |
+| `functional/test_boot.py` | 10 条 |
+| `functional/test_pty_helpers.py` | 8 条 |
+| `functional/test_session.py` | 7 条 |
+| `functional/test_plugin.py` | 4 条 |
+| `functional/test_coverage_audit.py` | 4 条 |
+| **能力覆盖层合计** | **165 条** |
+| `rust/cli_core.sh` | 40+ 断言 |
+| `rust/cli_modules.sh` | 55 断言 |
+| 另有 `cargo test --workspace` / clippy / fmt / doc | 既有基线 |
+
+---
+
+## 8. 未覆盖项(诚实清单)
+
+- **真实 LLM provider 的流式 / 重试 / 限流路径**:mock provider 覆盖协议
+  语义,真实 provider 行为(429 退避、连接中断重试)需要网络。
+- **一次性提交触发多次模型调用的原因**:实测引擎在一次用户提交里调用
+  模型 4 次(落盘 4 条 `token_count`),但未定位到是哪几条辅助调用
+  (title 生成 / compact 判定 / auto-review?),故未对调用次数做断言。
+- **审批链路(`⚠ APPROVAL NEEDED`)**:需要 `REFLECT_APPROVALS=1` +
+  会触发审批的工具;本仓 TUI 已固定 `.with_approvals(true)`,但离线
+  mock 脚本难以稳定触发审批请求,未覆盖。
+- **`AskUserQuestion` / `AskUserInput` 面板**:同上,离线难稳定触发。
+- **并行远程工具调用**:TUI 不注册远程工具(仅 serve 模式有)。
+- **窗口 resize 的完整布局断言**:只验「不崩、不 panic」,未断言重排后的
+  具体版面。
+- **终端能力分支**(kitty 图形协议 / sixel 图片 / OSC 9 通知):依赖真实
+  终端,哑 pty 无法验证。
+- **subagent 真实派发**:需引擎侧的 `call_<role>` 工具被模型选中,离线
+  mock 只能脚本化单个 `tool_call`,派发链路未覆盖。
+- **vendored 上游测试(约 760 条)**:受 feature `tui-upstream-tests` 门控,
+  且测的是**运行时不可达**的 `tui_core/bottom_pane` / `chatwidget` 一族,
+  不宜当作「已覆盖」。

@@ -133,6 +133,9 @@ Data comes from `~/.reflect/traces/model-io-sess_<session_id>.jsonl` (written by
 make build          # release build (with LTO)
 make test           # cargo test --workspace
 make test-fast      # cargo nextest (requires cargo-nextest)
+make test-suite     # full functional suite (capability coverage + Rust compile surface + coverage audit)
+make test-suite-fast # capability coverage only (skips the cargo compile surface)
+make coverage-audit # coverage audit: diff declared slash commands against tested ones (fails on gaps)
 make check-fast C=reflect-tui   # fast type-check for a single crate
 make dist           # build + package current-platform artifacts (tar.gz/zip) into dist/
 make install        # install to /usr/local/bin (or ~/.local/bin, see scripts/install.sh)
@@ -140,7 +143,8 @@ make help           # list all targets
 ```
 
 - `./scripts/build.sh --fast` uses the `release-fast` profile (no LTO, faster incremental builds).
-- The `test/` directory holds all test scripts (layering documented in `test/README.md`): `python3 test/run_all.py` runs the full offline suite (unit / rust / cli / binary / mock E2E) in one shot, while `python3 test/test_workflow_live.py` is the local live end-to-end script (real LLM + real tools) for manually validating Plan mode / sub-agents / `/goal` / `/loop` end-to-end.
+- The `tests/` directory holds all test scripts (layering documented in `tests/README.md`, functional coverage matrix in `tests/COVERAGE.md`): `./tests/run_all.sh` runs the full offline suite in one shot (capability coverage layer + Rust compile surface + coverage audit), while `./tests/run_all.sh live` is the local live end-to-end suite (real LLM + real tools) for manually validating Plan mode / sub-agents / `/goal` / `/loop` end-to-end.
+- The capability coverage layer drives the **real binary over a pty** and asserts what the user actually sees and what actually lands on disk; `tests/tools/coverage_audit.py` mechanically diffs "declared slash commands" against "commands under test" — add a command without a test case and CI goes red.
 - The release CI (`.github/workflows/release.yml`) only triggers on a `v*` tag and builds distribution packages in parallel on macOS / Linux / Windows. Submodules must be checked out recursively.
 
 ## Upgrading the Core

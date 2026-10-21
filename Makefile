@@ -1,6 +1,6 @@
 # ── Reflect-TUI Makefile ──────────────────────────────────────────
 # 终端 TUI 独立仓库 —— Reflect-Agent 核心 crate 通过 submodule 复用。
-.PHONY: build run test test-fast check check-fast watch clean gc dist dist-dry install release help
+.PHONY: build run test test-fast test-suite test-suite-fast test-suite-live coverage-audit release-check check check-fast watch clean gc dist dist-dry install release help
 
 BINARY_NAME := reflect-tui
 
@@ -36,6 +36,27 @@ test:
 test-fast:
 	cargo nextest run --workspace
 
+## test-suite: 跑全功能测试套件(能力覆盖层 + Rust 侧 + 覆盖自审)
+test-suite:
+	./tests/run_all.sh
+
+## test-suite-fast: 只跑能力覆盖层(跳过 cargo test/clippy/fmt/doc)
+test-suite-fast:
+	./tests/run_all.sh functional
+
+## test-suite-live: live 端到端(需真实 LLM + API key)
+test-suite-live:
+	./tests/run_all.sh live
+
+## coverage-audit: 覆盖自审(slash 命令 × 测试矩阵的差集核对;有缺口即失败)
+coverage-audit:
+	python3 tests/tools/coverage_audit.py --strict
+
+## release-check: 发布前全量审查(编译面 + 能力覆盖层 + 覆盖自审)
+release-check:
+	./tests/run_all.sh
+	python3 tests/tools/coverage_audit.py --strict
+
 ## check: Compile check 全 workspace(类型检查,不链接)
 check:
 	cargo check --workspace
@@ -69,6 +90,11 @@ help:
 	@echo "  release       - 完整 release 构建(LTO,小体积)"
 	@echo "  test          - cargo test (全量兼容)"
 	@echo "  test-fast     - nextest 加速跑全部测试"
+	@echo "  test-suite    - 全功能测试套件(能力覆盖层 + Rust 侧 + 覆盖自审)"
+	@echo "  test-suite-fast - 只跑能力覆盖层(跳过 cargo 编译面)"
+	@echo "  test-suite-live - live 端到端(需真实 LLM + API key)"
+	@echo "  coverage-audit - 覆盖自审(slash 命令 × 测试矩阵的差集核对)"
+	@echo "  release-check  - 发布前全量审查(编译面 + 能力覆盖层 + 覆盖自审)"
 	@echo "  check         - cargo check 全 workspace"
 	@echo "  check-fast    - cargo check 单 crate:make check-fast C=<crate>"
 	@echo "  watch         - 文件变更自动 check"

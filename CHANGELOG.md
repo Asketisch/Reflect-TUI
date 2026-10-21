@@ -5,6 +5,51 @@
 
 ## [Unreleased]
 
+### 全功能测试套件(`tests/`)
+
+对标 submodule `reflect-agent/tests/` 的严格测试标准,新建统一测试入口
+`tests/`,用于**发布阶段审查与测试全部功能**。全程离线
+(`REFLECT_MODEL=mock/mock-1`,零网络、零 API key)+ 隔离 HOME。
+
+- **能力覆盖层**(`tests/functional/`):真二进制 + pty(pyte 屏幕快照)驱动的
+  行为级断言 —— 断言「用户真的看到了什么、真的落了什么盘」,不是「退出码 0」。
+  - `test_boot.py`:启动、banner / HUD / composer 占位符锚点、终端标题、
+    Ctrl+C / Ctrl+D 退出、resize、缺 provider 的快速失败。
+  - `test_slash.py`:**84 条 slash 命令的全量数据驱动矩阵**,逐条锁定运行时
+    结局(真行为 / 「尚未接入分发」占位 / 未被识别而静默吞掉 / 打开弹层 /
+    退出 TUI)。
+  - `test_overlay.py`:可达弹层(transcript / diff / tasks / plugin)与
+    **9 条未接线弹层的反向门禁**(防「静默接线」漂移)。
+  - `test_turn.py`:对话轮次、流式落屏、工具调用行、HUD 统计、回合分隔线、
+    Esc 中断。
+  - `test_session.py`:会话落盘、prompt 历史、`-c` / `--resume` 恢复、
+    会话名文件、Plan mode 写盘。
+  - `test_cli.py`:headless CLI 的**语义**断言(列结构、预览条数、统计口径、
+    原子导出)。
+  - `test_plugin.py`:插件启动通知、slash 命令注入、`/plugin` overlay。
+  - `test_pty_helpers.py`:测试设施自身的单元测试(隔离是否真隔离、按键映射
+    是否覆盖、mock 脚本是否合法)。
+- **覆盖自审**(`tests/tools/coverage_audit.py`):从 Rust 源码解析
+  `SlashCommand` 枚举 + legacy 通道白名单 + 实现臂,与测试矩阵做**机械差集**
+  —— 新增 slash 命令却忘了加用例,CI 直接红。另有
+  `tests/tools/probe_slash_commands.py` 探针,随时重跑刷新运行时真值表。
+- **CLI 参数面**(`tests/rust/cli_core.sh`、`cli_modules.sh`):顶层与
+  `session` / `traces` 子命令的参数矩阵与输出契约(100+ 断言)。
+- **Rust 编译面**(`tests/rust/workspace_tests.sh`):`cargo test` / `clippy
+  -D warnings` / `fmt` / `doc` 收拢到一处。
+- **CI 门禁**:新增 `functional-suite` job(ubuntu + macOS),与既有的
+  fmt / clippy / test 分工 —— 后者守编译面,前者守行为面。
+- **覆盖矩阵**(`tests/COVERAGE.md`):能力 × 覆盖层映射、已知产品限制、
+  已知缺陷清单、未覆盖项的诚实清单。
+
+### 缺陷修复
+
+- **`session show` 对真实会话的消息预览恒为空**:`preview_message_body`
+  只认 `content` 为字符串 / `{text}` 对象,认不出 v1.2 起的 **ContentBlock
+  数组**形态 —— 而那正是引擎的实际落盘形态,导致所有真实会话的预览都是
+  空行。改为按数组顺序拼接文本块,并补 4 条单测覆盖三种历史形态。
+  (同款缺陷在 submodule `reflect-cli` 亦存在,未同步修复。)
+
 ### submodule 接线（reflect-agent 3cb791f → 46dc156）
 
 - **提示词分层库进 TUI（v1.6）**：`build_m4` 对齐 headless `bootstrap_m4` ——

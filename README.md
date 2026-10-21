@@ -136,6 +136,9 @@ reflect-tui traces show <id-or-prefix>
 make build          # release 构建(LTO)
 make test           # cargo test --workspace
 make test-fast      # nextest 加速(需 cargo-nextest)
+make test-suite     # 全功能测试套件(能力覆盖层 + Rust 编译面 + 覆盖自审)
+make test-suite-fast # 只跑能力覆盖层(跳过 cargo 编译面)
+make coverage-audit # 覆盖自审:slash 命令 × 测试矩阵的差集核对(有缺口即失败)
 make check-fast C=reflect-tui   # 单 crate 快速类型检查
 make dist           # 构建 + 打包当前平台分发包(tar.gz/zip)到 dist/
 make install        # 安装到 /usr/local/bin(或 ~/.local/bin,见 scripts/install.sh)
@@ -143,7 +146,8 @@ make help           # 全部 target
 ```
 
 - `./scripts/build.sh --fast` 用 `release-fast` profile(无 LTO,增量编译快)。
-- `test/` 目录集中存放全部测试脚本(`test/README.md` 有分层说明):`python3 test/run_all.py` 一键跑离线全量(unit / rust / cli / binary / mock E2E),`python3 test/test_workflow_live.py` 是本地 live 端到端脚本(真实 LLM + 真实工具),手动回归 Plan mode / 子代理 / `/goal` / `/loop` 等完整链路。
+- `tests/` 目录集中存放全部测试脚本(分层说明见 `tests/README.md`,功能覆盖矩阵见 `tests/COVERAGE.md`):`./tests/run_all.sh` 一键跑离线全量(能力覆盖层 + Rust 编译面 + 覆盖自审),`./tests/run_all.sh live` 是本地 live 端到端脚本(真实 LLM + 真实工具),手动回归 Plan mode / 子代理 / `/goal` / `/loop` 等完整链路。
+- 能力覆盖层用 **真二进制 + pty** 驱动,断言「用户真的看到了什么、真的落了什么盘」;`tests/tools/coverage_audit.py` 会机械核对「声明的 slash 命令」与「已测的命令」——新增命令忘了加用例,CI 直接红。
 - CI(`.github/workflows/release.yml`)仅在 `v*` tag 时于 macOS/Linux/Windows 并行构建分发包,需递归 checkout submodule。
 
 ## 升级核心

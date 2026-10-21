@@ -29,14 +29,19 @@ make run                        # 构建并启动 TUI
 make check / make check-fast C=reflect-tui   # 类型检查(全 workspace / 单 crate)
 make test                       # cargo test --workspace
 make test-fast                  # cargo nextest(需已安装 cargo-nextest)
+make test-suite                 # ./tests/run_all.sh:全功能套件(能力覆盖层+编译面+覆盖自审)
+make test-suite-fast            # ./tests/run_all.sh functional:只跑能力覆盖层(跳过 cargo 编译面)
+make coverage-audit             # 覆盖自审:slash 命令 × 测试矩阵的差集核对(有缺口即失败)
 make dist                       # ./scripts/build.sh --dist:构建+打包当前平台分发包到 dist/
 make dist-dry                   # 预览 dist 打包命令
 make install                    # 装到 /usr/local/bin(或 --local → ~/.local/bin)
 make gc                         # 清 target/debug 中 cargo 不自动 GC 的中间产物
 
-# 本地测试(test/ 目录,分层说明见 test/README.md)
-python3 test/run_all.py            # 离线全量:unit / rust / cli / binary / mock E2E
-python3 test/test_workflow_live.py # live 端到端(真实 LLM + 真实工具,手动跑)
+# 全功能测试套件(tests/ 目录,分层见 tests/README.md,覆盖矩阵见 tests/COVERAGE.md)
+./tests/run_all.sh              # 离线全量:能力覆盖层 + Rust 编译面 + 覆盖自审
+./tests/run_all.sh functional   # 只跑能力覆盖层(真二进制 + pty 行为断言 + CLI 参数矩阵)
+./tests/run_all.sh audit        # 只跑覆盖自审
+./tests/run_all.sh live         # live 端到端(真实 LLM + 真实工具,需 API key,手动跑)
 ```
 
 ## 架构
@@ -78,6 +83,17 @@ reflect-task/subagent、reflect-protocol。
    (`cargo test -p reflect-tui --features tui-upstream-tests` 才跑)。
 7. Plan mode 写盘:PlanWrite 工具把 plan markdown 写到 `<workspace>/.reflect/plan/<name>.md`,
    ExitPlanMode 读取;`PlanWriteTool` 必须与 Enter/ExitPlanMode 一起注册(见 `bootstrap.rs`)。
+8. **slash 命令有两条分发通道**,行为不一致,改命令时两条都要看:
+   - `history_render::dispatch_slash`(legacy 通道)—— 命令名命中
+     `is_legacy_passthrough_slash` 白名单时走这条;
+   - `tui/mod.rs::dispatch_slash_command`(枚举通道)—— 其余可见的
+     `SlashCommand` 走这条,**只实现了部分命令**,其余落到
+     「此命令在当前构建中尚未接入分发」兜底。
+   全量矩阵见 [tests/COVERAGE.md](tests/COVERAGE.md) §S 组;
+   **新增 slash 命令必须同时补 `tests/functional/test_slash.py` 的 MATRIX**,
+   否则 `make coverage-audit` 会失败。
+9. **对话轮次落盘的 assistant 消息是最后一轮的回复**:引擎一次用户提交会
+   多次调用模型(mock provider 每次调用消费脚本一行),流式中间态不入盘。
 
 ## Submodule 维护
 

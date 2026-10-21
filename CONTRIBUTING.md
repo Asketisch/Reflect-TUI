@@ -19,13 +19,28 @@ cargo test -p reflect-tui      # TUI 侧测试
 
 ## 提交前检查
 
-CI（ubuntu + macOS）会跑以下三项，请本地先过：
+CI（ubuntu + macOS）会跑以下几项，请本地先过：
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+./tests/run_all.sh functional     # 能力覆盖层（真二进制 + pty 行为断言）
+python3 tests/tools/coverage_audit.py --strict   # 覆盖自审
 ```
+
+后两项是**功能面**的门禁，与前两项的**编译面**互补：
+
+- `./tests/run_all.sh functional` 起真实的 `reflect-tui` 进程，用 pty +
+  屏幕快照断言「用户真的看到了什么、真的落了什么盘」，并覆盖全部
+  84 条 slash 命令的运行时结局。详见 [tests/README.md](tests/README.md)。
+- `coverage_audit.py` 从 Rust 源码解析出声明的 slash 命令，与测试矩阵做
+  差集 —— **新增命令忘了加用例，这里直接失败**。改 slash 命令时，
+  `tests/functional/test_slash.py` 的 `MATRIX` 要同步补一行。
+
+> 前置：`cargo build --release -p reflect-tui`（入口脚本会自动补建）、
+> Python 3 + `pytest` + `pyte`（`pip install pytest pyte`）。
+> 缺依赖的批次自动 SKIP，不算失败。
 
 注意：不同 rustc 版本的 clippy lint 集有差异，若你的工具链比 CI 新，
 以 `cargo check` 无错误 + 不新增警告为底线。
@@ -41,6 +56,10 @@ cargo test --workspace
   为之（记录踩坑与设计取舍），但只写有信息量的。
 - **协议演进**：wire 协议（Submission / Op / EventMsg）的变更属于
   Reflect-Agent 仓库；本仓库只做消费端适配。
+- **slash 命令**：本项目有**两条分发通道**（legacy 文本通道与枚举通道），
+  行为不一致 —— 改命令时两条都要看，并把运行时结局登记进
+  `tests/functional/test_slash.py` 的 `MATRIX` 与
+  [tests/COVERAGE.md](tests/COVERAGE.md) §S 组。
 
 ## Submodule 工作流
 
@@ -85,6 +104,27 @@ git add reflect-agent && git commit            # 指针与代码适配一起提�
 - commit message 用简洁的 `type: 摘要`（feat / fix / docs / test / chore / refactor）。
 - PR 请描述动机、改动点和验证方式（跑了哪些测试 / 手工冒烟步骤）。
 - 涉及 submodule 指针变更的 PR 请单独说明。
+
+## 发布前审查
+
+发版前跑一次全量审查，覆盖**编译面 + 行为面 + 覆盖自审**：
+
+```bash
+make release-check
+```
+
+它依次执行：
+
+1. `./tests/run_all.sh` —— Rust 编译面（`cargo test` / `clippy -D warnings` /
+   `fmt` / `doc`）+ 能力覆盖层（真二进制 + pty 的 165 条行为断言 + CLI 参数矩阵）；
+2. `tests/tools/coverage_audit.py --strict` —— 确认「声明的 slash 命令」
+   全部有行为级用例。
+
+三者任一失败即**不应发版**。功能覆盖矩阵（含已知产品限制、已知缺陷、
+未覆盖项的诚实清单）见 [tests/COVERAGE.md](tests/COVERAGE.md)。
+
+> 发布用的是 `./scripts/build.sh --dist`，它只负责构建与打包，**不含**测试。
+> 审查与打包是两步：先 `make release-check`，再 `make dist`。
 
 ## 报告问题
 

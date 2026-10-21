@@ -111,3 +111,60 @@ jobs:
 
       - name: cargo test
         run: cargo test --workspace --locked --all-targets
+
+  # 功能覆盖门禁:真二进制 + pty 的行为级断言 + CLI 参数矩阵 + 覆盖自审。
+  #
+  # 与上面的 fmt / clippy / test 分工:那三项守**编译面**,本 job 守
+  # **行为面** —— 用户真的看到了什么、真的落了什么盘、每条 slash 命令
+  # 的运行时结局是什么。
+  #
+  # 跳过 cargo test / clippy / fmt / doc(已由上面的 job 覆盖),只跑
+  # 真正的功能覆盖,避免重复消耗 CI 时间。
+  functional-suite:
+    name: functional suite (${{ matrix.os }})
+    needs: fmt
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu
+            runner: ubuntu-latest
+          - os: macos
+            runner: macos-latest
+          # Windows:pty 行为断言尚未在 Windows 上验证(本仓库自身 windows
+          # 代码尚未修齐)。保留跑但不阻塞合流。
+          - os: windows
+            runner: windows-latest
+            experimental: true
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test dependencies
+        run: python3 -m pip install --upgrade pip pytest pyte
+
+      - name: Build release binary
+        run: cargo build --release -p reflect-tui --locked
+
+      - name: Run functional suite
+        run: ./tests/run_all.sh functional
+
+      - name: Coverage audit
+        run: python3 tests/tools/coverage_audit.py --strict

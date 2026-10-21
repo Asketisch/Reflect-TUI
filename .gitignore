@@ -31,6 +31,7 @@ lcov.info
 .zcode/
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # ── 临时文件 ──
 *.log
