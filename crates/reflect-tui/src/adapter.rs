@@ -174,6 +174,10 @@ pub enum UiEventKind {
         cached_tokens: u32,
         /// 最近一次调用成本(USD),若有。
         cost_usd: Option<f64>,
+        /// v1.x:本次调用实际命中的模型 spec(如 `"openai/gpt-4o"`)。
+        /// 多 provider 路由 / 故障转移时可能不同于配置模型 —— HUD 与
+        /// `/status` 据此展示「按模型用量」。
+        model: Option<String>,
     },
     /// 计划步骤进度(PlanStep 事件,供 /tasks overlay)。
     PlanStep {
@@ -588,9 +592,18 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             input_tokens,
             cached_tokens,
             cost_usd,
+            model,
         } => {
             state.context_usage.last_input_tokens = Some(input_tokens);
             state.context_usage.last_cached_tokens = Some(cached_tokens);
+            // v1.x:模型级统计 —— 记录实际命中的模型 spec,并按模型累计
+            // 调用次数与 input token(供 HUD 与 `/status` 展示用量分布)。
+            if let Some(spec) = model.as_deref() {
+                state.context_usage.last_model = Some(spec.to_string());
+                state
+                    .context_usage
+                    .record_model_call(Some(spec), input_tokens);
+            }
             // 累加 cost:把最近一次调用成本叠加到总成本。
             if let Some(cost) = cost_usd {
                 let total = state.context_usage.total_cost_usd.unwrap_or(0.0) + cost;

@@ -85,7 +85,23 @@ pub(crate) fn build_telemetry_sink(
         .clone()
         .unwrap_or_else(|| reflect_telemetry::resolve_traces_dir(None));
     let session_id = uuid::Uuid::new_v4().to_string();
-    let sink = reflect_telemetry::TelemetrySink::new(base_dir, session_id);
+    // v1.x:`redact` / `max_bytes` / `record_tool_schemas` 三个配置项此前在
+    // schema 里定义了但从未被读取 —— 现在经 `new_with_config` 真正生效
+    // (与 headless `reflect-exec` 的 `runtime_config::build_telemetry_sink`
+    // 同款逻辑,避免 TUI 与 headless 行为漂移)。
+    let write_cfg = reflect_telemetry::TelemetryWriteConfig {
+        redact: section.should_redact(),
+        max_bytes: section
+            .max_bytes
+            .map(|n| n as usize)
+            .unwrap_or(reflect_telemetry::model::MAX_FIELD_CHARS),
+    };
+    let sink = reflect_telemetry::TelemetrySink::new_with_config(
+        base_dir,
+        session_id,
+        write_cfg,
+        section.should_record_tool_schemas(),
+    );
 
     if let Some(lf) = cfg.hooks.langfuse_tracker.as_ref() {
         if lf.enabled.unwrap_or(false) {

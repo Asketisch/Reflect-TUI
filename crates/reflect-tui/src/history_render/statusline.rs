@@ -22,6 +22,19 @@ pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", 
 /// 工具统计最多展示的不同 tool 数(对齐老 TUI `MAX_TOOL_DISTINCT`)。
 const MAX_TOOL_DISTINCT: usize = 8;
 
+/// HUD 里命中的模型 spec 最长展示字符数(超出截断,避免挤掉上下文条)。
+const MAX_MODEL_SPEC_CHARS: usize = 24;
+
+/// 模型 spec 截断(超长追加 `…`)。按字符计(CJK 安全)。
+fn truncate_model_spec(s: &str) -> String {
+    if s.chars().count() <= MAX_MODEL_SPEC_CHARS {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(MAX_MODEL_SPEC_CHARS - 1).collect();
+    out.push('…');
+    out
+}
+
 /// 取第 `tick` 帧的 spinner 字形(循环)。
 pub fn spinner_frame(tick: u32) -> &'static str {
     SPINNER_FRAMES[(tick as usize) % SPINNER_FRAMES.len()]
@@ -41,6 +54,17 @@ pub fn hud_height(area_height: u16) -> u16 {
     }
 }
 
+/// 单个模型的实时用量累计(v1.x 模型级统计)。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelTokenUsage {
+    /// 完整 model spec(如 `"openai/gpt-4o"`)。
+    pub model: String,
+    /// 该模型的 LLM 调用次数。
+    pub calls: u32,
+    /// 该模型的累计 input token。
+    pub input_tokens: u32,
+}
+
 /// 上下文用量数据(由 `TokenCount` / `SessionConfigured` 事件填充)。
 #[derive(Debug, Clone, Default)]
 pub struct ContextUsage {
@@ -51,6 +75,11 @@ pub struct ContextUsage {
     pub last_cached_tokens: Option<u32>,
     /// 累计调用成本(USD)。`None` → 省略 cost 列。
     pub total_cost_usd: Option<f64>,
+    /// v1.x:最近一次调用实际命中的模型 spec。多 provider 路由 / 故障
+    /// 转移时可能不同于配置模型 —— HUD 用它标出真实命中的模型。
+    pub last_model: Option<String>,
+    /// v1.x:按模型累计的实时用量(按首次出现顺序)。
+    pub per_model: Vec<ModelTokenUsage>,
 }
 
 impl ContextUsage {
@@ -62,6 +91,25 @@ impl ContextUsage {
         let numerator = (input as u64).saturating_add(cached as u64);
         let pct = numerator * 100 / window as u64;
         Some(pct.min(100) as u8)
+    }
+
+    /// 累加某模型的一次调用用量(v1.x 模型级统计)。
+    ///
+    /// `model` 为 `None`(旧事件无该字段)→ 只更新总量,不进 per-model 表。
+    pub fn record_model_call(&mut self, model: Option<&str>, input_tokens: u32) {
+        let Some(spec) = model else {
+            return;
+        };
+        if let Some(slot) = self.per_model.iter_mut().find(|m| m.model == spec) {
+            slot.calls = slot.calls.saturating_add(1);
+            slot.input_tokens = slot.input_tokens.saturating_add(input_tokens);
+        } else {
+            self.per_model.push(ModelTokenUsage {
+                model: spec.to_string(),
+                calls: 1,
+                input_tokens,
+            });
+        }
     }
 }
 
@@ -99,6 +147,15 @@ pub fn render_identity_line(
         ));
     }
     spans.push(Span::styled(model.to_string(), brand));
+    // v1.x:实际命中的模型 spec(多 provider 路由 / 故障转移时可能不同于
+    // 配置模型)。与配置模型一致时不重复显示,避免噪音;不一致时用
+    // 警示色标出真实命中的模型。
+    if let Some(hit) = usage.last_model.as_deref()
+        && hit != model
+    {
+        spans.push(Span::styled(" → ", dim));
+        spans.push(Span::styled(truncate_model_spec(hit), palette.warn()));
+    }
     spans.push(Span::styled(" · ", dim));
 
     if let Some(branch) = git_branch {
@@ -495,6 +552,7 @@ mod tests {
             last_input_tokens: Some(6_000),
             last_cached_tokens: Some(0),
             total_cost_usd: None,
+            ..ContextUsage::default()
         };
         let line = render_identity_line(
             &crate::theme::Palette::DARK,
@@ -513,6 +571,79 @@ mod tests {
         assert!(s.contains("Context"), "context bar: {s}");
         assert!(s.contains("6%"), "6% usage: {s}");
         assert!(s.contains("█") || s.contains("░"), "bar glyphs: {s}");
+    }
+
+    #[test]
+    fn identity_line_shows_hit_model_when_different() {
+        // v1.x:多 provider 路由 / 故障转移 → 实际命中的模型与配置模型
+        // 不同时,HUD 标出真实命中的模型。
+        let usage = ContextUsage {
+            last_model: Some("openai/gpt-4o".into()),
+            ..ContextUsage::default()
+        };
+        let line = render_identity_line(
+            &crate::theme::Palette::DARK,
+            false,
+            0,
+            "anthropic/claude",
+            "p",
+            None,
+            false,
+            &usage,
+            false,
+            PermissionMode::Auto,
+            false,
+        );
+        let s: String = line.spans.iter().map(|s| s.content.clone()).collect();
+        assert!(s.contains("openai/gpt-4o"), "hit model: {s}");
+    }
+
+    #[test]
+    fn identity_line_omits_hit_model_when_same() {
+        // 命中的模型与配置模型一致 → 不重复显示(避免噪音)。
+        let usage = ContextUsage {
+            last_model: Some("anthropic/claude".into()),
+            ..ContextUsage::default()
+        };
+        let line = render_identity_line(
+            &crate::theme::Palette::DARK,
+            false,
+            0,
+            "anthropic/claude",
+            "p",
+            None,
+            false,
+            &usage,
+            false,
+            PermissionMode::Auto,
+            false,
+        );
+        let s: String = line.spans.iter().map(|s| s.content.clone()).collect();
+        assert!(!s.contains('→'), "同模型不应显示箭头: {s}");
+    }
+
+    #[test]
+    fn record_model_call_accumulates_per_model() {
+        // v1.x:按模型累计调用次数与 input token。
+        let mut usage = ContextUsage::default();
+        usage.record_model_call(Some("openai/gpt-4o"), 100);
+        usage.record_model_call(Some("openai/gpt-4o"), 200);
+        usage.record_model_call(Some("anthropic/claude"), 50);
+        assert_eq!(usage.per_model.len(), 2);
+        assert_eq!(usage.per_model[0].model, "openai/gpt-4o");
+        assert_eq!(usage.per_model[0].calls, 2);
+        assert_eq!(usage.per_model[0].input_tokens, 300);
+        assert_eq!(usage.per_model[1].model, "anthropic/claude");
+        assert_eq!(usage.per_model[1].calls, 1);
+        assert_eq!(usage.per_model[1].input_tokens, 50);
+    }
+
+    #[test]
+    fn record_model_call_ignores_missing_model() {
+        // 旧事件无 model 字段 → 不进 per-model 表。
+        let mut usage = ContextUsage::default();
+        usage.record_model_call(None, 100);
+        assert!(usage.per_model.is_empty());
     }
 
     #[test]
@@ -628,12 +759,14 @@ mod tests {
             last_input_tokens: Some(85),
             last_cached_tokens: Some(0),
             total_cost_usd: None,
+            ..ContextUsage::default()
         };
         let pct60 = ContextUsage {
             window_size: Some(100),
             last_input_tokens: Some(60),
             last_cached_tokens: Some(0),
             total_cost_usd: None,
+            ..ContextUsage::default()
         };
         assert_eq!(pct85.percent(), Some(85));
         assert_eq!(pct60.percent(), Some(60));

@@ -3148,10 +3148,18 @@ fn handle_key(
                         .window_size
                         .map(|w| format!("{} tokens", w))
                         .unwrap_or_else(|| "N/A".to_string());
+                    // v1.x:实际命中的模型(多 provider 路由 / 故障转移时可能
+                    // 不同于配置模型)。
+                    let hit_model = state
+                        .context_usage
+                        .last_model
+                        .clone()
+                        .unwrap_or_else(|| "N/A".to_string());
 
                     let status = format!(
-                        "/status:\n  model: {}\n  cwd: {}\n  git: {}\n  mode: {}\n  vim: {}\n  cost: {}\n  tokens: {}\n  context window: {}\n  busy: {}",
+                        "/status:\n  model: {}\n  hit model: {}\n  cwd: {}\n  git: {}\n  mode: {}\n  vim: {}\n  cost: {}\n  tokens: {}\n  context window: {}\n  busy: {}",
                         model,
+                        hit_model,
                         cwd,
                         branch,
                         state.permission_mode.as_str(),
@@ -3162,6 +3170,17 @@ fn handle_key(
                         state.busy
                     );
                     state.history.push(adapter::UiHistoryItem::Notice(status));
+                    // v1.x:按模型的用量明细(有 per-model 数据时追加)。
+                    if !state.context_usage.per_model.is_empty() {
+                        let mut detail = String::from("per-model usage:");
+                        for m in &state.context_usage.per_model {
+                            detail.push_str(&format!(
+                                "\n  {} · {} call(s) · {} input token(s)",
+                                m.model, m.calls, m.input_tokens
+                            ));
+                        }
+                        state.history.push(adapter::UiHistoryItem::Notice(detail));
+                    }
                     return Ok(false);
                 }
                 // ── v1.x Tier 4: 新增 slash 命令派发 ───────────────────
@@ -4885,6 +4904,8 @@ mod draw_tests {
             cost_usd: None,
             provider: None,
             credential_label: None,
+            // v1.x:模型级 token 统计字段(本次调用命中的模型 spec)。
+            model: None,
         };
         let ev = reflect_protocol::Event::new("id-tc", EventMsg::TokenCount(tc));
         let ui = conversion::convert_event(ev).unwrap();
@@ -4895,6 +4916,58 @@ mod draw_tests {
     }
 
     #[test]
+    fn token_count_records_model_level_usage() {
+        // v1.x:TokenCount 带 model 字段 → 状态里记录实际命中的模型,
+        // 并按模型累计调用次数与 input token。
+        let tc = reflect_protocol::TokenCountEvent {
+            input_tokens: 1000,
+            output_tokens: 100,
+            cached_tokens: 0,
+            cache_write_tokens: 0,
+            total_tokens: 1100,
+            cost_usd: None,
+            provider: Some("openai".into()),
+            credential_label: None,
+            model: Some("openai/gpt-4o".into()),
+        };
+        let ev = reflect_protocol::Event::new("id-tc-model", EventMsg::TokenCount(tc));
+        let ui = conversion::convert_event(ev).unwrap();
+        let mut state = UiState::default();
+        let _ = adapter::apply_event(&mut state, ui);
+        assert_eq!(
+            state.context_usage.last_model.as_deref(),
+            Some("openai/gpt-4o")
+        );
+        assert_eq!(state.context_usage.per_model.len(), 1);
+        assert_eq!(state.context_usage.per_model[0].model, "openai/gpt-4o");
+        assert_eq!(state.context_usage.per_model[0].calls, 1);
+        assert_eq!(state.context_usage.per_model[0].input_tokens, 1000);
+    }
+
+    #[test]
+    fn token_count_without_model_leaves_per_model_empty() {
+        // 旧事件无 model 字段 → 不进 per-model 表(但总量照常更新)。
+        let tc = reflect_protocol::TokenCountEvent {
+            input_tokens: 200,
+            output_tokens: 20,
+            cached_tokens: 0,
+            cache_write_tokens: 0,
+            total_tokens: 220,
+            cost_usd: None,
+            provider: None,
+            credential_label: None,
+            model: None,
+        };
+        let ev = reflect_protocol::Event::new("id-tc-nomodel", EventMsg::TokenCount(tc));
+        let ui = conversion::convert_event(ev).unwrap();
+        let mut state = UiState::default();
+        let _ = adapter::apply_event(&mut state, ui);
+        assert_eq!(state.context_usage.last_input_tokens, Some(200));
+        assert!(state.context_usage.last_model.is_none());
+        assert!(state.context_usage.per_model.is_empty());
+    }
+
+    #[test]
     fn context_bar_renders_with_window_and_usage() {
         // 端到端:window + usage 都齐 → identity 行应包含 Context 进度条。
         let usage = history_render::statusline::ContextUsage {
@@ -4902,6 +4975,7 @@ mod draw_tests {
             last_input_tokens: Some(45_000),
             last_cached_tokens: Some(0),
             total_cost_usd: None,
+            ..history_render::statusline::ContextUsage::default()
         };
         let line = history_render::statusline::render_identity_line(
             &crate::theme::Palette::DARK,

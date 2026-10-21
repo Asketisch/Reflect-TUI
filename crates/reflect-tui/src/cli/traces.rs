@@ -7,7 +7,10 @@
 //! 参照:`reflect-agent/crates/runtime/reflect-cli/src/traces.rs`。
 
 use reflect_rollout::index::list_sessions;
-use reflect_telemetry::{list_model_io_files, read_model_io_file, resolve_traces_dir};
+use reflect_telemetry::{
+    list_model_io_files, list_span_log_files, read_model_io_file, read_span_log_file,
+    resolve_traces_dir,
+};
 
 /// `reflect-tui traces ls [-n <limit>]` —— 列出本地 LLM 调用 session(按最近
 /// 修改 desc,limit 默认 20)。
@@ -110,6 +113,64 @@ pub fn show(id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `reflect-tui traces spans [id] [--days N]` —— 展示 span 日志
+/// (`~/.reflect/traces/span-log/reflect-YYYY-MM-DD.jsonl`)。
+///
+/// - 不带 `id` → 展示最近 `--days` 天(默认 7)的全部 span 事件;
+/// - 带 `id`(完整 UUID 或前缀)→ 只看该 session 的事件。
+///
+/// v1.x:submodule 补齐了失败调用的 span(`model.request.failed`)——
+/// 此前 4 个失败路径全部直接返回,失败调用在 telemetry 里完全不可见。
+/// 本命令是其读取侧。
+pub fn spans(id: Option<&str>, days: usize) -> anyhow::Result<()> {
+    let base = resolve_traces_dir(None);
+    render_spans(&base, id, days);
+    Ok(())
+}
+
+/// span 日志渲染核心(与 `resolve_traces_dir` 解耦,便于测试)。
+fn render_spans(base: &std::path::Path, id: Option<&str>, days: usize) {
+    let files = list_span_log_files(base, days);
+    if files.is_empty() {
+        println!("(no span logs found under {})", base.display());
+        return;
+    }
+
+    let mut shown = 0usize;
+    for (_day, path) in &files {
+        for e in read_span_log_file(path) {
+            // 带 id 时按 session 前缀过滤(完整 UUID 或前缀均可)。
+            if let Some(want) = id
+                && !e
+                    .session_id
+                    .as_deref()
+                    .is_some_and(|sid| sid.starts_with(want))
+            {
+                continue;
+            }
+            shown += 1;
+            println!(
+                "{}  [{:?}] {}  status={}  dur={}ms  turn={}  {}",
+                e.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                e.level,
+                e.event,
+                e.status
+                    .map(|s| format!("{s:?}"))
+                    .unwrap_or_else(|| "-".into()),
+                e.duration_ms.unwrap_or(0),
+                e.turn_id.as_deref().unwrap_or("-"),
+                e.context.as_ref().map(preview_value).unwrap_or_default(),
+            );
+        }
+    }
+    if shown == 0 {
+        match id {
+            Some(want) => println!("(no span events for session '{want}')"),
+            None => println!("(no span events recorded)"),
+        }
+    }
+}
+
 /// 把 `id`(完整 UUID 或前缀)解析为 model-io 文件路径。前缀匹配扫描
 /// `list_model_io_files`,要求唯一命中。
 fn resolve_model_io_path(base: &std::path::Path, id: &str) -> anyhow::Result<std::path::PathBuf> {
@@ -207,5 +268,61 @@ mod tests {
 
         let resolved = resolve_model_io_path(base, "11111111").unwrap();
         assert_eq!(resolved, path);
+    }
+
+    #[test]
+    fn span_logs_are_listed_and_read() {
+        // v1.x:span 日志读取侧(`list_span_log_files` / `read_span_log_file`)。
+        let tmp = tempdir().unwrap();
+        let base = tmp.path();
+        let log_dir = base.join(reflect_telemetry::model::SPAN_LOG_SUBDIR);
+        fs::create_dir_all(&log_dir).unwrap();
+        let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let path = log_dir.join(format!("reflect-{day}.jsonl"));
+        // `Level` / `SpanStatus` 的 serde 形态为小写。
+        let ev = r#"{"timestamp":"2026-07-31T00:00:00Z","level":"error","event":"model.request.failed","module":"reflect_core::graph::nodes::model_call","trace_id":"t1","span_id":"s1","session_id":"sess-1","turn_id":"turn-1","status":"failed","duration_ms":1200,"context":{"error":"ALL_CREDENTIALS_EXHAUSTED"}}"#;
+        fs::write(&path, format!("{ev}\n")).unwrap();
+
+        let files = list_span_log_files(base, 7);
+        assert_eq!(files.len(), 1);
+        let events = read_span_log_file(&files[0].1);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "model.request.failed");
+        assert_eq!(events[0].session_id.as_deref(), Some("sess-1"));
+        assert_eq!(
+            events[0].status,
+            Some(reflect_telemetry::SpanStatus::Failed),
+            "失败调用的 span 应带 failed 状态"
+        );
+    }
+
+    #[test]
+    fn render_spans_filters_by_session_prefix() {
+        // 带 id 时按 session 前缀过滤;命中不到的显示占位提示。
+        let tmp = tempdir().unwrap();
+        let base = tmp.path();
+        let log_dir = base.join(reflect_telemetry::model::SPAN_LOG_SUBDIR);
+        fs::create_dir_all(&log_dir).unwrap();
+        let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let path = log_dir.join(format!("reflect-{day}.jsonl"));
+        let mk = |sid: &str, event: &str| {
+            format!(
+                r#"{{"timestamp":"2026-07-31T00:00:00Z","level":"info","event":"{event}","module":"m","trace_id":"t1","span_id":"s1","session_id":"{sid}"}}"#
+            )
+        };
+        fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                mk("sess-a", "turn.started"),
+                mk("sess-b", "turn.ended")
+            ),
+        )
+        .unwrap();
+
+        // 前缀命中 sess-a。
+        render_spans(base, Some("sess-a"), 7);
+        // 无命中(前缀不存在)→ 走空结果分支,不 panic。
+        render_spans(base, Some("sess-zzz"), 7);
     }
 }

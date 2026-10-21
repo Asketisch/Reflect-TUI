@@ -8,12 +8,20 @@
 //! `reflect exec --resume` 语义一致,但二进制名不同)。
 
 use anyhow::{Context, anyhow};
-use reflect_protocol::{RolloutRecord, SessionInfo, ThreadId};
+use reflect_protocol::{ModelUsage, RolloutRecord, SessionInfo, SessionStats, ThreadId};
 use reflect_rollout::index::list_sessions;
 use reflect_rollout::path::{default_base, session_path_at};
 // v1.x:接入此前孤儿的 rename/read_name/to_markdown + fork_with_history。
 use reflect_rollout::index::{fork_with_history, read_session_name, rename_session};
-use reflect_rollout::to_markdown;
+// v1.x:会话文件定位走 `reflect-rollout` 的共享 API —— 文件名是 thread id,
+// 与首行 `SessionMeta.session_id`(内部 id)可能不同(生产中一致,历史文件
+// / 外部 recorder 可能分歧),共享 API 同时按两种 id 匹配。
+use reflect_rollout::index::{
+    find_file_by_session_id, find_files_by_name_prefix, first_line_session_id,
+};
+// v1.x:统一统计聚合(与 reflect-cli 同款)—— 不在 TUI 侧复刻 token 聚合
+// 逻辑,改为直接消费 `reflect-rollout` 的读取侧 API。
+use reflect_rollout::{all_model_usage, session_stats, to_markdown};
 use uuid::Uuid;
 
 /// `reflect-tui session ls [-n <limit>] [--model <substr>]` —— 列出本地 session。
@@ -67,7 +75,11 @@ pub fn ls(limit: usize, model_filter: Option<&str>) -> anyhow::Result<()> {
 }
 
 /// `reflect-tui session show <id>` —— 显示元数据 + 前 5 条消息预览 +
-/// 整 session 累计 token / cost。`id` 可以是完整 UUID 或前缀。
+/// 整 session 累计 token / cost + per-model 用量表。`id` 可以是完整
+/// UUID 或前缀。
+///
+/// v1.x:统计统一走 `reflect_rollout::session_stats`(全量扫描活跃 +
+/// 轮转文件),不再在 TUI 侧复刻聚合逻辑。
 pub fn show(id: &str) -> anyhow::Result<()> {
     let base = default_base();
     let (tid, path) = resolve_session_path(&base, id)?;
@@ -78,7 +90,9 @@ pub fn show(id: &str) -> anyhow::Result<()> {
     println!("Path:    {}", path.display());
 
     let content = std::fs::read_to_string(&path).context("read session jsonl")?;
-    let (input_tokens, output_tokens, total_tokens, cost_usd) = aggregate_token_counts(&content);
+    // v1.x:统一统计(活跃 + 轮转文件全扫)。旧 session 无 TokenCount →
+    // 全 0 / None,不破坏展示。
+    let stats = session_stats(&base, tid);
 
     let mut msg_count = 0usize;
     let mut meta_printed = false;
@@ -91,14 +105,8 @@ pub fn show(id: &str) -> anyhow::Result<()> {
                 let started = v.get("started_at").and_then(|s| s.as_str()).unwrap_or("?");
                 println!("Model:   {model}");
                 println!("Started: {started}");
-                println!(
-                    "Tokens:  {} (in {} / out {})",
-                    format_with_thousands(&total_tokens.to_string()),
-                    format_with_thousands(&input_tokens.to_string()),
-                    format_with_thousands(&output_tokens.to_string()),
-                );
-                if let Some(c) = cost_usd {
-                    println!("Cost:    ${:.2}", c);
+                if let Some(s) = &stats {
+                    print_stats_summary(s);
                 }
                 meta_printed = true;
             }
@@ -119,24 +127,213 @@ pub fn show(id: &str) -> anyhow::Result<()> {
                     .collect::<String>();
                 println!("[{msg_count:>2}] compaction: {summary}…");
             }
+            // v1.x:记忆访问审计(读 = 检索注入;写 = compact 固化)。
+            "memory_access" if msg_count < 5 => {
+                msg_count += 1;
+                let op = v.get("op").and_then(|o| o.as_str()).unwrap_or("?");
+                let scope = v.get("scope").and_then(|s| s.as_str()).unwrap_or("?");
+                let chars = v.get("chars").and_then(|c| c.as_u64()).unwrap_or(0);
+                println!("[{msg_count:>2}] memory {op} [{scope}]: {chars} char(s)");
+            }
             _ => {}
         }
     }
     if !meta_printed {
-        println!(
-            "Tokens:  {} (in {} / out {})",
-            format_with_thousands(&total_tokens.to_string()),
-            format_with_thousands(&input_tokens.to_string()),
-            format_with_thousands(&output_tokens.to_string()),
-        );
-        if let Some(c) = cost_usd {
-            println!("Cost:    ${:.2}", c);
+        if let Some(s) = &stats {
+            print_stats_summary(s);
         }
+    }
+    // v1.x:per-model 用量表(每个模型的使用量)。
+    if let Some(s) = &stats
+        && !s.per_model.is_empty()
+    {
+        println!();
+        print_model_usage_table(&s.per_model);
     }
     if msg_count == 0 {
         println!("(no message records in this session)");
     }
     Ok(())
+}
+
+/// `reflect-tui session stats [--workspace W]` —— 跨会话按模型汇总 token
+/// 用量(v1.x 模型级统计的全局视图)。
+///
+/// - 不带 `--workspace`:统计 base 下全部会话(`all_model_usage`);
+/// - 带 `--workspace`:只统计 `SessionMeta.workspace` 匹配的会话
+///   (逐会话 `session_stats` 后按模型合并)。
+pub fn stats(workspace: Option<&str>) -> anyhow::Result<()> {
+    let base = default_base();
+    let usage: Vec<ModelUsage> = match workspace {
+        Some(ws) => {
+            let sessions = list_sessions(&base).context("list_sessions")?;
+            let scoped: Vec<_> = sessions
+                .into_iter()
+                .filter(|s| s.workspace.as_deref() == Some(ws))
+                .collect();
+            if scoped.is_empty() {
+                println!(
+                    "(no sessions found for workspace {ws} under {})",
+                    base.display()
+                );
+                return Ok(());
+            }
+            // 逐会话统计后按模型合并(合并已聚合的数据,不重复扫文件)。
+            let mut merged: Vec<ModelUsage> = Vec::new();
+            for s in &scoped {
+                if let Some(st) = session_stats(&base, s.session_id) {
+                    merge_model_usage(&mut merged, st.per_model);
+                }
+            }
+            merged.sort_by(|a, b| {
+                b.total_tokens
+                    .cmp(&a.total_tokens)
+                    .then_with(|| a.model.cmp(&b.model))
+            });
+            println!(
+                "Model usage across {} session(s) in workspace {ws}:",
+                scoped.len()
+            );
+            merged
+        }
+        None => {
+            let all = all_model_usage(&base);
+            if all.is_empty() {
+                println!("(no token usage recorded under {})", base.display());
+                return Ok(());
+            }
+            let n = list_sessions(&base)?.len();
+            println!("Model usage across {n} session(s):");
+            all
+        }
+    };
+    print_model_usage_table(&usage);
+    // 总计行。
+    let total_calls: u64 = usage.iter().map(|m| m.calls).sum();
+    let total_in: u64 = usage.iter().map(|m| m.input_tokens).sum();
+    let total_out: u64 = usage.iter().map(|m| m.output_tokens).sum();
+    let total_cached: u64 = usage.iter().map(|m| m.cached_tokens).sum();
+    let total_tokens: u64 = usage.iter().map(|m| m.total_tokens).sum();
+    let total_cost: Option<f64> = {
+        let mut sum = 0.0;
+        let mut present = false;
+        for m in &usage {
+            if let Some(c) = m.cost_usd {
+                sum += c;
+                present = true;
+            }
+        }
+        present.then_some(sum)
+    };
+    println!(
+        "{:<40}  {:>6}  {:>12}  {:>12}  {:>12}  {:>14}  {:>10}",
+        "TOTAL",
+        total_calls,
+        format_with_thousands(&total_in.to_string()),
+        format_with_thousands(&total_out.to_string()),
+        format_with_thousands(&total_cached.to_string()),
+        format_with_thousands(&total_tokens.to_string()),
+        match total_cost {
+            Some(c) => format!("${:.2}", c),
+            None => String::from("--"),
+        },
+    );
+    Ok(())
+}
+
+/// 打印会话级统计摘要(Tokens / Cost / 工具调用 / 压缩 / 记忆 / 缓存命中)。
+fn print_stats_summary(s: &SessionStats) {
+    println!(
+        "Tokens:  {} (in {} / out {})",
+        format_with_thousands(&s.total_tokens.to_string()),
+        format_with_thousands(&s.input_tokens.to_string()),
+        format_with_thousands(&s.output_tokens.to_string()),
+    );
+    if let Some(c) = s.cost_usd {
+        println!("Cost:    ${:.2}", c);
+    }
+    if s.tool_calls > 0 || s.compactions > 0 {
+        println!(
+            "Tools:   {} call(s), {} compaction(s)",
+            s.tool_calls, s.compactions
+        );
+    }
+    // v1.x:压缩节省的 token(before 之和 - after 之和;旧记录无字段 → 0)。
+    let saved = s.compaction_tokens_saved();
+    if saved > 0 {
+        println!(
+            "Compact: saved {} token(s) ({} → {})",
+            format_with_thousands(&saved.to_string()),
+            format_with_thousands(&s.compaction_before_tokens.to_string()),
+            format_with_thousands(&s.compaction_after_tokens.to_string()),
+        );
+    }
+    // v1.x:记忆读写审计计数(无记录时不显示)。
+    if s.memory_reads > 0 || s.memory_writes > 0 {
+        println!(
+            "Memory:  {} read(s), {} write(s)",
+            s.memory_reads, s.memory_writes
+        );
+    }
+    if let Some(rate) = s.cache_hit_rate()
+        && rate > 0.0
+    {
+        println!(
+            "Cache:   {:.1}% hit ({} cached)",
+            rate * 100.0,
+            s.cached_tokens
+        );
+    }
+}
+
+/// 打印 per-model 用量表(列宽与 `stats` 的总计行对齐)。
+fn print_model_usage_table(usage: &[ModelUsage]) {
+    println!("Per-model usage:");
+    println!(
+        "  {:<38}  {:>6}  {:>12}  {:>12}  {:>12}  {:>14}  {:>10}",
+        "model", "calls", "input", "output", "cached", "total", "cost"
+    );
+    for m in usage {
+        let model = truncate(&m.model, 38);
+        let cost = match m.cost_usd {
+            Some(c) => format!("${:.2}", c),
+            None => String::from("--"),
+        };
+        println!(
+            "  {:<38}  {:>6}  {:>12}  {:>12}  {:>12}  {:>14}  {:>10}",
+            model,
+            m.calls,
+            format_with_thousands(&m.input_tokens.to_string()),
+            format_with_thousands(&m.output_tokens.to_string()),
+            format_with_thousands(&m.cached_tokens.to_string()),
+            format_with_thousands(&m.total_tokens.to_string()),
+            cost,
+        );
+    }
+}
+
+/// 把 `src` 的 per-model 用量合并进 `dst`(按 model 键累加)。
+/// `stats --workspace` 的逐会话合并用;同模型跨会话累加。
+fn merge_model_usage(dst: &mut Vec<ModelUsage>, src: Vec<ModelUsage>) {
+    for m in src {
+        match dst.iter_mut().find(|d| d.model == m.model) {
+            Some(d) => {
+                d.calls += m.calls;
+                d.input_tokens += m.input_tokens;
+                d.output_tokens += m.output_tokens;
+                d.cached_tokens += m.cached_tokens;
+                d.cache_write_tokens += m.cache_write_tokens;
+                d.total_tokens += m.total_tokens;
+                // cost 存在性:任一带价即带价,求和。
+                match (d.cost_usd, m.cost_usd) {
+                    (Some(a), Some(b)) => d.cost_usd = Some(a + b),
+                    (None, Some(b)) => d.cost_usd = Some(b),
+                    (a, None) => d.cost_usd = a,
+                }
+            }
+            None => dst.push(m),
+        }
+    }
 }
 
 /// `reflect-tui session rm <id> [--yes]` —— 删除一个 session 文件。
@@ -234,36 +431,100 @@ pub fn export(id: &str, out: Option<&std::path::Path>) -> anyhow::Result<()> {
 
 /// 解析 `id`(完整 UUID 或前缀)为 session 文件路径。
 ///
-/// 路径解析策略:
+/// 路径解析策略(与 `reflect-cli` 同款,统一走 `reflect-rollout` 共享 API):
 /// 1. 前缀匹配:从 `list_sessions` 拿精确 `started_at`,用 `session_path_at`
 ///    拼 `<base>/YYYY/MM/DD/<id>.jsonl`(日期 = session 创建日,非今天)。
 /// 2. 完整 UUID 且在 session 列表中:同上,用真实 `started_at`。
-/// 3. 完整 UUID 但不在列表中(跨天 / started_at 缺失):`find_session_file`
-///    全盘扫描兜底。
+/// 3. 拼出的路径不存在:按文件名找,再按首行内部 id 全盘找
+///    (`find_file_by_session_id`)。**文件名是 thread id,与内部
+///    `SessionMeta.session_id` 可能不同** —— 只按文件名找会漏。
+/// 4. 前缀在内部 id 里 0 命中:回退按文件名(thread id)前缀查找。
 pub(crate) fn resolve_session_path(
     base: &std::path::Path,
     id: &str,
 ) -> anyhow::Result<(ThreadId, std::path::PathBuf)> {
-    match resolve_session_id(base, id)? {
+    let resolved = match resolve_session_id(base, id) {
+        Ok(r) => r,
+        // 内部 session_id 前缀 0 命中:回退按文件名(thread id)前缀查找。
+        Err(e) if id.len() != 36 => {
+            let files = find_files_by_name_prefix(base, id)?;
+            let deduped = dedupe_prefix_files(&files);
+            match deduped.len() {
+                0 => return Err(e),
+                1 => return Ok(deduped.into_iter().next().expect("len == 1")),
+                n => {
+                    return Err(anyhow!(
+                        "prefix '{id}' matches {n} sessions; please give a longer prefix or full UUID"
+                    ));
+                }
+            }
+        }
+        Err(e) => return Err(e),
+    };
+    match resolved {
         Some(info) => {
             let path = session_path_at(base, info.session_id, info.started_at);
             if path.exists() {
                 Ok((info.session_id, path))
             } else {
-                let found = find_session_file(base, info.session_id)?
-                    .ok_or_else(|| anyhow!("session file not found: {}", path.display()))?;
-                Ok((info.session_id, found))
+                // 文件名是 thread id,与内部 session_id 可能不同:先按文件名
+                // 找,再按首行内部 id 全盘找。
+                let found = find_session_file(base, info.session_id)?.or_else(|| {
+                    find_file_by_session_id(base, &info.session_id)
+                        .ok()
+                        .flatten()
+                });
+                found
+                    .ok_or_else(|| anyhow!("session file not found: {}", path.display()))
+                    .map(|p| (info.session_id, p))
             }
         }
+        // 完整 UUID 但不在列表:文件名查找未命中时按首行内部 id 再找
+        // (完整 UUID 既可能是 thread id,也可能是内部 session_id)。
         None => {
             let tid = Uuid::parse_str(id)
                 .map(ThreadId)
                 .map_err(|e| anyhow!("invalid UUID '{id}': {e}"))?;
             let found = find_session_file(base, tid)?
+                .or_else(|| find_file_by_session_id(base, &tid).ok().flatten())
                 .ok_or_else(|| anyhow!("session file not found for id: {id}"))?;
             Ok((tid, found))
         }
     }
+}
+
+/// 按文件**内部** `session_id` 对前缀命中的文件去重,返回
+/// `(内部 session_id, 路径)` 列表。同一 session 的活跃文件与轮转 `.N`
+/// 副本只保留活跃文件(找不到活跃文件时保留任一副本)。
+///
+/// 首行无 `SessionMeta`(writer 崩溃等)时退化为文件名 stem;stem 也非
+/// UUID 的候选跳过,避免把无关 jsonl 误当作 session。
+fn dedupe_prefix_files(files: &[std::path::PathBuf]) -> Vec<(ThreadId, std::path::PathBuf)> {
+    let mut out: Vec<(ThreadId, std::path::PathBuf)> = Vec::new();
+    for f in files {
+        let sid = first_line_session_id(f).or_else(|| {
+            f.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".jsonl"))
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .map(ThreadId)
+        });
+        let Some(sid) = sid else {
+            continue;
+        };
+        let active = f
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_suffix(".jsonl"))
+            .map(|stem| !stem.contains('.'))
+            .unwrap_or(false);
+        match out.iter_mut().find(|(s, _)| *s == sid) {
+            Some((_, prev)) if active => *prev = f.clone(),
+            None => out.push((sid, f.clone())),
+            Some(_) => {}
+        }
+    }
+    out
 }
 
 /// 解析 `id`(完整 UUID 或前缀)为 `SessionInfo`。前缀则扫描 `list_sessions`,
@@ -384,43 +645,6 @@ fn format_with_thousands(s: &str) -> String {
     out.chars().rev().collect()
 }
 
-/// 扫描 JSONL body,聚合 `RolloutRecord::TokenCount` 的 token 与 cost。
-/// 返回 `(input, output, total, cost_usd)`。
-fn aggregate_token_counts(body: &str) -> (u64, u64, u64, Option<f64>) {
-    let mut input_tokens: u64 = 0;
-    let mut output_tokens: u64 = 0;
-    let mut total_tokens: u64 = 0;
-    let mut cost_sum: f64 = 0.0;
-    let mut cost_present = false;
-    for line in body.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let Ok(rec) = serde_json::from_str::<RolloutRecord>(trimmed) else {
-            continue;
-        };
-        if let RolloutRecord::TokenCount {
-            usage, cost_usd, ..
-        } = rec
-        {
-            input_tokens = input_tokens.saturating_add(usage.input_tokens as u64);
-            output_tokens = output_tokens.saturating_add(usage.output_tokens as u64);
-            total_tokens = total_tokens.saturating_add(usage.total_tokens as u64);
-            if let Some(c) = cost_usd {
-                cost_sum += c;
-                cost_present = true;
-            }
-        }
-    }
-    (
-        input_tokens,
-        output_tokens,
-        total_tokens,
-        cost_present.then_some(cost_sum),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,6 +684,9 @@ mod tests {
                 "total_tokens": 150,
             },
             "cost_usd": 0.01,
+            // v1.x:模型归属(实际命中的模型 spec)。
+            "model": "glm-5.2",
+            "provider": "builtin",
             "at": started.to_rfc3339(),
         });
         let body = format!(
@@ -506,6 +733,76 @@ mod tests {
         let prefix = &tid.to_string()[..8];
         let (resolved_tid, _) = resolve_session_path(base, prefix).unwrap();
         assert_eq!(resolved_tid, tid);
+    }
+
+    #[test]
+    fn resolve_session_path_finds_file_when_name_differs_from_internal_id() {
+        // 文件名是 thread id,首行 `SessionMeta.session_id` 是内部 id ——
+        // 两者可能不同(历史文件 / 外部 recorder)。按内部 id 查询也必须
+        // 能定位到实际文件。
+        let tmp = tempdir().unwrap();
+        let base = tmp.path();
+        let file_id = ThreadId::new();
+        let internal_id = ThreadId::new();
+        let started = chrono::Utc::now();
+        let path = session_path_at(base, file_id, started);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let meta = serde_json::json!({
+            "type": "session_meta",
+            "session_id": internal_id.to_string(),
+            "model": "glm-5.2",
+            "started_at": started.to_rfc3339(),
+        });
+        fs::write(
+            &path,
+            format!("{}\n", serde_json::to_string(&meta).unwrap()),
+        )
+        .unwrap();
+
+        // 完整内部 id → 定位到该文件。
+        let (resolved_tid, resolved_path) =
+            resolve_session_path(base, &internal_id.to_string()).unwrap();
+        assert_eq!(resolved_tid, internal_id);
+        assert_eq!(resolved_path, path);
+
+        // 文件名(thread id)前缀 → 同样能定位。
+        let prefix = &file_id.to_string()[..8];
+        let (_, resolved_path2) = resolve_session_path(base, prefix).unwrap();
+        assert_eq!(resolved_path2, path);
+    }
+
+    #[test]
+    fn dedupe_prefix_files_prefers_active_file() {
+        // 同一 session 的活跃文件与轮转 `.N` 副本只保留活跃文件。
+        let tmp = tempdir().unwrap();
+        let base = tmp.path();
+        let sid = ThreadId::new();
+        let started = chrono::Utc::now();
+        let active = session_path_at(base, sid, started);
+        fs::create_dir_all(active.parent().unwrap()).unwrap();
+        let meta = serde_json::json!({
+            "type": "session_meta",
+            "session_id": sid.to_string(),
+            "model": "glm-5.2",
+            "started_at": started.to_rfc3339(),
+        });
+        fs::write(
+            &active,
+            format!("{}\n", serde_json::to_string(&meta).unwrap()),
+        )
+        .unwrap();
+        // 轮转副本:文件名带 `.1` 后缀。
+        let rotated = active.with_file_name(format!("{}.1.jsonl", sid));
+        fs::write(
+            &rotated,
+            format!("{}\n", serde_json::to_string(&meta).unwrap()),
+        )
+        .unwrap();
+
+        let deduped = dedupe_prefix_files(&[rotated.clone(), active.clone()]);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].0, sid);
+        assert_eq!(deduped[0].1, active, "应优先保留活跃文件");
     }
 
     #[test]
@@ -593,17 +890,91 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_token_counts_sums() {
+    fn session_stats_sums_tokens_and_cost() {
+        // v1.x:统计统一走 `reflect_rollout::session_stats`(不再在 TUI 侧
+        // 复刻聚合逻辑)。
         let tmp = tempdir().unwrap();
         let base = tmp.path();
         let tid = ThreadId::new();
-        let path = write_session(base, tid, chrono::Utc::now());
-        let content = fs::read_to_string(&path).unwrap();
-        let (input, output, total, cost) = aggregate_token_counts(&content);
-        assert_eq!(input, 100);
-        assert_eq!(output, 50);
-        assert_eq!(total, 150);
-        assert_eq!(cost, Some(0.01));
+        write_session(base, tid, chrono::Utc::now());
+        let stats = session_stats(base, tid).expect("session_stats");
+        assert_eq!(stats.input_tokens, 100);
+        assert_eq!(stats.output_tokens, 50);
+        assert_eq!(stats.total_tokens, 150);
+        assert_eq!(stats.cost_usd, Some(0.01));
+    }
+
+    #[test]
+    fn session_stats_attributes_model() {
+        // v1.x:TokenCount 带 model 字段 → per-model 用量按该模型归集。
+        let tmp = tempdir().unwrap();
+        let base = tmp.path();
+        let tid = ThreadId::new();
+        write_session(base, tid, chrono::Utc::now());
+        let stats = session_stats(base, tid).expect("session_stats");
+        assert_eq!(stats.per_model.len(), 1);
+        let usage = &stats.per_model[0];
+        assert_eq!(usage.model, "glm-5.2");
+        assert_eq!(usage.calls, 1);
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.total_tokens, 150);
+        assert_eq!(usage.provider.as_deref(), Some("builtin"));
+    }
+
+    #[test]
+    fn all_model_usage_aggregates_across_sessions() {
+        // v1.x:跨会话按模型汇总(`all_model_usage`)。
+        let tmp = tempdir().unwrap();
+        let base = tmp.path();
+        let a = ThreadId::new();
+        let b = ThreadId::new();
+        write_session(base, a, chrono::Utc::now());
+        write_session(base, b, chrono::Utc::now());
+        let usage = all_model_usage(base);
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].model, "glm-5.2");
+        assert_eq!(usage[0].calls, 2);
+        assert_eq!(usage[0].total_tokens, 300);
+    }
+
+    #[test]
+    fn merge_model_usage_accumulates_same_model() {
+        // v1.x:同模型跨会话合并(调用次数 / token / cost 累加)。
+        let mut merged: Vec<ModelUsage> = Vec::new();
+        merge_model_usage(
+            &mut merged,
+            vec![ModelUsage {
+                model: "glm-5.2".into(),
+                provider: Some("builtin".into()),
+                calls: 1,
+                input_tokens: 100,
+                output_tokens: 50,
+                cached_tokens: 0,
+                cache_write_tokens: 0,
+                total_tokens: 150,
+                cost_usd: Some(0.01),
+            }],
+        );
+        merge_model_usage(
+            &mut merged,
+            vec![ModelUsage {
+                model: "glm-5.2".into(),
+                provider: Some("builtin".into()),
+                calls: 2,
+                input_tokens: 200,
+                output_tokens: 100,
+                cached_tokens: 0,
+                cache_write_tokens: 0,
+                total_tokens: 300,
+                cost_usd: Some(0.02),
+            }],
+        );
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].calls, 3);
+        assert_eq!(merged[0].total_tokens, 450);
+        // cost 求和(浮点用近似比较)。
+        let cost = merged[0].cost_usd.expect("cost");
+        assert!((cost - 0.03).abs() < 1e-9, "merged cost: {cost}");
     }
 
     #[test]

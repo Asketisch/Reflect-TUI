@@ -85,6 +85,12 @@ enum SessionAction {
         #[arg(long, short = 'o', value_name = "FILE")]
         out: Option<PathBuf>,
     },
+    /// 跨会话按模型汇总 token 用量(v1.x 模型级统计)。
+    Stats {
+        /// 只统计该 workspace 下的会话(缺省 → 全部会话)。
+        #[arg(long, value_name = "PATH")]
+        workspace: Option<String>,
+    },
 }
 
 /// `traces` 二级子命令。
@@ -97,6 +103,14 @@ enum TracesAction {
     },
     /// 显示某 session 的逐条 LLM 调用详情。
     Show { id: String },
+    /// 展示 span 日志(含失败调用 `model.request.failed`)。
+    Spans {
+        /// 只看某 session 的事件(完整 UUID 或前缀);缺省 → 全部。
+        id: Option<String>,
+        /// 回看最近 N 天(默认 7)。
+        #[arg(long, short = 'd', default_value_t = 7)]
+        days: usize,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -120,10 +134,16 @@ fn main() -> anyhow::Result<()> {
             SessionAction::Export { id, out } => {
                 reflect_tui::cli::session::export(&id, out.as_deref())
             }
+            SessionAction::Stats { workspace } => {
+                reflect_tui::cli::session::stats(workspace.as_deref())
+            }
         },
         Some(Command::Traces { action }) => match action {
             TracesAction::Ls { limit } => reflect_tui::cli::traces::ls(limit),
             TracesAction::Show { id } => reflect_tui::cli::traces::show(&id),
+            TracesAction::Spans { id, days } => {
+                reflect_tui::cli::traces::spans(id.as_deref(), days)
+            }
         },
     }
 }

@@ -53,7 +53,12 @@ def main() -> int:
     expect("--help shows usage", ["--help"], "usage", "session", "traces")
     expect("session --help", ["session", "--help"], "usage")
     expect("session ls runs", ["session", "ls", "--limit", "3"], "session")
+    # v1.x:模型级统计子命令(session stats / traces spans)。
+    expect("session --help lists stats", ["session", "--help"], "stats")
+    expect("session stats runs", ["session", "stats"])
     expect("traces --help", ["traces", "--help"], "usage")
+    expect("traces --help lists spans", ["traces", "--help"], "spans")
+    expect("traces spans runs", ["traces", "spans", "--days", "1"])
     ok = all(RES)
     print(f"\ncli help: {'PASS' if ok else 'FAIL'} ({sum(RES)}/{len(RES)})")
     return 0 if ok else 1

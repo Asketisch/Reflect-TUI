@@ -126,6 +126,8 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
             input_tokens: tc.input_tokens,
             cached_tokens: tc.cached_tokens,
             cost_usd: tc.cost_usd,
+            // v1.x:模型级统计 —— 透传实际命中的模型 spec。
+            model: tc.model,
         },
         SessionConfigured(sc) => UiEventKind::ContextWindowConfigured {
             window_size: sc.context_window_size,
