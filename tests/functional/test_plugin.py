@@ -107,7 +107,7 @@ def test_plugin_slash_command_is_listed(plugin_home, sandbox) -> None:
             if "for commands" in s.normalized():
                 break
             time.sleep(0.4)
-        # 分两段输入,避免整段写入走 paste-burst 而不弹命令窗。
+        # 分两段输入,避免整段写入走 paste-burst 而不弹命令窗(见 COVERAGE.md D12)。
         s.type_text("/")
         s._pump(settle=0.8, max_wait=1.2)
         s.type_text("demo")
@@ -127,7 +127,11 @@ def test_plugin_slash_command_passes_validation(plugin_home, sandbox) -> None:
             if "for commands" in s.normalized():
                 break
             time.sleep(0.4)
-        s.type_text("/demo:hello")
+        # 分两段输入:整段写入会走 paste-burst,偶发丢字符(见 COVERAGE.md D12)。
+        s.type_text("/")
+        s._pump(settle=0.8, max_wait=1.2)
+        s.type_text("demo:hello")
+        s._pump(settle=1.0, max_wait=1.5)
         s.key("enter")
         s._pump(settle=1.5, max_wait=3.0)
         txt = s.normalized()
@@ -148,7 +152,11 @@ def test_plugin_overlay_lists_installed_plugin(plugin_home, sandbox) -> None:
             if "for commands" in s.normalized():
                 break
             time.sleep(0.4)
-        s.type_text("/plugin")
+        # 分两段输入:整段写入会走 paste-burst,偶发丢字符(见 COVERAGE.md D12)。
+        s.type_text("/")
+        s._pump(settle=0.8, max_wait=1.2)
+        s.type_text("plugin")
+        s._pump(settle=1.0, max_wait=1.5)
         s.key("enter")
         deadline = time.monotonic() + 20
         txt = ""

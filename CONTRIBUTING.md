@@ -98,6 +98,7 @@ git add reflect-agent && git commit            # 指针与代码适配一起提�
 
 | submodule 指针 | 接线内容 |
 | --- | --- |
+| `d771c9e` | 动态 model 解析接线(`model = "free"` → 启动期经 `reflect_config::resolve_model_spec` 从 provider 清单挑出真实 id,不再拿占位串 `provider/free` 去打请求)+ routing policy 改用 `routing_policy_with(已解析 spec)`(同步版 `routing_policy()` 会让占位串盖掉真实 id)。`SpecSlot.fallbacks` 跨模型降级链由引擎侧接通,TUI 沿用 `EventMsg::Routing` 兜底分支不新增 UI |
 | `e4bc182` | 模型级 token 统计（`TokenCountEvent.model` → HUD / `/status` 按模型用量）、`reflect_rollout::session_stats` / `all_model_usage` 接入 `session show` / 新增 `session stats`、`[telemetry].redact` / `max_bytes` / `record_tool_schemas` 真正生效、span 日志读取侧（新增 `traces spans`）、会话文件定位改走共享 API（文件名 thread id 与内部 `session_id` 可能不同） |
 | `46dc156` | 提示词分层库接入 + `/prompt` 运行时管理 |
 | `3cb791f` | `fetch_update` 弃用告警收口 + CI 编译修复 |
@@ -124,7 +125,7 @@ make release-check
 它依次执行：
 
 1. `./tests/run_all.sh` —— Rust 编译面（`cargo test` / `clippy -D warnings` /
-   `fmt` / `doc`）+ 能力覆盖层（真二进制 + pty 的 165 条行为断言 + CLI 参数矩阵）；
+   `fmt` / `doc`）+ 能力覆盖层（真二进制 + pty 的 202 条行为断言 + CLI 参数矩阵）；
 2. `tests/tools/coverage_audit.py --strict` —— 确认「声明的 slash 命令」
    全部有行为级用例。
 

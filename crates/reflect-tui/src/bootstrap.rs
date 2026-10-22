@@ -99,13 +99,21 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
         )
     })?;
     // v1.3 model 解析诚实化:不再回落内置默认,缺配置时如实报错。
-    let model_name = reflect_cfg.resolve_model(provider).ok_or_else(|| {
-        anyhow::anyhow!(
-            "provider `{provider}` 未配置 model:请在 ~/.reflect/config.toml \
-             设置 [active].model 或 [{provider}].model,或设置 REFLECT_MODEL 环境变量"
-        )
-    })?;
-    let model = format!("{}/{}", provider, model_name);
+    //
+    // v1.7:`model = "free"` 这类「运行时才知道」的特殊值(从 provider 的
+    // 模型清单里挑一个免费模型)在此解析成**真实** id —— 与 headless
+    // (`reflect-exec::bootstrap_common`)同款。解析失败(清单端点不存在 /
+    // 拉取失败 / 没有免费模型)→ 启动即报错,不静默拿占位串 `"provider/free"`
+    // 去打请求。
+    let model = reflect_config::resolve_model_spec(&reflect_cfg, &registry)
+        .await
+        .map_err(|e| anyhow::anyhow!("model 解析失败: {e}"))?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "provider `{provider}` 未配置 model:请在 ~/.reflect/config.toml \
+                 设置 [active].model 或 [{provider}].model,或设置 REFLECT_MODEL 环境变量"
+            )
+        })?;
 
     // 1.5 `[sanitize]` 脱敏器 + `[hooks]` hook engine(含 builtin + 插件
     // hook),AgentThread 构造时注入 —— 此前 TUI 传 None,两段配置是死信。
@@ -327,7 +335,7 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
         let mut c = AgentConfig::new(model.clone(), workspace.clone())
             .with_approvals(true)
             .with_m4(m4)
-            .with_policy(Arc::new(reflect_cfg.routing_policy()))
+            .with_policy(Arc::new(reflect_cfg.routing_policy_with(&model)))
             .with_token_budget(token_budget)
             .with_max_iterations(max_iterations)
             .with_quota_tracker(quota_tracker)

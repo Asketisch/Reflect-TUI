@@ -17,7 +17,7 @@
 
 | 层 | 位置 | 测谁 | 依赖 SDK? | 规模 |
 |---|---|---|---|---|
-| **能力覆盖层**(主) | `tests/functional/` | **Rust 代码在真产物上的行为**(真二进制 + pty + pyte 屏幕快照) | ❌ | 199 条 |
+| **能力覆盖层**(主) | `tests/functional/` | **Rust 代码在真产物上的行为**(真二进制 + pty + pyte 屏幕快照) | ❌ | 202 条 |
 | **覆盖自审层** | `tests/tools/coverage_audit.py` | 「声明了什么」× 「测了什么」的**机械差集** | ❌ | 4 条门禁 |
 | CLI 参数面 | `tests/rust/cli_core.sh`、`cli_modules.sh` | 17 个子命令的**参数矩阵**与输出契约(bash,含退出码) | ❌ | 101 断言 |
 | CLI 语义面 | `tests/functional/test_cli.py` | CLI 输出的**语义**(列结构、预览条数、统计口径) | ❌ | 10 条 |
@@ -41,7 +41,7 @@
 
 | 能力域 | 能力覆盖层 | CLI 参数面 | 覆盖自审 |
 |---|---|---|---|
-| 启动 / 渲染锚点 / 退出生命周期 / 全屏模式 | B1–B12 | cli_core(`--help`/`--version`) | — |
+| 启动 / 渲染锚点 / 退出生命周期 / 全屏模式 / model 解析 | B1–B15 | cli_core(`--help`/`--version`) | — |
 | slash 命令面(84 条命令) | S1–S8 | — | ✅ 全覆盖门禁 |
 | 弹层 / 浮层 / 选择器 / 鼠标反向门禁 | O1–O12 | — | ✅ picker 数门禁 |
 | 对话轮次 / 流式 / 工具 / 统计 | T1–T10 | — | — |
@@ -72,6 +72,9 @@
 | B10 | 缺 provider 快速失败 | 非 0 退出 + 错误含 `provider` |
 | B11 | `--fullscreen` 进备用屏 | raw 含 `ESC[?1049h` + banner 块字 + composer 占位符(`draw_fullscreen` 独立渲染路径) |
 | B12 | 全屏模式退出还原主屏 | raw 含 `ESC[?1049l` + 退出码 0 |
+| B13 | `model = "free"` 走清单发现 | 非 0 退出 + 错误含 `模型清单`(未接线时会拿占位串 `provider/free` 照常启动) |
+| B14 | `model = "free"` 且 `[model_discovery] enabled = false` | 非 0 退出 + 错误含 `model_discovery` / `free` |
+| B15 | 静态 model 走原路径不回归 | 正常启动 + HUD 显示 `anthropic/claude-test-model` |
 
 ### S 组 slash 命令面(`test_slash.py`,**数据驱动全量矩阵**)
 
@@ -365,6 +368,7 @@
 | D9 | **坏 `config.toml` 静默回落**:`this is [ not valid toml {{{` 这类非法内容不产生任何用户可见告警,TUI 以默认配置照常启动 —— 用户改了配置却不生效时无从得知 | W9 实证(2026-10):进程存活、无 panic、raw 无 config 相关输出 | 未修(记录) |
 | D10 | **busy 窗口内的 composer 提交被吞且草稿保留**:回合进行中按 Enter,提交内容不上传也不清框;`/loop stop` 在迭代 busy 窗口内提交即失效,且残留草稿会污染后续输入(与 `/loop` 的自动提交叠加尤其明显) | W5 调试实证(2026-10):第 2 轮触发后立刻 stop 无效,拖到空闲窗口才生效;残留草稿使后续 stop 拼成非法命令 | 未修(记录) |
 | D11 | **Shift+Tab 权限模式循环与注释不符**:`keymap.rs:45-100` 注释宣称 Plan/Auto/Prompt/AcceptEdits/Bypass 五模式循环,实测 HUD 可见循环只有三态 Auto → AcceptEdits → Plan → Auto,Prompt / Bypass 到不了 | K1 实证(2026-10):连续 6 次 Shift+Tab 交替出现 `[accept_edits]`/`[plan]`/无标记 | 未修(记录) |
+| D12 | **整段输入(paste-burst)会丢字符**:一次 `write` 写入的连续按键被当作 bracketed paste 处理,部分字符被吞 —— 实测 `/demo:hello` → `/emo:hello`、`/plugin` → `/lugin`,表现为 slash 弹窗不弹、命令不被识别 | G 组实证(2026-10):`test_plugin.py` 的 G2/G3/G4 在整组跑时**间歇**失败(单跑恒过),屏上可见缺字;与 submodule 升级无关(升级前后各复现一次,基线代码同样复现) | 未修(记录)。测试侧规避:分两段写入 + `_pump` 让出(G2/G3/G4 已按此改);产品侧 paste-burst 的字符丢弃待定 |
 
 ---
 
@@ -374,7 +378,7 @@
 |---|---|
 | `functional/test_slash.py` | 92 条(85 行命令矩阵覆盖 84 条命令 + 7 条独立用例) |
 | `functional/test_overlay.py` | 20 条(10 条可达弹层 + 9 条不可达弹层反向门禁 + 1 条鼠标反向门禁) |
-| `functional/test_boot.py` | 12 条(含 2 条全屏模式) |
+| `functional/test_boot.py` | 15 条(含 2 条全屏模式 + 3 条 model 解析) |
 | `functional/test_flow.py` | 12 条(审批 / AskUser / loop / 恢复边界 / 容错 / 信号) |
 | `functional/test_turn.py` | 11 条 |
 | `functional/test_keys.py` | 10 条(键盘交互) |
@@ -384,7 +388,7 @@
 | `functional/test_session.py` | 7 条 |
 | `functional/test_plugin.py` | 4 条 |
 | `functional/test_coverage_audit.py` | 4 条 |
-| **能力覆盖层合计** | **199 条** |
+| **能力覆盖层合计** | **202 条** |
 | `rust/cli_core.sh` | 45 断言(含退出码) |
 | `rust/cli_modules.sh` | 56 断言(含退出码) |
 | 另有 `cargo test --workspace` / clippy / fmt / doc | 既有基线 |

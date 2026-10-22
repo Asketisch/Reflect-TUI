@@ -161,3 +161,100 @@ def test_fullscreen_exit_restores_main_screen(tui) -> None:
         _time.sleep(0.5)
         assert "\x1b[?1049l" in s.raw_output(), "退出时应发送 ESC[?1049l 还原主屏"
         assert not s.has_panic()
+
+
+def _write_config(sandbox: Sandbox, body: str) -> None:
+    """把配置写进隔离 HOME 的 `~/.reflect/config.toml`。"""
+    (sandbox.home / ".reflect" / "config.toml").write_text(body)
+
+
+def _boot_env(sandbox: Sandbox) -> dict[str, str]:
+    """启动 env:清掉 provider/model 相关变量,让 TOML 说了算。"""
+    env = sandbox.env()
+    for key in ("REFLECT_MODEL", "REFLECT_PROVIDER", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        env.pop(key, None)
+    return env
+
+
+def _await_exit(s, timeout: float = 30.0) -> int | None:
+    """等进程退出,返回退出码(超时返回 None)。"""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        rc = s.returncode()
+        if rc is not None:
+            return rc
+        time.sleep(0.2)
+    return s.returncode()
+
+
+def test_dynamic_model_free_resolves_via_catalog(sandbox: Sandbox) -> None:
+    """B13 `model = "free"` 走清单发现:解析不到时报清晰错误(非 0 退出)。
+
+    v1.7 起 `model = "free"` 是「运行时才知道」的动态值 —— 启动期必须
+    经 `reflect_config::resolve_model_spec` 从 provider 清单里挑出真实 id。
+    未接线时这里会拿着占位串 `"anthropic/free"` 照常启动(HUD 显示
+    一个不存在的模型),接线后则在启动期如实失败。
+
+    本例的 provider(anthropic)没有清单端点 → 期望报「无法获取模型清单」。
+    """
+    from tui_pty import TuiSession
+
+    _write_config(
+        sandbox,
+        '[active]\nprovider = "anthropic"\n\n'
+        '[anthropic]\napi_key = "sk-test-not-real"\nmodel = "free"\n',
+    )
+    with TuiSession(sandbox, env=_boot_env(sandbox), cols=100, rows=30) as s:
+        rc = _await_exit(s)
+        assert rc is not None, "动态 model 解析失败时应快速退出而不是挂死"
+        assert rc != 0, f"解析失败应以非 0 退出,实际 {rc}"
+        raw = s.raw_output()
+        assert "模型清单" in raw, f"错误信息应指向模型清单发现:\n{raw[-600:]}"
+        # 不能静默用占位串启动 —— 屏上不应出现 "anthropic/free"。
+        assert "anthropic/free" not in raw, f"不应拿占位符当模型:\n{raw[-600:]}"
+
+
+def test_dynamic_model_free_reports_discovery_disabled(sandbox: Sandbox) -> None:
+    """B14 `model = "free"` 且 `[model_discovery] enabled = false`:提示开开关。
+
+    关闭发现能力后 `model = "free"` 是明确失败(而不是模糊兜底)——
+    错误信息必须点出是哪一段、怎么改。
+    """
+    from tui_pty import TuiSession
+
+    _write_config(
+        sandbox,
+        '[active]\nprovider = "anthropic"\n\n'
+        '[anthropic]\napi_key = "sk-test-not-real"\nmodel = "free"\n\n'
+        "[model_discovery]\nenabled = false\n",
+    )
+    with TuiSession(sandbox, env=_boot_env(sandbox), cols=100, rows=30) as s:
+        rc = _await_exit(s)
+        assert rc is not None, "发现能力关闭时应快速退出而不是挂死"
+        assert rc != 0, f"解析失败应以非 0 退出,实际 {rc}"
+        raw = s.raw_output()
+        assert "model_discovery" in raw, f"错误信息应点出配置段:\n{raw[-600:]}"
+        assert "free" in raw, f"错误信息应点出触发该错误的 model 值:\n{raw[-600:]}"
+
+
+def test_static_model_from_toml_still_boots(sandbox: Sandbox) -> None:
+    """B15 静态 model 走原路径:照常启动,HUD 显示 TOML 里的 spec。
+
+    动态接线不得回归静态路径 —— `routing_policy_with` 拿到的必须是
+    已解析的真实 spec,而不是占位串。
+    """
+    from tui_pty import TuiSession
+
+    _write_config(
+        sandbox,
+        '[active]\nprovider = "anthropic"\n\n'
+        '[anthropic]\napi_key = "sk-test-not-real"\nmodel = "claude-test-model"\n',
+    )
+    with TuiSession(sandbox, env=_boot_env(sandbox), cols=110, rows=34) as s:
+        txt = s.wait_boot(timeout=30)
+        assert "anthropic/claude-test-model" in txt, f"HUD 应显示 TOML 里的模型: {txt[:400]}"
+        rc = s.quit(timeout=10)
+        assert rc == 0, f"退出码应为 0,实际 {rc}"
+        assert not s.has_panic(), f"退出时不应 panic:\n{s.raw_output()[-800:]}"
