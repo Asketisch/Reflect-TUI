@@ -165,7 +165,7 @@ git commit -m "chore: bump reflect-agent submodule"
 ## 相关文档
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) — 贡献指南(中文注释规范、submodule 工作流、PR 要求)
-- [CLAUDE.md](CLAUDE.md) — AI 助手项目说明(强制中文注释规范的原文)
+- [AGENTS.md](AGENTS.md) — AI 助手项目说明(强制中文注释规范 + 测试脚本强制要求的原文)
 - [CHANGELOG.md](CHANGELOG.md) — 变更日志
 
 ## 社区与安全

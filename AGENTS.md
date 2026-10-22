@@ -1,4 +1,7 @@
-# CLAUDE.md
+# AGENTS.md
+
+> 本文件是本仓库的 AI 助手说明(原 `CLAUDE.md`,2026-10 起改名)。
+> submodule 侧的同名文件见 `reflect-agent/AGENTS.md`,两者结构对标。
 
 ## 项目概览
 
@@ -31,7 +34,9 @@ make test                       # cargo test --workspace
 make test-fast                  # cargo nextest(需已安装 cargo-nextest)
 make test-suite                 # ./tests/run_all.sh:全功能套件(能力覆盖层+编译面+覆盖自审)
 make test-suite-fast            # ./tests/run_all.sh functional:只跑能力覆盖层(跳过 cargo 编译面)
+make test-suite-live            # ./tests/run_all.sh live:live 端到端(需 API key,手动跑)
 make coverage-audit             # 覆盖自审:slash 命令 × 测试矩阵的差集核对(有缺口即失败)
+make release-check              # 发版前全量审查(编译面 + 能力覆盖层 + 覆盖自审)
 make dist                       # ./scripts/build.sh --dist:构建+打包当前平台分发包到 dist/
 make dist-dry                   # 预览 dist 打包命令
 make install                    # 装到 /usr/local/bin(或 --local → ~/.local/bin)
@@ -94,6 +99,74 @@ reflect-task/subagent、reflect-protocol。
    否则 `make coverage-audit` 会失败。
 9. **对话轮次落盘的 assistant 消息是最后一轮的回复**:引擎一次用户提交会
    多次调用模型(mock provider 每次调用消费脚本一行),流式中间态不入盘。
+
+## 开发流程检查表(改任何代码前必读)
+
+> 本节结构与 submodule `reflect-agent/AGENTS.md` 的同名章节对标。
+> **新功能或修改必须与测试脚本一起提交** —— 不接受「先合功能、后补测试」,
+> 也不接受只有「退出码 0 / 不崩」这类伪断言。
+
+**新功能**或 **bug 修复**提交前,必须逐条走完:
+
+1. **能力覆盖脚本同步** —— 判断本次改动是否需要新增 / 更新能力覆盖用例:
+   - 改了 TUI 对外可见的行为(渲染文本、按键路由、弹层、slash 命令、
+     对话轮次、会话落盘、CLI 输出)
+     → 必须在 `tests/functional/` 有对应用例,断言到**行为级**
+     (屏幕可见文本 / 落盘文件内容 / 进程退出码),
+     **不接受**「退出码 0」或「不抛错」作为能力断言;
+   - 已有相关用例 → 检查是否需要**更新**(断言口径变了 / 新增字段 / 语义变化);
+   - 能力覆盖用例**只写在 `tests/functional/`** —— 不要在 `tests/rust/*.sh`
+     里重复写行为断言,那里只管 CLI **参数面**;
+   - 只改内部纯逻辑(渲染辅助函数、CJK 换行、状态机转换)
+     → 补 Rust 单测(`crates/reflect-tui/src/**`),不必硬凑 pty 用例。
+2. **按改动面选测试落点** —— 能力覆盖层按面分组,新用例进对应组:
+
+   | 改动面 | 用例落点 |
+   |---|---|
+   | 启动 / 渲染锚点 / 退出生命周期 / 全屏模式 | `tests/functional/test_boot.py`(B 组) |
+   | slash 命令面 | `tests/functional/test_slash.py` 的 `MATRIX`(S 组) |
+   | 弹层 / 浮层 / 选择器 | `tests/functional/test_overlay.py`(O 组) |
+   | 对话轮次 / 流式 / 工具调用 / 统计 | `tests/functional/test_turn.py`(T 组) |
+   | 会话持久化 / 恢复 / fork / plan 落盘 | `tests/functional/test_session.py`(P 组) |
+   | headless CLI 语义 | `tests/functional/test_cli.py`(C 组) |
+   | 键盘交互 | `tests/functional/test_keys.py`(K 组) |
+   | 渲染与视觉 | `tests/functional/test_render.py`(V 组) |
+   | 审批 / AskUser / 容错 / 信号 | `tests/functional/test_flow.py`(W 组) |
+   | 插件面 | `tests/functional/test_plugin.py`(G 组) |
+   | CLI 参数矩阵 | `tests/rust/cli_core.sh`、`tests/rust/cli_modules.sh` |
+   | 内部纯逻辑 | `crates/reflect-tui/src/**` 的 Rust 单测 |
+
+   分层判据与用例规模见 [tests/README.md](tests/README.md);
+   「能力 × 覆盖层」映射见 [tests/COVERAGE.md](tests/COVERAGE.md)。
+3. **slash 命令双通道 + 覆盖门禁** —— 新增 / 改名 / 改结局的 slash 命令:
+   - 两条分发通道都要看:`history_render::dispatch_slash`(legacy 白名单)
+     与 `tui/mod.rs::dispatch_slash_command`(枚举通道);
+   - `tests/functional/test_slash.py` 的 `MATRIX` 必须补一行,写明结局类别
+     (`wired` / `placeholder` / `unrecognized` / `exit`)与期望屏幕文本;
+   - `make coverage-audit`(`tests/tools/coverage_audit.py --strict`)会做
+     「Rust 里声明的命令 × 矩阵覆盖」的**机械差集**,漏一条直接失败。
+4. **覆盖矩阵同步** —— `tests/COVERAGE.md` 随改动更新:
+   新增能力补「能力 × 覆盖层」表的一行;移除能力移到「未覆盖项」并写明原因;
+   发现的缺陷记入「已知缺陷」。
+5. **验证** —— 按下方「验证矩阵」跑对应命令,全绿再提交。
+6. **注释与提交信息** —— 注释一律中文;commit 用 `type(scope): 描述`
+   conventional 风格(参考 git log)。
+
+## 验证矩阵(按改动范围选跑)
+
+| 改动范围 | 必跑命令 |
+|---|---|
+| 任何改动 | `cargo fmt --all -- --check` + `cargo clippy --workspace --all-targets -- -D warnings` |
+| Rust 代码 / crate | `cargo test --workspace` |
+| TUI 行为(渲染 / 按键 / 弹层 / 轮次 / 落盘 / CLI 语义) | `./tests/run_all.sh functional` |
+| slash 命令 | `./tests/run_all.sh functional` + `make coverage-audit` |
+| CLI 子命令参数面 | `./tests/run_all.sh rust` |
+| 仅文档 / 注释 | 无需跑测试,自查链接与命令是否仍有效 |
+| 发版前 | `make release-check` |
+
+> 全程离线:`REFLECT_MODEL=mock/mock-1` + 隔离 HOME(mktemp),
+> 不污染真实 `~/.reflect`;缺 pytest / pyte 的批次自动 SKIP,不算失败。
+> 首次运行需 `pip install pytest pyte`(Node 不需要)。
 
 ## Submodule 维护
 

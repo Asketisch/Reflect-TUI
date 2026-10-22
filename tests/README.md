@@ -112,5 +112,5 @@ make coverage-audit    # = 覆盖自审(有未覆盖命令即失败)
 ## 相关文档
 
 - [`COVERAGE.md`](COVERAGE.md) —— 功能覆盖矩阵、已知产品限制、已知缺陷、未覆盖清单
-- [`../CLAUDE.md`](../CLAUDE.md) —— 项目架构与关键约束
+- [`../AGENTS.md`](../AGENTS.md) —— 项目架构与关键约束
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) —— 提交前检查与 submodule 工作流

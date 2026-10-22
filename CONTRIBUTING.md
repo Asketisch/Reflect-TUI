@@ -29,6 +29,14 @@ cargo test --workspace
 python3 tests/tools/coverage_audit.py --strict   # 覆盖自审
 ```
 
+> **新功能或行为修改必须与测试脚本一起提交。** 改了 TUI 对外可见的行为
+> （渲染文本 / 按键路由 / 弹层 / slash 命令 / 对话轮次 / 会话落盘 /
+> CLI 输出），必须在 `tests/functional/` 有对应用例，且断言到**行为级**
+> （屏幕可见文本 / 落盘文件内容 / 退出码），不接受「退出码 0」「不崩」
+> 这类伪断言。新增 slash 命令还要在 `tests/functional/test_slash.py` 的
+> `MATRIX` 补一行，否则覆盖自审直接失败。完整检查表（改动面 → 用例落点）
+> 见 [AGENTS.md](AGENTS.md) 的「开发流程检查表」。
+
 后两项是**功能面**的门禁，与前两项的**编译面**互补：
 
 - `./tests/run_all.sh functional` 起真实的 `reflect-tui` 进程，用 pty +
@@ -83,7 +91,7 @@ git add reflect-agent && git commit            # 指针与代码适配一起提�
 - **消费点优先走共享 API**：submodule 提供的读取 / 聚合能力（如
   `reflect_rollout::session_stats`），不要在本仓库复刻一份聚合逻辑，
   否则两边会漂移。
-- 本仓库的 `CLAUDE.md` 记录本项目的架构与约束，submodule 侧的说明见
+- 本仓库的 `AGENTS.md` 记录本项目的架构与约束,submodule 侧的说明见
   `reflect-agent/AGENTS.md`。
 
 ### 接线记录

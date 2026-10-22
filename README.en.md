@@ -162,7 +162,7 @@ For local joint development on the core: make changes in the Reflect-Agent repo 
 ## Documentation
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) — Contributing guide (Chinese-comment policy, submodule workflow, PR requirements)
-- [CLAUDE.md](CLAUDE.md) — AI assistant project notes (the source of the Chinese-comment policy)
+- [AGENTS.md](AGENTS.md) — AI assistant project notes (source of the Chinese-comment policy and the mandatory test-script rule)
 - [CHANGELOG.md](CHANGELOG.md) — Changelog
 
 ## Community & Security
