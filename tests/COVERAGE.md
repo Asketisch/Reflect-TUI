@@ -276,6 +276,22 @@
 > 这一组守的是**测试基础设施的正确性** —— 设施坏了,上面所有能力断言都会
 > 变成「假绿」。
 
+### H 组 真实 HTTP 链路(`test_http_mock.py`)
+
+| # | 用例 | 断言 |
+|---|---|---|
+| H1 | 真实 Anthropic SSE 往返 | 请求打到本地 mock server,`content_block_delta` 聚合出的回复上屏 |
+| H2 | 跨天会话 resume(真实 HTTP 产出) | 会话搬到 `2026/01/01` 桶后 `--resume` 仍回放既往消息 |
+| H3 | 确定性 busy 窗口下 Esc 中断 | 出现「已发送中断请求」,且连按 3 次只出现一次(去抖生效) |
+
+> **为什么要有这一组**:其余用例都用 `REFLECT_MODEL=mock/mock-1` —— 那是
+> reflect-llm `ModelClient` 层的内置 provider,**完全绕过** HTTP 传输、
+> SSE 分帧与 Anthropic 协议形态;内置 mock 还「瞬时完成」,离线造不出
+> **确定性 busy 窗口**(这正是 §6 里「Ctrl+C busy 首按中断」等条目长期
+> 锁在「未设用例」的原因)。本组用 `mock_anthropic_server.py` 起一个本地
+> HTTP server,补上那一层,并用 `MOCK_ANTHROPIC_DELAY` 拉长模型响应来
+> 制造 busy 窗口。
+
 ---
 
 ## 3. CLI 子命令(10 个,不含 help)
@@ -388,16 +404,17 @@
 | `functional/test_slash.py` | 92 条(85 行命令矩阵覆盖 84 条命令 + 7 条独立用例) |
 | `functional/test_overlay.py` | 20 条(10 条可达弹层 + 9 条不可达弹层反向门禁 + 1 条鼠标反向门禁) |
 | `functional/test_boot.py` | 12 条(含 2 条全屏模式) |
-| `functional/test_flow.py` | 12 条(审批 / AskUser / loop / 恢复边界 / 容错 / 信号) |
+| `functional/test_flow.py` | 14 条(审批 / AskUser / loop / 恢复边界 / 容错 / 信号) |
 | `functional/test_turn.py` | 11 条 |
-| `functional/test_keys.py` | 10 条(键盘交互) |
+| `functional/test_keys.py` | 11 条(键盘交互) |
 | `functional/test_cli.py` | 10 条 |
 | `functional/test_render.py` | 9 条(渲染与视觉) |
 | `functional/test_pty_helpers.py` | 8 条 |
 | `functional/test_session.py` | 7 条 |
 | `functional/test_plugin.py` | 4 条 |
 | `functional/test_coverage_audit.py` | 4 条 |
-| **能力覆盖层合计** | **199 条** |
+| `functional/test_http_mock.py` | 3 条(真实 HTTP + SSE + 确定性 busy 窗口) |
+| **能力覆盖层合计** | **205 条** |
 | `rust/cli_core.sh` | 45 断言(含退出码) |
 | `rust/cli_modules.sh` | 56 断言(含退出码) |
 | 另有 `cargo test --workspace` / clippy / fmt / doc | 既有基线 |
@@ -412,7 +429,9 @@
   模型 4 次(落盘 4 条 `token_count`),但未定位到是哪几条辅助调用
   (title 生成 / compact 判定 / auto-review?),故未对调用次数做断言。
 - **Ctrl+C busy 首按中断**:mock 回复瞬时完成,离线无法确定性制造 busy
-  窗口;空闲态 Ctrl+C 是退出,两种结局不可区分。Esc 中断由 T9 覆盖。
+  窗口;空闲态 Ctrl+C 是退出,两种结局不可区分。Esc 中断由 T9 覆盖,
+  确定性 busy 窗口下的 Esc 中断(含去抖)由 H3 覆盖 —— 但 **Ctrl+C**
+  仍缺用例:它与空闲退出同键,需另设退出判据。
 - **真实 shift+enter 序列**:依赖 kitty 键盘协议(`ESC[13;2u`),哑 pty
   发不出;K7 用 composer 支持的等价路径 alt+enter 锁定多行语义。
 - **系统剪贴板真实内容**:K2 只断言 `Copied last reply` 通知,未读回
