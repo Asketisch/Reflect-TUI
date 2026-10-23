@@ -2523,14 +2523,19 @@ fn handle_key(
         // (abort 候选 / 清空输入),行为不变。审批弹窗 / plan 审批的 Esc
         // 已在上方各自分支提前消费,不会落到这里。
         if state.busy {
-            emit_op(
-                thread,
-                event_tx,
-                reflect_protocol::Op::Interrupt { child_id: None },
-            );
-            state.history.push(adapter::UiHistoryItem::Notice(
-                "⏹ 已发送中断请求,正在停止当前回合…".into(),
-            ));
+            // 去抖:中断请求已在途时忽略后续 Esc(回合开始 / 收尾会复位标记),
+            // 避免连按刷屏 + 重复打断请求。
+            if !state.interrupt_requested {
+                emit_op(
+                    thread,
+                    event_tx,
+                    reflect_protocol::Op::Interrupt { child_id: None },
+                );
+                state.interrupt_requested = true;
+                state.history.push(adapter::UiHistoryItem::Notice(
+                    "⏹ 已发送中断请求,正在停止当前回合…".into(),
+                ));
+            }
             return Ok(false);
         }
         let _ = state.composer.input(key);

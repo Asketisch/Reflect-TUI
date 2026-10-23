@@ -199,6 +199,10 @@ pub struct UiState {
     pub(crate) turn_cost_baseline: Option<f64>,
     /// 本回合是否出现过工具调用（决定是否画分隔符）。
     pub(crate) had_tool_this_turn: bool,
+    /// 已发出 `Op::Interrupt` 且尚未收到回合收尾事件。
+    ///
+    /// 防止 busy 期间连按 Esc 重复发中断请求 + 刷屏;回合开始 / 收尾时复位。
+    pub(crate) interrupt_requested: bool,
     /// 已写入 history 的工具调用 call_id（去重：begin/end 只写一条 end）。
     pub(crate) seen_tool_calls: HashSet<String>,
     /// begin 携带 tool_name、end 只带 call_id:用 call_id→name 映射补名。
@@ -605,6 +609,7 @@ impl Default for UiState {
             turn_started_at: None,
             turn_cost_baseline: None,
             had_tool_this_turn: false,
+            interrupt_requested: false,
             seen_tool_calls: HashSet::new(),
             tool_names: HashMap::new(),
             context_usage: ContextUsage::default(),

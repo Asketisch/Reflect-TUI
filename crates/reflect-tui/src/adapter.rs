@@ -327,6 +327,8 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             // 回合成本基线:回合结束时取总成本差值,写入分隔符小结。
             state.turn_cost_baseline = state.context_usage.total_cost_usd;
             state.had_tool_this_turn = false;
+            // 新回合开始:中断请求已失效,允许再次按 Esc 中断。
+            state.interrupt_requested = false;
             state.seen_tool_calls.clear();
             state.segment_start = 0;
             // M4:新回合开始,清掉上回合残留的工具输出流。
@@ -385,6 +387,8 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             state.turn_started_at = None;
             state.turn_cost_baseline = None;
             state.had_tool_this_turn = false;
+            // 回合收尾(TurnCompleted 兼收 TurnAborted):中断请求已落地,复位标记。
+            state.interrupt_requested = false;
             state.seen_tool_calls.clear();
             // 回合结束，清除残留的审批 banner，避免显示已过时的审批提示。
             state.pending_approval = None;
@@ -1645,6 +1649,32 @@ mod tests {
             }),
             Some("# Plan\n1. step one\n2. step two".to_string()),
             "Plan 内容应是最新草稿版"
+        );
+    }
+
+    #[test]
+    fn interrupt_requested_resets_on_turn_boundaries() {
+        let mut state = UiState::default();
+
+        // 回合开始:标记应复位(允许首次中断)。
+        state.interrupt_requested = true;
+        apply_event(
+            &mut state,
+            ev(UiEventKind::TurnStarted {
+                turn_id: reflect_protocol::TurnId::new(),
+            }),
+        );
+        assert!(
+            !state.interrupt_requested,
+            "回合开始应复位中断标记,允许再次按 Esc 中断"
+        );
+
+        // 发出中断请求(键位处理置位)后,回合收尾应复位。
+        state.interrupt_requested = true;
+        apply_event(&mut state, ev(UiEventKind::TurnCompleted));
+        assert!(
+            !state.interrupt_requested,
+            "回合收尾(TurnCompleted 兼收 TurnAborted)应复位中断标记"
         );
     }
 }
