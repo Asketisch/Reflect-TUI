@@ -234,6 +234,49 @@ pub async fn run_async(
         crate::config_compat::types::NotificationMethod::Auto,
     );
 
+    // ── 终端输入:长驻阻塞读取任务 ─────────────────────────────────────
+    // 旧实现每轮 select 前 spawn 一个 200ms poll 任务,select 命中 agent
+    // 事件 / 重绘分支时旧 poll_rx 被 drop:旧任务此时已 `event::read()` 吃掉
+    // 的按键会因 blocking_send 失败而**永久丢失**(agent 流式期间高频复现),
+    // 且残留任务与新任务并发 poll/read 会触发 fork 版 crossterm 的内部锁
+    // 竞争(poll 恒 false)。改为循环前 spawn 一个长驻任务 + 无界队列:
+    // 事件永不丢;200ms 无输入时发 Tick 心跳,继续驱动 spinner 重绘;
+    // poll Err(终端关闭 / SSH 断连)上报 TerminalDead 让主循环带错误退出,
+    // TerminalGuard 正常恢复终端,不再静默吞错空转。
+    enum InputTick {
+        Event(Event),
+        Tick,
+        TerminalDead(String),
+    }
+    let (input_tx, mut input_rx) = mpsc::unbounded_channel::<InputTick>();
+    {
+        let tx = input_tx.clone();
+        state
+            .background_tasks
+            .lock()
+            .unwrap()
+            .spawn_blocking(move || {
+                loop {
+                    match poll_event(Duration::from_millis(200)) {
+                        Ok(Some(ev)) => {
+                            if tx.send(InputTick::Event(ev)).is_err() {
+                                break;
+                            }
+                        }
+                        Ok(None) => {
+                            if tx.send(InputTick::Tick).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(InputTick::TerminalDead(e.to_string()));
+                            break;
+                        }
+                    }
+                }
+            });
+    }
+
     loop {
         // ── 1. 排空代理事件 ─────────────────────────────────────────────
         // 预取终端尺寸：供 try_recv 循环内即时补齐 history_tail，让文字与
@@ -495,27 +538,31 @@ pub async fn run_async(
         }
 
         // ── 6. 等待输入 / agent / frame 请求 ──────────────────────────────
-        let (poll_tx, mut poll_rx) = mpsc::channel::<Option<Event>>(1);
-        tokio::task::spawn_blocking(move || {
-            let result = poll_event(Duration::from_millis(200));
-            let _ = poll_tx.blocking_send(result.ok().flatten());
-        });
-
         tokio::select! {
-            maybe_event = poll_rx.recv() => {
-                if let Some(Some(event)) = maybe_event {
-                    if handle_event(
-                        event,
-                        &mut state,
-                        &mut guard,
-                        &thread,
-                        &event_tx,
-                        &mut history_tail,
-                        &_frame_requester,
-                        fullscreen,
-                    )? {
-                        break;
+            maybe_tick = input_rx.recv() => {
+                match maybe_tick {
+                    Some(InputTick::Event(event)) => {
+                        if handle_event(
+                            event,
+                            &mut state,
+                            &mut guard,
+                            &thread,
+                            &event_tx,
+                            &mut history_tail,
+                            &_frame_requester,
+                            fullscreen,
+                        )? {
+                            break;
+                        }
                     }
+                    // 心跳:本轮无输入,落回循环顶部重绘(驱动 spinner / 动画)。
+                    Some(InputTick::Tick) => {}
+                    // 终端失效:带错误退出,TerminalGuard Drop 恢复终端状态。
+                    Some(InputTick::TerminalDead(msg)) => {
+                        anyhow::bail!("终端输入流失效: {msg}");
+                    }
+                    // 发送端关闭只发生在退出路径;继续等 agent 事件直到退出。
+                    None => {}
                 }
             }
             Some(ui_event) = event_rx.recv() => {
