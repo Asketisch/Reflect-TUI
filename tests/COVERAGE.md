@@ -235,7 +235,7 @@
 | W6 | `-c` 无历史会话 | 非 0 退出 + `no sessions found` + `nothing to resume` |
 | W7 | `--resume` 短前缀拒绝 | 非 0 退出 + `invalid thread id`(只认完整 UUID) |
 | W8 | 200 条消息大会话恢复 | 不挂死、可继续对话、无 panic(旧消息进原生 scrollback,pyte 视口不可见) |
-| W9 | 坏 config.toml | **静默回落默认配置**,TUI 照常启动(锁定现状,见 §6 D9) |
+| W9 | 坏 config.toml | 终端给出显式告警(`解析失败` + 路径),并回落默认配置,TUI 照常启动 |
 | W10 | 非法 `REFLECT_MODEL` | 非 0 退出 + 错误含 `provider` |
 | W11 | SIGTERM | rc=-15(死于信号)+ 无 panic + 会话文件已落盘 |
 | W12 | stdin 非 tty(管道) | 非 0 退出 + `Error: Device not configured`,不挂死 |
@@ -348,6 +348,8 @@
   (K1 锁定,见 §6 D11)。
 - **坏 `config.toml` 静默回落默认配置**:解析失败无任何用户可见告警,
   TUI 照常启动(W9 锁定「不崩」,见 §6 D9)。
+  → **已修**:bootstrap 启动前显式体检 config.toml,解析失败即在终端打印
+  `⚠ 警告:<路径> 解析失败(...)`,同时仍回落默认配置不挡启动(W9)。
 
 ---
 
@@ -363,7 +365,7 @@
 | D6 | **`REFLECT_TUI_UPDATE_CHECK` 无人读取**:旧 harness 设它以屏蔽启动期更新探测,但本 fork 的 `update_action.rs:29-33` 恒返回 `None` | `crates/reflect-tui/src/tui_core/update_action.rs:29-33` | 未修(记录)。无害,但属残留 |
 | D7 | **mock provider 一次提交触发多次模型调用**:实测 4 次,导致脚本行与最终落盘的 assistant 消息不是一一对应 | `reflect-agent/crates/abilities/reflect-llm/src/providers/mock.rs:163` | 引擎侧行为,记录 |
 | D8 | **`Ctrl+Shift+D` 快捷键在真实终端不可达**:终端无法区分 Ctrl+D 与 Ctrl+Shift+D(同为字节 `0x04`),crossterm 把 `0x04` 解析成 `Char('d') + CONTROL`(**不带 SHIFT**),而 `keymap.rs` 的 `OpenDiff` 分支要求 `CONTROL|SHIFT` —— 该分支永远命中不了,实际落到 `Ctrl+D → Exit` | `crates/reflect-tui/src/keymap.rs:88-94`(要求 SHIFT)vs `:60-65`(Ctrl+D 排除 SHIFT);实测见 `test_overlay.py::test_ctrl_shift_d_is_unreachable_from_a_terminal` | 未修(记录)。diff overlay 的实际入口只有 `/diff` |
-| D9 | **坏 `config.toml` 静默回落**:`this is [ not valid toml {{{` 这类非法内容不产生任何用户可见告警,TUI 以默认配置照常启动 —— 用户改了配置却不生效时无从得知 | W9 实证(2026-10):进程存活、无 panic、raw 无 config 相关输出 | 未修(记录) |
+| D9 | ~~**坏 `config.toml` 静默回落**~~:`this is [ not valid toml {{{` 这类非法内容不产生任何用户可见告警,TUI 以默认配置照常启动 —— 用户改了配置却不生效时无从得知 | W9 实证(2026-10):进程存活、无 panic、raw 无 config 相关输出 | **已修**:bootstrap 启动前显式体检 config.toml,解析失败在终端打印 `⚠ 警告:<路径> 解析失败(...)`,仍回落默认配置不挡启动 |
 | D10 | **busy 窗口内的 composer 提交被吞且草稿保留**:回合进行中按 Enter,提交内容不上传也不清框;`/loop stop` 在迭代 busy 窗口内提交即失效,且残留草稿会污染后续输入(与 `/loop` 的自动提交叠加尤其明显) | W5 调试实证(2026-10):第 2 轮触发后立刻 stop 无效,拖到空闲窗口才生效;残留草稿使后续 stop 拼成非法命令 | 未修(记录) |
 | D11 | **Shift+Tab 权限模式循环与注释不符**:`keymap.rs:45-100` 注释宣称 Plan/Auto/Prompt/AcceptEdits/Bypass 五模式循环,实测 HUD 可见循环只有三态 Auto → AcceptEdits → Plan → Auto,Prompt / Bypass 到不了 | K1 实证(2026-10):连续 6 次 Shift+Tab 交替出现 `[accept_edits]`/`[plan]`/无标记 | 未修(记录) |
 

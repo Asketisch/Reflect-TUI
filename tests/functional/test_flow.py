@@ -273,17 +273,22 @@ def test_large_transcript_resume_stays_interactive(tui, mock_script, sandbox) ->
 # ── 容错:坏输入与异常环境 ────────────────────────────────────────────────
 
 
-def test_malformed_config_falls_back_to_defaults(tui, sandbox) -> None:
-    """W9 坏 config.toml 不挡启动:静默回落默认配置,TUI 正常可用。
+def test_malformed_config_warns_and_falls_back_to_defaults(tui, sandbox) -> None:
+    """W9 坏 config.toml 不挡启动:给出显式告警,并回落默认配置,TUI 正常可用。
 
-    锁定现状(见 COVERAGE §8):解析失败无任何用户可见告警,属产品
-    决策 —— 本用例防的是「坏配置导致启动崩溃/挂死」这一退化。
+    `reflect_config::load_default()` 对解析失败静默回退默认值(内部只记
+    tracing::debug,被 warn 级过滤器吞掉)——用户的 providers / 权限规则 /
+    hooks 会**无声失效**。bootstrap 启动前显式体检一次,解析失败即在终端
+    打印可见告警;同时坏配置不能导致启动崩溃/挂死。
     """
     (sandbox.home / ".reflect" / "config.toml").write_text("this is [ not valid toml {{{\n")
     with tui() as s:
         s.wait_boot(timeout=30)
         txt = s.wait_text("/help for commands", timeout=15)
         assert "Send a message" in txt
+        raw = s.raw_output()
+        assert "解析失败" in raw, f"坏配置应给出可见告警:\n{raw[-600:]}"
+        assert "config.toml" in raw, f"告警应指出配置文件路径:\n{raw[-600:]}"
         assert not s.has_panic(), "坏配置不应导致 panic"
         assert s.alive(), "坏配置下进程应存活"
 

@@ -78,6 +78,20 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
         build_quota_tracker, build_sanitizer, build_telemetry_sink,
     };
 
+    // 0. config.toml 语法体检:`load_default` 对解析失败静默回退默认值
+    // (内部只记 tracing::debug,被 warn 级过滤器吞掉),用户的 providers /
+    // 权限规则 / hooks 会**无声失效**。这里显式探测一次,解析失败立即在
+    // 终端上给出可见告警。
+    if let Some(path) = reflect_config::default_config_path()
+        && path.exists()
+        && let Err(e) = reflect_config::load_from_file(&path)
+    {
+        eprintln!(
+            "⚠ 警告:{} 解析失败({e}) —— 已回退默认配置,providers/权限规则/hooks 可能未生效!",
+            path.display()
+        );
+    }
+
     // 1. 加载 config + provider/model。
     let reflect_cfg = reflect_config::load_default();
     // SAFETY: 使用 current_thread runtime，此时保证所有代码在单线程中执行，
