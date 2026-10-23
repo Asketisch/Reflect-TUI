@@ -235,14 +235,54 @@ def test_continue_flag_with_no_sessions_fails_fast(tui) -> None:
 
 
 def test_resume_short_prefix_is_rejected(tui, sandbox) -> None:
-    """W7 `--resume` 只认完整 UUID:短前缀(即使无歧义)被快速拒绝。"""
+    """W7 `--resume` 前缀过短(<4 位)被快速拒绝。
+
+    此前只认完整 UUID;现支持唯一前缀(≥4 位)以便从 session 面板复制
+    短 id 续作,但过短的前缀仍直接拒绝(避免全盘扫描式歧义)。
+    """
     _seed_session(sandbox, "aaa11111-1111-4111-8111-111111111111", "W7_SEED_MSG")
-    with tui(args=["--resume", "aaa11111"]) as s:
+    with tui(args=["--resume", "aaa"]) as s:
         rc = _wait_exit(s, timeout=25)
-        assert rc is not None, "非法 resume id 应快速退出"
-        assert rc != 0, "非法 resume id 应非 0 退出"
+        assert rc is not None, "过短前缀应快速退出"
+        assert rc != 0, "过短前缀应非 0 退出"
         raw = s.raw_output()
-        assert "invalid thread id" in raw, f"错误应说明 id 非法:\n{raw[-400:]}"
+        assert "前缀过短" in raw, f"错误应说明前缀过短:\n{raw[-400:]}"
+
+
+def test_resume_unique_prefix_resumes_session(tui, sandbox) -> None:
+    """W7b `--resume <唯一前缀>`:命中唯一会话,并把既往消息真正回放出来。
+
+    观测锚点是 TUI 启动时的回填提示 `↩ 已恢复历史会话 <id> · 回放 N 条消息`
+    —— 修复前 `reader::replay` 只扫今天/昨天/前天且按文件名 thread id 拼
+    路径,2026-01-01 的会话回放为空(prior_messages 为空),该提示根本不出现,
+    用户看到的是「续作成功但没有任何上文」。
+
+    旧消息本身进的是终端原生 scrollback,pyte 视口看不到,故断言提示里的
+    回放条数而非消息正文。
+    """
+    _seed_session(sandbox, "aaa11111-1111-4111-8111-111111111111", "W7B_SEED_MSG")
+    with tui(args=["--resume", "aaa11111"]) as s:
+        s.wait_boot(timeout=30)
+        txt = s.wait_text("已恢复历史会话", timeout=20)
+        assert "已恢复历史会话" in txt, f"前缀命中后应给出回填提示:\n{txt[-400:]}"
+        assert "回放 1 条消息" in txt, f"应回放 1 条既往消息:\n{txt[-400:]}"
+        assert not s.has_panic()
+
+
+def test_resume_full_uuid_of_old_session_restores_history(tui, sandbox) -> None:
+    """W7c `--resume <完整 UUID>`:跨天会话(2026-01-01)也要能回放历史。
+
+    修复前 `reader::replay` 用 `Utc::now() - days(0..3)` 拼日期桶,3 天以上
+    前创建的会话回放为空 —— 续作「成功」但历史静默丢失。修复后改为全盘
+    扫描所有日期桶,跨天会话照常回放。
+    """
+    sid = "ccc44444-3333-4444-8444-555555555555"
+    _seed_session(sandbox, sid, "W7C_SEED_MSG")
+    with tui(args=["--resume", sid]) as s:
+        s.wait_boot(timeout=30)
+        txt = s.wait_text("已恢复历史会话", timeout=20)
+        assert "回放 1 条消息" in txt, f"跨天会话应回放既往消息:\n{txt[-400:]}"
+        assert not s.has_panic()
 
 
 def test_large_transcript_resume_stays_interactive(tui, mock_script, sandbox) -> None:

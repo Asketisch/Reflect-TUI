@@ -67,6 +67,7 @@ pub mod plugin;
 pub mod prompt_history;
 pub mod protocol_compat;
 pub mod random_range_compat;
+pub mod resume;
 pub mod rollout;
 pub mod shell_command;
 pub mod state;

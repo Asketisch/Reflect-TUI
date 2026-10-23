@@ -233,9 +233,11 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
     let resume_target = resolve_resume_target(&args)?;
     let prior_messages = match resume_target {
         Some(tid) => {
+            // 全盘定位 + 回放(跨日期桶 + 轮转副本),不再受「近 3 天」限制 ——
+            // `reader::replay` 只扫今天/昨天/前天且按文件名 thread id 拼路径,
+            // 3 天以上前的会话会回放为空(历史静默丢失)。见 `crate::resume`。
             let records =
-                reflect_rollout::reader::replay(&reflect_rollout::path::default_base(), tid)
-                    .await?;
+                crate::resume::replay_all(&reflect_rollout::path::default_base(), &tid).await?;
             let msgs = reflect_core::resume::records_to_preload(&records);
             tracing::info!(
                 thread_id = %tid,
@@ -460,9 +462,10 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
 /// 与 exec 的 `resolve_resume_thread_id` 同语义;返回目标线程 id。
 fn resolve_resume_target(args: &TuiArgs) -> Result<Option<reflect_protocol::ThreadId>> {
     if let Some(s) = &args.resume {
-        let parsed = uuid::Uuid::parse_str(s)
-            .map_err(|e| anyhow::anyhow!("invalid thread id '{s}': {e}"))?;
-        return Ok(Some(reflect_protocol::ThreadId(parsed)));
+        // 支持完整 UUID 或唯一前缀(≥4 位),前缀语义与 headless `session show`
+        // 对齐:短前缀直接拒绝,命中多个会话时报错并给出候选数。
+        let tid = crate::resume::resolve_thread_id(s)?;
+        return Ok(Some(tid));
     }
     if args.continue_last || args.resume_by.is_some() {
         let base = reflect_rollout::path::default_base();

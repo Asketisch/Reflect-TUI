@@ -233,7 +233,9 @@
 | W4 | ask_user 自由文本条 | `❓ AGENT 等待你的回答` → 输入回车 → `▶ (回答) <text>` + `✓ ask_user` + 回合继续 |
 | W5 | `/loop` 离线定时触发 | raw 流 `LOOPFIRE` 标记 ≥8(≥2 轮,视口计数会漏须用 raw);`/loop stop` → `⚠ /loop: stopped (was: /status every 3s)` |
 | W6 | `-c` 无历史会话 | 非 0 退出 + `no sessions found` + `nothing to resume` |
-| W7 | `--resume` 短前缀拒绝 | 非 0 退出 + `invalid thread id`(只认完整 UUID) |
+| W7 | `--resume` 前缀过短拒绝 | 非 0 退出 + `前缀过短`(<4 位直接拒绝) |
+| W7b | `--resume` 唯一前缀命中 | `↩ 已恢复历史会话 <id> · 回放 1 条消息` |
+| W7c | `--resume` 跨天会话(完整 UUID) | `↩ 已恢复历史会话 <id> · 回放 1 条消息` |
 | W8 | 200 条消息大会话恢复 | 不挂死、可继续对话、无 panic(旧消息进原生 scrollback,pyte 视口不可见) |
 | W9 | 坏 config.toml | 终端给出显式告警(`解析失败` + 路径),并回落默认配置,TUI 照常启动 |
 | W10 | 非法 `REFLECT_MODEL` | 非 0 退出 + 错误含 `provider` |
@@ -343,6 +345,14 @@
 - **`/prompt` 子命令**(`list` / `reload` / `rescan`)在当前构建未接线。
 - **`--resume` 只认完整 UUID**:3 字符或 8 字符前缀都报 `invalid thread id
   … invalid length`;前缀解析只在 headless `session show` 里有(W7 锁定)。
+  → **已修**:TUI 侧 `--resume` 支持唯一前缀(≥4 位,语义与 `session show`
+  对齐),过短前缀仍拒绝并提示「前缀过短」;唯一前缀命中后回放既往消息
+  (W7b),跨天会话也照常回放(W7c)。
+- **`--resume` 只扫近 3 天的日期桶**:`reader::replay` 用
+  `Utc::now() - days(0..3)` 拼路径,3 天以上前创建的会话回放为空 ——
+  续作「成功」但历史静默丢失;轮转副本(`<id>.N.jsonl`)也不参与合并。
+  → **已修**:改为全盘扫描所有日期桶 + 合并轮转副本,按(日期桶升序 →
+  轮转号降序 → 活跃文件殿后)取时间正序(W7c)。
 - **Shift+Tab 实际是三态循环**(Auto → AcceptEdits → Plan → Auto):
   `keymap.rs` 注释宣称五模式(含 Prompt / Bypass),但循环到不了后两者
   (K1 锁定,见 §6 D11)。
