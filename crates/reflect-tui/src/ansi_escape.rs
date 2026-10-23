@@ -160,7 +160,11 @@ fn parse_sgr_params(params: &str) -> Option<Vec<Sgr>> {
         match part {
             "38" | "48" => {
                 let color = parse_extended_color(&mut parts)?;
-                out.push(if part == "38" { Sgr::Fg(color) } else { Sgr::Bg(color) });
+                out.push(if part == "38" {
+                    Sgr::Fg(color)
+                } else {
+                    Sgr::Bg(color)
+                });
             }
             _ if part.starts_with("38:") || part.starts_with("48:") => {
                 let color = parse_colon_extended_color(part)?;
@@ -263,11 +267,15 @@ fn apply_sgr(style: &mut Style, sgr: Sgr) {
         Sgr::Underline => style.add_modifier |= ratatui::prelude::Modifier::UNDERLINED,
         Sgr::Reverse => style.add_modifier |= ratatui::prelude::Modifier::REVERSED,
         Sgr::NoBold => style.add_modifier.remove(ratatui::prelude::Modifier::BOLD),
-        Sgr::NoItalic => style.add_modifier.remove(ratatui::prelude::Modifier::ITALIC),
-        Sgr::NoUnderline => {
-            style.add_modifier.remove(ratatui::prelude::Modifier::UNDERLINED)
-        }
-        Sgr::NoReverse => style.add_modifier.remove(ratatui::prelude::Modifier::REVERSED),
+        Sgr::NoItalic => style
+            .add_modifier
+            .remove(ratatui::prelude::Modifier::ITALIC),
+        Sgr::NoUnderline => style
+            .add_modifier
+            .remove(ratatui::prelude::Modifier::UNDERLINED),
+        Sgr::NoReverse => style
+            .add_modifier
+            .remove(ratatui::prelude::Modifier::REVERSED),
         Sgr::Fg(c) => style.fg = Some(c),
         Sgr::Bg(c) => style.bg = Some(c),
         Sgr::DefaultFg => style.fg = None,
@@ -303,11 +311,12 @@ mod tests {
     fn 加粗与下划线() {
         let line = ansi_escape_line("\x1b[1;4mbold under\x1b[22;24mnormal");
         assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
-        assert!(line
-            .spans[0]
-            .style
-            .add_modifier
-            .contains(Modifier::UNDERLINED));
+        assert!(
+            line.spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::UNDERLINED)
+        );
         assert!(!line.spans[1].style.add_modifier.contains(Modifier::BOLD));
     }
 

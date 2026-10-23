@@ -97,8 +97,7 @@ pub(super) fn mixed_url_wrap_ranges(
             let empty_line_piece_limit = line_limit.saturating_sub(empty_line_prefix_width).max(1);
             // 空行上的超宽非 URL 片段先尝试再拆分。
             let mut force_place = false;
-            if line_start.is_none() && !piece.is_url && piece.width(text) > empty_line_piece_limit
-            {
+            if line_start.is_none() && !piece.is_url && piece.width(text) > empty_line_piece_limit {
                 let split = split_mixed_url_word(text, piece.clone(), empty_line_piece_limit);
                 // 拆分必须有净进展才 splice:textwrap `break_apart` 对「单个
                 // 字符宽于可用宽度」(CJK/emoji 宽 2、limit 1)会原样返回该

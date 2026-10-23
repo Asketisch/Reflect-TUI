@@ -72,7 +72,8 @@ pub fn collect_session_files(base: &Path, tid: &ThreadId) -> Result<Vec<PathBuf>
                 continue;
             };
             let by_name = stem == target;
-            let by_meta = reflect_rollout::index::first_line_session_id(&path).as_ref() == Some(tid);
+            let by_meta =
+                reflect_rollout::index::first_line_session_id(&path).as_ref() == Some(tid);
             if !by_name && !by_meta {
                 continue;
             }
@@ -137,7 +138,8 @@ pub fn resolve_thread_id(id_or_prefix: &str) -> Result<ThreadId> {
         .map_err(|e| anyhow::anyhow!("扫描 session 目录失败: {e}"))?
     {
         // 内部 id 优先(UI 展示的就是它);文件首行无 SessionMeta 时退回文件名 stem。
-        let tid = reflect_rollout::index::first_line_session_id(&path).or_else(|| stem_thread_id(&path));
+        let tid =
+            reflect_rollout::index::first_line_session_id(&path).or_else(|| stem_thread_id(&path));
         if let Some(t) = tid
             && seen.insert(t.to_string())
         {
