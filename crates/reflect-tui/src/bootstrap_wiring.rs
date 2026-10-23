@@ -342,7 +342,10 @@ pub(crate) fn build_m4(
     // 压缩器:接 LLM 摘要器(Router::Compact slot,失败跨 credential failover),
     // 无可用客户端时退回 Noop(compactor 降级 smart_prune)。
     let summarizer: Arc<dyn Summarizer> = {
-        let policy = cfg.routing_policy();
+        // v1.5:用**已解析**的 spec 构建 routing(compact slot 的 primary
+        // 必须等于真实模型)。`routing_policy()` 走同步解析,在
+        // `model = "free"` 场景下拿到的是占位串,会盖掉真实 id。
+        let policy = cfg.routing_policy_with(model);
         let spec = {
             let p = policy.resolve(reflect_llm::Role::Compact).primary.clone();
             if p.is_empty() { model.to_string() } else { p }

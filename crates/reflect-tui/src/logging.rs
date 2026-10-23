@@ -84,28 +84,37 @@ fn default_log_path() -> std::path::PathBuf {
         .join(format!("tui-{date}.log"))
 }
 
+/// 持有 OTLP exporter 的 guard —— 必须活到进程退出,否则 provider 被
+/// shutdown,in-flight span 全部丢失。泄漏到进程全局(`OnceLock`)。
+static OTEL_GUARD: std::sync::OnceLock<reflect_config::ExporterGuard> = std::sync::OnceLock::new();
+
 /// 安装 tracing subscriber。仅生效一次(`Once` 守护)。
 ///
 /// 默认 EnvFilter 仍为 `"warn,reflect=info"`(与 `reflect-exec` 一致),
 /// 仅替换 writer:stderr 是 tty → 文件;否则 → stderr。`try_init` 结果
 /// 忽略(测试可能已装 subscriber,best-effort)。
-pub fn init() {
+///
+/// `analytics` = `[analytics]` 段。给了且 `enabled` 时启动 OTLP/HTTP
+/// exporter 并把 `OpenTelemetryLayer` 挂进 registry —— 业务侧的
+/// `#[tracing::instrument]` / `info_span!` 自动转成 OTLP span。
+/// 此前 TUI 完全没有这层,`[analytics] enabled = true` 是死配置
+/// (headless `reflect-exec` 有)。exporter 启动失败只降级 + warn,
+/// 不阻塞启动(与 reflect-exec 同款 fail-closed 语义)。
+pub fn init(analytics: Option<&reflect_config::AnalyticsSection>) {
     static TRACING_INIT: Once = Once::new();
     TRACING_INIT.call_once(|| {
-        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,reflect=info"));
+        // v1.3 接线:先起 OTLP exporter(设全局 TracerProvider),再把
+        // OpenTelemetryLayer 加进 registry。失败 → None,不阻塞。
+        let otel_guard = analytics.and_then(reflect_config::init_exporter);
 
         // stderr 是 tty → 用户没重定向,写文件避免污染 TUI。
         // 否则(stderr 已被 `2>file` 重定向)→ 仍写 stderr,保留文档工作流。
-        if std::io::stderr().is_terminal() {
+        let wrote_to_file = if std::io::stderr().is_terminal() {
             let path = default_log_path();
             match LogFile::open(&path) {
                 Ok(log_file) => {
-                    let _ = tracing_subscriber::fmt()
-                        .with_env_filter(filter)
-                        .with_writer(log_file)
-                        .try_init();
-                    return;
+                    install_subscriber(log_file, otel_guard.as_ref());
+                    true
                 }
                 Err(e) => {
                     // 文件打开失败:回退 stderr,并在终端留一行提示(此时
@@ -114,15 +123,49 @@ pub fn init() {
                         "reflect-tui: 打开日志文件 {} 失败,回退 stderr: {e}",
                         path.display()
                     );
+                    false
                 }
             }
+        } else {
+            false
+        };
+        if !wrote_to_file {
+            install_subscriber(std::io::stderr, otel_guard.as_ref());
         }
 
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_writer(std::io::stderr)
-            .try_init();
+        // 把 guard 泄漏到进程全局,确保退出前不会 drop(否则 provider 被提前
+        // shutdown,in-flight span 丢失)。
+        if let Some(g) = otel_guard {
+            let _ = OTEL_GUARD.set(g);
+        }
     });
+}
+
+/// 装 subscriber(fmt + 可选 OTLP layer)。OTLP layer 仅在 exporter 起来时
+/// 挂载,避免空 subscriber 增加开销。
+fn install_subscriber<W>(writer: W, otel_guard: Option<&reflect_config::ExporterGuard>)
+where
+    // `Send + Sync` 是必需的:subscriber 最终要装进全局 `Dispatch`,后者要求
+    // `Subscriber + Send + Sync + 'static`。泛型 writer 若不带这两个 bound,
+    // 编译器无法证明整条 Layered 链满足要求 —— headless 那边 writer 是具体
+    // 类型(`std::io::stderr`)所以没暴露这个问题。
+    W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
+{
+    use tracing_subscriber::prelude::*;
+
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,reflect=info"));
+    // layer 形态的 fmt 没有 `with_env_filter`(那是 `fmt::Subscriber` 的 API);
+    // `EnvFilter` 本身实现 `Layer`,作为独立一层挂进 registry —— 与
+    // headless `reflect-exec::runtime_config::init_tracing` 同款装配。
+    let fmt_layer = tracing_subscriber::fmt::layer().with_writer(writer);
+    let otel_layer =
+        otel_guard.map(|g| tracing_opentelemetry::layer().with_tracer(g.tracer("reflect")));
+    let _ = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt_layer)
+        .with(otel_layer)
+        .try_init();
 }
 
 #[cfg(test)]

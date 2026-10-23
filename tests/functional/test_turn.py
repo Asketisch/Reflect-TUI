@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import time
 
-from tui_pty import text_reply, tool_call
+from tui_pty import text_reply, tool_call, tool_call_delta
 
 
 def test_user_message_and_reply_appear(tui, mock_script) -> None:
@@ -201,4 +201,30 @@ def test_token_stats_appear_after_turn(tui, mock_script) -> None:
         # mock provider 的 token 统计不一定非零;断言 HUD 上下文条存在即可。
         assert "context left" in txt.lower() or "Context" in txt, (
             f"HUD 应有上下文用量段:\n{txt[-500:]}"
+        )
+
+
+def test_tool_args_streamed_into_call_line(tui, mock_script) -> None:
+    """T11 工具参数分片下发 → 调用行带上参数摘要。
+
+    v1.5 接线:`EventMsg::ToolCallArgsDelta` 把模型生成中的 tool_use 参数
+    逐片转给客户端。此前端点的 `ToolCallBegin.args` 恒为 `null`,工具执行
+    完就彻底看不到「它到底动了哪个文件」。
+
+    mock provider 的 `tool_call_delta` 形态会走 engine 的
+    `args_from_start == false` 分支 → 逐段转发 `tool_call_args_delta`。
+    TUI 累积后在工具完成瞬间把摘要落到历史行(`✓ glob (…) · *.rs`)。
+    """
+    script = mock_script(
+        [tool_call_delta("glob", ['{"pattern": "*.', 'rs"}'])]
+    )
+    with tui(script=script) as s:
+        s.wait_boot(timeout=30)
+        s.type_text("list rust files")
+        s.key("enter")
+        txt = s.wait_text("glob", timeout=30)
+        assert not s.has_panic(), f"不应 panic:\n{s.raw_output()[-600:]}"
+        # 参数摘要进调用行:`*.rs` 是 glob 工具的 pattern 参数。
+        assert "*.rs" in txt, (
+            f"工具调用行应带上参数摘要(来自 ToolCallArgsDelta):\n{txt[-800:]}"
         )

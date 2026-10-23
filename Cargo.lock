@@ -3026,6 +3026,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-util",
  "toml",
  "tracing",
  "tracing-opentelemetry",
@@ -3070,6 +3071,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "reflect-discussion"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "parking_lot",
+ "reflect-config",
+ "reflect-core",
+ "reflect-llm",
+ "reflect-prompt",
+ "reflect-protocol",
+ "reflect-subagent",
+ "reflect-tools",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "reflect-goal"
 version = "0.1.0"
 dependencies = [
@@ -3108,6 +3135,18 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
+ "tracing",
+]
+
+[[package]]
+name = "reflect-integration"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
  "tracing",
 ]
 
@@ -3305,6 +3344,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "filetime",
  "parking_lot",
  "reflect-protocol",
  "reflect-sanitize",
@@ -3499,6 +3539,7 @@ dependencies = [
  "itertools 0.13.0",
  "lazy_static",
  "libc",
+ "opentelemetry",
  "parking_lot",
  "pathdiff",
  "pollster",
@@ -3512,7 +3553,10 @@ dependencies = [
  "reflect-compact",
  "reflect-config",
  "reflect-core",
+ "reflect-discussion",
+ "reflect-goal",
  "reflect-hooks",
+ "reflect-integration",
  "reflect-llm",
  "reflect-lsp",
  "reflect-mcp",
@@ -3550,6 +3594,7 @@ dependencies = [
  "tokio-util",
  "toml",
  "tracing",
+ "tracing-opentelemetry",
  "tracing-subscriber",
  "two-face",
  "unicode-segmentation",

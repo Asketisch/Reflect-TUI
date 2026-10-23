@@ -65,6 +65,10 @@ pub enum SlashCommand {
     #[strum(to_string = "pets", serialize = "pet")]
     Pets,
     Mcp,
+    /// v1.x `/lsp` —— 语言服务诊断状态(文档数 / 诊断条数 / server 名)。
+    Lsp,
+    /// v1.x `/todo` —— agent 当前的待办清单(TodoWrite 写、会话级槽持有)。
+    Todo,
     Apps,
     #[strum(to_string = "plugins", serialize = "plugin")]
     Plugins,
@@ -155,6 +159,8 @@ impl SlashCommand {
             SlashCommand::AutoReview => "approve one retry of a recent auto-review denial",
             SlashCommand::Memories => "configure memory use and generation",
             SlashCommand::Mcp => "list configured MCP tools; use /mcp verbose for details",
+            SlashCommand::Lsp => "show language-server diagnostics status",
+            SlashCommand::Todo => "show the agent's current todo checklist",
             SlashCommand::Prompt => "manage prompt layers: /prompt list · /prompt reload",
             SlashCommand::Apps => "manage apps",
             SlashCommand::Plugins => "browse plugins",
@@ -249,6 +255,8 @@ impl SlashCommand {
             | SlashCommand::Goal
             | SlashCommand::Loop
             | SlashCommand::Mcp
+            | SlashCommand::Lsp
+            | SlashCommand::Todo
             | SlashCommand::Prompt
             | SlashCommand::Apps
             | SlashCommand::Plugins

@@ -38,6 +38,9 @@ pub fn load_mcp_status(servers: &[McpServerView]) -> Vec<Line<'static>> {
             "  0 servers · Esc to close",
             Style::default().fg(Color::DarkGray),
         )));
+        // 未连接任何 server 时也要给「有哪些可选 / 怎么装」的入口 ——
+        // 这正是用户第一次想装 MCP server 时的场景。
+        lines.extend(curated_catalog_lines());
         return lines;
     }
 
@@ -90,6 +93,50 @@ pub fn load_mcp_status(servers: &[McpServerView]) -> Vec<Line<'static>> {
         Style::default().fg(Color::DarkGray),
     )));
 
+    lines.extend(curated_catalog_lines());
+
+    lines
+}
+
+/// 渲染内置精选 MCP 目录 + 安装提示。
+///
+/// v1.x 接线:submodule 的 `reflect_mcp::curated_catalog` / `install_hint`
+/// 提供了内置精选目录与等价的 TOML 片段。此前 TUI 的 `/mcp` overlay 只显示
+/// **已连接**的服务器 —— 用户想装一个 MCP server 时没有任何「有哪些可选 /
+/// 怎么装」的入口。
+///
+/// 目录里的 server 若已在连接列表中,标注 `[已连接]`,不重复给安装命令。
+fn curated_catalog_lines() -> Vec<Line<'static>> {
+    let catalog = reflect_mcp::curated_catalog();
+    if catalog.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "Curated catalog (add to ~/.reflect/config.toml)",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+    ];
+    for entry in &catalog {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {} ", entry.id),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled(
+                format!("[{}] ", entry.category),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(entry.description.clone(), Style::default().fg(Color::Gray)),
+        ]));
+        lines.push(Line::from(Span::styled(
+            format!("    {}", reflect_mcp::install_hint(entry)),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
     lines
 }
 
@@ -173,5 +220,19 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert!(list[0].connected);
         assert_eq!(list[0].tool_names, vec!["srv__t".to_string()]);
+    }
+
+    #[test]
+    fn curated_catalog_is_listed_with_install_hint() {
+        // v1.x:内置精选目录要给用户「有哪些可选 + 怎么装」的入口。
+        let text = render(&[]);
+        assert!(text.contains("Curated catalog"));
+        assert!(text.contains("[mcp_servers."));
+    }
+
+    #[test]
+    fn curated_catalog_section_is_empty_when_catalog_is_empty() {
+        // 目录为空时不应留下孤立的标题行。
+        assert!(!curated_catalog_lines().is_empty());
     }
 }

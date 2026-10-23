@@ -44,7 +44,7 @@
 | 启动 / 渲染锚点 / 退出生命周期 / 全屏模式 | B1–B12 | cli_core(`--help`/`--version`) | — |
 | slash 命令面(84 条命令) | S1–S8 | — | ✅ 全覆盖门禁 |
 | 弹层 / 浮层 / 选择器 / 鼠标反向门禁 | O1–O12 | — | ✅ picker 数门禁 |
-| 对话轮次 / 流式 / 工具 / 统计 | T1–T10 | — | — |
+| 对话轮次 / 流式 / 工具 / 统计 | T1–T11 | — | — |
 | 会话持久化 / 恢复 / plan 落盘 | P1–P7 | cli_modules(session) | — |
 | headless CLI 语义 | C1–C10 | cli_modules(traces) | — |
 | 键盘交互(权限循环 / 历史召回 / 编辑器 / 复制 / 多行 / vim) | K1–K11(无 K6) | — | — |
@@ -147,6 +147,7 @@
 | T8 | 脚本耗尽回退 | `Hello from mock LLM!` |
 | T9 | Esc 打断回合 | 回合收尾 / 中断提示 |
 | T10 | 回合后 HUD 用量段 | `context left` |
+| T11 | 工具参数分片下发 | 调用行带参数摘要(`✓ glob (…) · *.rs`) |
 
 > **mock provider 的语义(测试必须知道)**:
 > `REFLECT_MOCK_SCRIPT` 是 JSONL,**每次模型调用消费一行**
@@ -294,7 +295,7 @@
 
 ---
 
-## 3. CLI 子命令(10 个,不含 help)
+## 3. CLI 子命令(14 个,不含 help)
 
 | 子命令 | 参数矩阵(bash) | 语义断言(Python) |
 |---|---|---|
@@ -305,9 +306,13 @@
 | `session rename` | cli_modules | P6 |
 | `session export` | cli_modules | C6, C7 |
 | `session stats` | cli_modules | C8 |
+| `session search` | cli_core | — |
 | `traces ls` | cli_modules | — |
 | `traces show` | cli_modules | — |
 | `traces spans` | cli_modules | C9 |
+| `workspace clone` | cli_core | — |
+| `discussion run` | cli_core | — |
+| `security audit` | cli_core | — |
 
 顶层:`--help` / `-h` / `--version` / `--cwd` / `-C` / TUI 参数
 (`--prompt` / `-c` / `-r` / `--resume` / `--plan-mode` /
@@ -334,6 +339,18 @@
 | Telemetry | `bootstrap_wiring.rs:75-129` | `~/.reflect/traces/` 产物 + `traces spans` |
 | 压缩 | `bootstrap.rs` + `reflect-compact` | `🗜 已压缩上下文:…` 通知 |
 | 权限模式 | `Op::CyclePermissionMode` | HUD `[plan]` / `[accept_edits]` 段 |
+| 工具参数流(`ToolCallArgsDelta`) | `tui/conversion.rs` + `adapter.rs` | 调用行参数摘要 `✓ glob (…) · *.rs` |
+| 路由事件(failover / 冷却 / 跨模型降级) | `tui/conversion.rs` + `routing_status.rs` | `↻ 路由切换 · main: …` / `↘ 模型降级 · …` 通知行 |
+| 目标模式状态快照 | `tui/mod.rs`(`AgentThread::goal_snapshot`) | `/goal` 无参 → `目标模式 · 进行中` + 进度行 |
+| provider 模型清单 + 免费判定 | `reflect_config::fetch_catalog` + `reflect_llm::model_catalog` | `/model` 无参 → 清单行 + `免费` / `免费?` 标记 |
+| 配置热重载 | `reflect_config::ConfigWatcher` + `config_reload.rs` | `🔄 配置已重载(…)· 变更段: …` 通知行 |
+| 分析遥测(OTLP) | `logging.rs`(`reflect_config::init_exporter`) | `[analytics] enabled=true` → OTLP span 导出 |
+| LSP 诊断 | `reflect_lsp::DiagnosticRegistry` | `/lsp` → `诊断文档: N · 诊断条数: M` |
+| Agent 待办清单 | `AgentConfig::todos_slot` | `/todo` → `N 项(✅ … 完成 · 🔄 … 进行中 · ⬜ … 待办)` |
+| MCP 精选目录 | `reflect_mcp::curated_catalog` | `/mcp` overlay 的 `Curated catalog` 段 + 安装片段 |
+| 目标模式校验 / 预算 | `reflect_goal` + `Op::EnterGoalMode` | `/goal <目标> --verify <cmd> --budget <n>` |
+| OS 级沙箱状态 | `reflect_sandbox::OsSandbox::status_line` | `/status` 的 `sandbox:` 段 |
+| 终端通知开关 / 通道 | `reflect_config::TuiNotificationsSection` | `[notifications.tui]` 的 `enabled` / `on_*` / `channels` 真正生效 |
 
 ---
 
@@ -446,6 +463,22 @@
 - **vendored 上游测试(约 760 条)**:受 feature `tui-upstream-tests` 门控,
   且测的是**运行时不可达**的 `tui_core/bottom_pane` / `chatwidget` 一族,
   不宜当作「已覆盖」。
+- **`model = "free"` 的清单发现**:mock provider 不提供模型清单端点
+  (`list_models` 返回 `Ok(None)`),离线路径只能验到「如实报错」这一支;
+  真正的「从清单里挑一个免费模型」需要带 `/models` 端点的 provider。
+  判定规则(`reflect_llm::model_catalog::FreeModelRules`)本身有 Rust 单测。
+- **路由 failover / `SpecFallback` 跨模型降级**:需要同 provider 的多个
+  凭据(至少一个失效)+ `[routing] fallbacks` 配置,离线 mock 只有单凭据。
+  事件格式化(`routing_status.rs`)有 Rust 单测,真实切换路径未覆盖。
+- **配置热重载**:watcher 已接上(`ConfigWatcher` → 重建 provider client →
+  推 `🔄 配置已重载` 通知),但「改文件 → 界面出现通知」这条端到端路径
+  未加 pty 用例(依赖文件系统事件时序,易 flaky)。
+- **LSP 诊断**:需要真实语言服务器(rust-analyzer 等)推送
+  `publishDiagnostics`;`/lsp` 的空态路径有用例覆盖。
+- **分析遥测(OTLP)**:需要真实的 OTLP 端点;`[analytics]` 段的解析与
+  exporter 启动失败降级有 Rust 单测,导出内容未验证。
+- **终端通知的开关 / 通道**:策略判定(`enabled` / `on_*` / `channels`)有
+  Rust 单测;实际 OSC9 / BEL 序列发出依赖真实终端,pty 环境下不可观测。
 
 > 已从本清单移出(2026-10 离线实证可测,已纳入 W 组):审批链路
 > `⚠ APPROVAL NEEDED`(W1/W2)、`AskUserQuestion` / `ask_user` 面板

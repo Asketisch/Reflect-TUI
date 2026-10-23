@@ -37,6 +37,8 @@ expression: commands
 /theme - choose a syntax highlighting theme
 /pets - choose or hide the terminal pet
 /mcp - list configured MCP tools; use /mcp verbose for details
+/lsp - show language-server diagnostics status
+/todo - show the agent's current todo checklist
 /prompt - manage prompt layers: /prompt list · /prompt reload
 /logout - log out of Reflect
 /exit - exit Reflect

@@ -7,5 +7,8 @@
 //!
 //! 参照:`reflect-agent/crates/runtime/reflect-cli/src/{session,traces}.rs`。
 
+pub mod discussion;
+pub mod security;
 pub mod session;
 pub mod traces;
+pub mod workspace;

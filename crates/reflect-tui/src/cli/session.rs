@@ -427,6 +427,63 @@ pub fn export(id: &str, out: Option<&std::path::Path>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `reflect-tui session search <query>` —— 跨会话全文搜索(v1.5 新功能)。
+///
+/// 在全部本地 session 的消息内容里找包含 `query`(大小写不敏感子串)的
+/// 记录,按「最近活跃优先」输出命中摘要。输出字段:session id 前缀
+/// (可直接喂给 `reflect-tui --resume` / `session show`)、角色、摘要。
+/// `--json` 以 JSON 行输出,便于脚本消费。
+///
+/// 命中摘要在返回前已由 `reflect-rollout` 过密钥脱敏 —— 不会把密钥带进
+/// 搜索输出。
+pub fn search(query: &str, limit: usize, json: bool) -> anyhow::Result<()> {
+    let base = default_base();
+    let hits = reflect_rollout::search_sessions(
+        &base,
+        query,
+        &reflect_rollout::SearchOptions {
+            max_hits: limit.max(1),
+            ..Default::default()
+        },
+    )
+    .context("search sessions")?;
+
+    if hits.is_empty() {
+        println!("(no matches for {query:?} under {})", base.display());
+        return Ok(());
+    }
+
+    if json {
+        for h in &hits {
+            let obj = serde_json::json!({
+                "session_id": h.session_id.map(|s| s.to_string()),
+                "file": h.file.display().to_string(),
+                "line_no": h.line_no,
+                "role": h.role,
+                "snippet": h.snippet,
+            });
+            println!("{obj}");
+        }
+        return Ok(());
+    }
+
+    println!("{:<10}  {:<10}  snippet", "session", "role");
+    for h in &hits {
+        // session id 取前 8 位前缀(resume / show 均支持前缀定位)。
+        let id_prefix: String = h
+            .session_id
+            .map(|s| s.to_string()[..8].to_string())
+            .unwrap_or_else(|| "-".into());
+        let role = h.role.as_deref().unwrap_or("-");
+        println!("{:<10}  {:<10}  {}", id_prefix, role, h.snippet);
+    }
+    println!(
+        "\n{} hit(s);用 `reflect-tui session show <id前缀>` 看详情",
+        hits.len()
+    );
+    Ok(())
+}
+
 // ────────────────────────── 内部 helper(移植自 reflect-cli session.rs) ──────────────────────────
 
 /// 解析 `id`(完整 UUID 或前缀)为 session 文件路径。

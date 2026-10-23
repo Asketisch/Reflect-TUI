@@ -120,7 +120,16 @@ def test_resume_with_invalid_id_fails_fast(tui, sandbox) -> None:
         rc = s.returncode()
         assert rc is not None, "非法 id 应快速退出而不是挂死"
         assert rc != 0, f"应非 0 退出,实际 {rc}"
-        assert "thread id" in s.raw_output().lower() or "invalid" in s.raw_output().lower()
+        # 诊断文案要指名道姓地说明「这个 id 不合法、应该长什么样」。
+        # 实现侧的文案是中文(`无效的 session id '…':应为 UUID 或其前缀`),
+        # 故断言锚点用「session id」这个稳定片段,而不是某一种语言的措辞。
+        out = s.raw_output().lower()
+        assert (
+            "session id" in out or "invalid" in out or "thread id" in out
+        ), f"报错文案应指明 id 无效:\n{s.raw_output()[-400:]}"
+        assert "not-a-uuid" in s.raw_output(), (
+            f"报错文案应回显出错的 id:\n{s.raw_output()[-400:]}"
+        )
 
 
 def test_session_name_is_written_by_rename(tui, sandbox, mock_script) -> None:
