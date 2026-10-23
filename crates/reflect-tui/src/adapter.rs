@@ -236,6 +236,8 @@ pub enum UiHistoryItem {
     Separator {
         elapsed_secs: Option<u64>,
         had_work: bool,
+        /// 本回合成本(美元):回合结束时的总成本减去回合开始时的基线。
+        turn_cost: Option<f64>,
     },
     Plan(String),
     Error(String),
@@ -322,6 +324,8 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             state.busy = true;
             state.clear_stream();
             state.turn_started_at = Some(std::time::Instant::now());
+            // 回合成本基线:回合结束时取总成本差值,写入分隔符小结。
+            state.turn_cost_baseline = state.context_usage.total_cost_usd;
             state.had_tool_this_turn = false;
             state.seen_tool_calls.clear();
             state.segment_start = 0;
@@ -365,12 +369,21 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
                     .turn_started_at
                     .map(|t| t.elapsed().as_secs())
                     .filter(|s| *s > 0);
+                // 回合小结成本 = 回合结束总成本 - 回合开始基线;无基线时退化为总成本。
+                let turn_cost = match (state.context_usage.total_cost_usd, state.turn_cost_baseline)
+                {
+                    (Some(total), Some(base)) if total >= base => Some(total - base),
+                    (Some(total), None) => Some(total),
+                    _ => None,
+                };
                 state.history.push(UiHistoryItem::Separator {
                     elapsed_secs,
                     had_work: true,
+                    turn_cost,
                 });
             }
             state.turn_started_at = None;
+            state.turn_cost_baseline = None;
             state.had_tool_this_turn = false;
             state.seen_tool_calls.clear();
             // 回合结束，清除残留的审批 banner，避免显示已过时的审批提示。

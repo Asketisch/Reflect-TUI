@@ -195,6 +195,8 @@ pub struct UiState {
     pub(crate) cwd: PathBuf,
     /// 当前回合开始时刻（用于回合分隔符的 "Worked for Nm"）。
     pub(crate) turn_started_at: Option<Instant>,
+    /// 本回合开始时的累计成本基线（回合小结 = 回合结束时总成本 - 此值）。
+    pub(crate) turn_cost_baseline: Option<f64>,
     /// 本回合是否出现过工具调用（决定是否画分隔符）。
     pub(crate) had_tool_this_turn: bool,
     /// 已写入 history 的工具调用 call_id（去重：begin/end 只写一条 end）。
@@ -601,6 +603,7 @@ impl Default for UiState {
             pending_approval: None,
             cwd,
             turn_started_at: None,
+            turn_cost_baseline: None,
             had_tool_this_turn: false,
             seen_tool_calls: HashSet::new(),
             tool_names: HashMap::new(),

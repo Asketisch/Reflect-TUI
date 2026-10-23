@@ -97,9 +97,11 @@ pub fn history_item_to_lines(item: &UiHistoryItem, width: u16, cwd: &Path) -> Ve
         UiHistoryItem::Separator {
             elapsed_secs,
             had_work,
+            turn_cost,
         } => Box::new(crate::history_render::cells::separator_cell(
             *elapsed_secs,
             *had_work,
+            *turn_cost,
         )),
         UiHistoryItem::Plan(text) => Box::new(new_proposed_plan(text.clone(), cwd)),
         UiHistoryItem::Error(text) => Box::new(new_error_event(text.clone())),
@@ -187,9 +189,11 @@ pub fn history_to_cells(history: &[UiHistoryItem], cwd: &Path) -> Vec<Arc<dyn Hi
                 UiHistoryItem::Separator {
                     elapsed_secs,
                     had_work,
+                    turn_cost,
                 } => Arc::new(crate::history_render::cells::separator_cell(
                     *elapsed_secs,
                     *had_work,
+                    *turn_cost,
                 )),
                 UiHistoryItem::Plan(text) => Arc::new(new_proposed_plan(text.clone(), cwd)),
                 UiHistoryItem::Error(text) => Arc::new(new_error_event(text.clone())),

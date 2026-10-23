@@ -167,7 +167,11 @@ pub fn banner_cell(version: &str) -> PlainHistoryCell {
 ///
 /// 不复用 Reflect `FinalMessageSeparator`(其 `new` 是 `pub(crate)` 但依赖
 /// `RuntimeMetricsSummary`),这里手画,避免改 Reflect 可见性。
-pub fn separator_cell(elapsed_secs: Option<u64>, had_work: bool) -> PlainHistoryCell {
+pub fn separator_cell(
+    elapsed_secs: Option<u64>,
+    had_work: bool,
+    turn_cost: Option<f64>,
+) -> PlainHistoryCell {
     let mut label_parts = Vec::new();
     if had_work {
         if let Some(secs) = elapsed_secs.filter(|s| *s > 60) {
@@ -176,6 +180,10 @@ pub fn separator_cell(elapsed_secs: Option<u64>, had_work: bool) -> PlainHistory
                 crate::tui_core::status_indicator_widget::fmt_elapsed_compact(secs)
             ));
         }
+    }
+    // 回合小结:provider 上报了本回合成本时附在分隔符上。
+    if let Some(cost) = turn_cost.filter(|c| *c > 0.0) {
+        label_parts.push(format!("${:.4}", cost));
     }
     // 宽度无关:取一个固定长度分隔;`take_prefix_by_width` 在 display_lines 时裁切。
     let rule = if label_parts.is_empty() {
@@ -236,7 +244,7 @@ mod tests {
 
     #[test]
     fn separator_has_rule() {
-        let cell = separator_cell(None, true);
+        let cell = separator_cell(None, true, None);
         let lines = cell.display_lines(60);
         let s = line_to_plain(&lines[0]).to_string();
         assert!(s.contains("─"), "separator rule: {s}");
@@ -244,10 +252,28 @@ mod tests {
 
     #[test]
     fn separator_with_elapsed_label() {
-        let cell = separator_cell(Some(125), true);
+        let cell = separator_cell(Some(125), true, None);
         let lines = cell.display_lines(60);
         let s = line_to_plain(&lines[0]).to_string();
         assert!(s.contains("Worked for"), "elapsed label: {s}");
+    }
+
+    #[test]
+    fn separator_with_turn_cost_label() {
+        // 回合小结:provider 上报了本回合成本时附在分隔符上。
+        let cell = separator_cell(None, true, Some(0.0125));
+        let lines = cell.display_lines(60);
+        let s = line_to_plain(&lines[0]).to_string();
+        assert!(s.contains("$0.0125"), "turn cost label: {s}");
+    }
+
+    #[test]
+    fn separator_omits_zero_turn_cost() {
+        // 成本为 0(未计费模型 / 未上报)时不显示成本标签,避免误导。
+        let cell = separator_cell(None, true, Some(0.0));
+        let lines = cell.display_lines(60);
+        let s = line_to_plain(&lines[0]).to_string();
+        assert!(!s.contains('$'), "零成本不应显示成本标签: {s}");
     }
 
     #[test]
