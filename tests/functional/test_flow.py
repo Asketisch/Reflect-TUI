@@ -45,13 +45,19 @@ _SPINNER_CHARS = ("⠸", "⠹", "⠺", "⠼", "⠻", "⠶", "⠦", "⠧", "⠇",
 
 
 def _seed_session(sandbox: Sandbox, sid: str, msg: str) -> Path:
-    """预置一条最小会话 JSONL(形态与引擎落盘一致)。"""
+    """预置一条最小会话 JSONL(形态与引擎落盘一致)。
+
+    `turn_id` 必须是**合法 UUID**:`RolloutRecord::Message.turn_id` 是
+    `TurnId`(`#[serde(transparent)]` 包 Uuid),反序列化失败会让整行被
+    跳过 —— 回放时只剩 SessionMeta,消息正文丢失(此前夹具写的是
+    `"t1"`,只有「不崩」的断言时看不出来)。
+    """
     base = sandbox.home / ".reflect" / "sessions" / "2026" / "01" / "01"
     base.mkdir(parents=True, exist_ok=True)
     p = base / f"{sid}.jsonl"
     p.write_text(
         json.dumps({"type": "session_meta", "session_id": sid, "model": "mock/mock-1", "started_at": "2026-01-01T00:00:00Z"}) + "\n"
-        + json.dumps({"type": "message", "turn_id": "t1", "role": "user", "content": [{"type": "text", "text": msg}]}) + "\n"
+        + json.dumps({"type": "message", "turn_id": "11111111-2222-4333-8444-555555555555", "role": "user", "content": [{"type": "text", "text": msg}]}) + "\n"
     )
     return p
 
@@ -296,8 +302,10 @@ def test_large_transcript_resume_stays_interactive(tui, mock_script, sandbox) ->
     base.mkdir(parents=True, exist_ok=True)
     lines = [json.dumps({"type": "session_meta", "session_id": sid, "model": "mock/mock-1", "started_at": "2026-01-01T00:00:00Z"})]
     for i in range(100):
-        lines.append(json.dumps({"type": "message", "turn_id": f"t{i}", "role": "user", "content": [{"type": "text", "text": f"big user message {i} " + "x" * 40}]}))
-        lines.append(json.dumps({"type": "message", "turn_id": f"t{i}", "role": "assistant", "content": [{"type": "text", "text": f"big assistant reply {i} " + "y" * 40}]}))
+        # turn_id 必须是合法 UUID,否则整行反序列化失败被跳过(消息进不了回放)。
+        turn_id = f"{i:08x}-0000-4000-8000-000000000000"
+        lines.append(json.dumps({"type": "message", "turn_id": turn_id, "role": "user", "content": [{"type": "text", "text": f"big user message {i} " + "x" * 40}]}))
+        lines.append(json.dumps({"type": "message", "turn_id": turn_id, "role": "assistant", "content": [{"type": "text", "text": f"big assistant reply {i} " + "y" * 40}]}))
     (base / f"{sid}.jsonl").write_text("\n".join(lines) + "\n")
 
     script = mock_script([text_reply("W8_PONG")] * 6)
