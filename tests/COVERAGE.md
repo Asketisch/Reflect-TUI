@@ -196,6 +196,7 @@
 | K1 | Shift+Tab 循环权限模式 | identity 行 `[accept_edits]` → `[plan]` → 无标记(Auto),实测三态循环(见 §6 D11) |
 | K2 | Ctrl+O 复制最后回复 | `⚠ Copied last reply (N chars) to clipboard.` |
 | K3 | Ctrl+G 外部编辑器往返 | `⚠ External editor closed; content loaded into composer.` + `▶ TEXT_FROM_EDITOR` 提交 |
+| K3b | 全屏模式 Ctrl+G 外部编辑器 | 编辑器前真正离开备用屏(`ESC[?1049l`),退出后重进(`ESC[?1049h`) |
 | K4 | Ctrl+R 反向搜索历史 | composer 回填命中条目(`beta probe two`) |
 | K5 | Up 召回最近历史 | composer 回填 `HIST_LAST_ENTRY` |
 | K7 | alt+enter 多行输入 | composer 两行 + 落盘消息体含 `\n`(shift+enter 依赖 kitty 协议,哑 pty 用等价路径) |

@@ -1048,15 +1048,22 @@ fn open_external_editor(
     // 而不是从空 buffer 起步导致原内容丢失。
     let draft = state.composer.current_text();
 
-    // 1. suspend terminal:leave alt-screen + 退出 raw mode。
-    let _ = guard.leave_alt_screen();
+    // 1. suspend terminal:真正离开 alt-screen（fullscreen 下
+    //    `leave_alt_screen` 会短路，必须走 suspend 变体）+ 退出 raw mode。
+    //    记下此前是否在备用屏，编辑器退出后据此决定要不要重进。
+    let was_alt = guard.is_alt_screen();
+    let _ = guard.suspend_alt_screen();
     let _ = crossterm::terminal::disable_raw_mode();
 
     // 2. run editor。失败时尝试恢复 terminal 再返回。
     let result = crate::tui_core::external_editor::run_editor(&draft);
 
-    // 3. restore terminal:raw mode + alt-screen,下一帧重绘。
+    // 3. restore terminal:raw mode + (此前在备用屏时)重进 alt-screen,
+    //    下一帧重绘。enter_alt_screen 内部会 clear()，保证编辑器残留像素清除。
     let _ = crossterm::terminal::enable_raw_mode();
+    if was_alt {
+        let _ = guard.enter_alt_screen();
+    }
     frame_requester.schedule_frame();
 
     match result {
