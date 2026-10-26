@@ -5,6 +5,24 @@
 
 ## [Unreleased]
 
+### submodule 修复批次接线
+
+submodule 指针更新到 `e4560bc`(D1–D7 缺陷收口批次)后,把会话恢复链路
+的引擎侧修复接到 TUI:
+
+- **恢复回放换共享 API**:`reader::replay` 升级后支持任意日期桶、轮转副本
+  合并、文件名 thread id / 内部 session id 双入口 —— 删除本仓库此前因
+  共享实现只扫近 3 天而维护的全盘扫描 workaround(`resume.rs` 的
+  `collect_session_files`),消费点回归共享实现(见 CONTRIBUTING「submodule
+  工作流」的消费点原则)。共享 API 对定位不到的会话返回空 Vec,包装层
+  保留「会话不存在 → 显式报错」,`--resume` 不存在的 id 仍快速失败。
+- **恢复后续写原文件**(引擎 `JsonlRolloutWriter` 修复):恢复旧日期会话后
+  新轮次续写原日期目录的原文件,此前会落到当天桶的新文件、同一会话被
+  拆成两份。
+- 行为级守护:P8(旧日期恢复 + 续写原文件)、P9(双 id 恢复)进
+  `tests/functional/test_session.py`;`resume.rs` 单测锁定「不存在报错」
+  与「跨日期桶 + 轮转副本全量回放」两个包装层语义。
+
 ### submodule 能力接线(v1.5 / v1.7 批次)
 
 submodule 指针更新到 `7912323`(归并远端 7 周演进)后,本仓库把此前**未接线**

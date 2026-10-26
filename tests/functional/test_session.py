@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 
 from tui_pty import text_reply
 
@@ -130,6 +131,87 @@ def test_resume_with_invalid_id_fails_fast(tui, sandbox) -> None:
         assert "not-a-uuid" in s.raw_output(), (
             f"报错文案应回显出错的 id:\n{s.raw_output()[-400:]}"
         )
+
+
+def test_resume_old_date_session_keeps_history_and_appends_to_original_file(
+    tui, sandbox, mock_script
+) -> None:
+    """P8 旧日期会话恢复不丢历史,新轮次续写原日期目录的原文件。
+
+    链路:submodule e4560bc 起 `reader::replay` 全盘定位(任意日期桶 +
+    轮转副本),`JsonlRolloutWriter` 恢复后继续写原文件 —— 此前回放只扫
+    近 3 天(旧会话恢复为空历史),且恢复后的写入会落到当天日期桶的新
+    文件(同一会话被拆成两份)。把会话文件挪进 8 月的日期桶模拟
+    「很久以前创建的会话」,两条行为都要在 TUI 侧成立。
+    """
+    script = mock_script([text_reply("P8_FIRST_REPLY")])
+    with tui(script=script) as s:
+        s.wait_boot(timeout=30)
+        s.type_text("P8_PRIOR_MESSAGE")
+        s.key("enter")
+        s.wait_text("P8_FIRST_REPLY", timeout=30)
+        s.quit(timeout=10)
+
+    files = _session_files(sandbox)
+    assert files, "应生成会话文件"
+    src = files[-1]
+    session_id = src.stem
+
+    # 挪到旧日期桶(2026/08/01),当天桶不再有该会话的文件。
+    old_dir = sandbox.home / ".reflect" / "sessions" / "2026" / "08" / "01"
+    old_dir.mkdir(parents=True, exist_ok=True)
+    original = old_dir / src.name
+    src.rename(original)
+    assert original.is_file()
+
+    script2 = mock_script([text_reply("P8_SECOND_REPLY")])
+    with tui(args=["--resume", session_id], script=script2) as s:
+        txt = s.wait_text("已恢复历史会话", timeout=25)
+        assert "P8_PRIOR_MESSAGE" in txt, f"旧日期会话的既往消息应回填:\n{txt[-800:]}"
+        s.type_text("P8_NEW_MESSAGE")
+        s.key("enter")
+        s.wait_text("P8_SECOND_REPLY", timeout=30)
+        s._pump(settle=1.5, max_wait=3.0)
+
+    # 新轮次续写原日期目录的原文件,而不是在当天桶另立新文件。
+    kept = [p for p in _session_files(sandbox) if p.stem == session_id]
+    assert kept == [original], f"会话应仍只有原日期桶的一份文件:{kept}"
+    body = original.read_text()
+    assert "P8_NEW_MESSAGE" in body, f"新消息应追加进原文件:{original}"
+
+
+def test_resume_by_internal_session_id_of_externally_named_file(
+    tui, sandbox, mock_script
+) -> None:
+    """P9 文件名与内部 session id 脱钩的会话,按内部 id 恢复。
+
+    TUI 自建会话文件名 thread id 与首行 `SessionMeta.session_id` 一致
+    (bootstrap 注入);其它客户端(headless exec 等)写的会话两者不同。
+    把文件改成另一个 uuid 名(首行内部 id 不动)模拟外部会话 —— 恢复
+    入口必须支持「文件名 thread id / 首行内部 session id」双 id。
+    """
+    script = mock_script([text_reply("P9_FIRST_REPLY")])
+    with tui(script=script) as s:
+        s.wait_boot(timeout=30)
+        s.type_text("P9_PRIOR_MESSAGE")
+        s.key("enter")
+        s.wait_text("P9_FIRST_REPLY", timeout=30)
+        s.quit(timeout=10)
+
+    files = _session_files(sandbox)
+    assert files, "应生成会话文件"
+    src = files[-1]
+    meta = json.loads(src.read_text().splitlines()[0])
+    internal_id = meta["session_id"]
+    assert internal_id, "首行 session_meta 应带 session_id"
+
+    # 改名成另一个 uuid:文件名 id 与内部 id 脱钩。
+    decoy = src.with_name(f"{uuid.uuid4()}.jsonl")
+    src.rename(decoy)
+
+    with tui(args=["--resume", internal_id]) as s:
+        txt = s.wait_text("已恢复历史会话", timeout=25)
+        assert "P9_PRIOR_MESSAGE" in txt, f"按内部 id 恢复应回填历史:\n{txt[-800:]}"
 
 
 def test_session_name_is_written_by_rename(tui, sandbox, mock_script) -> None:

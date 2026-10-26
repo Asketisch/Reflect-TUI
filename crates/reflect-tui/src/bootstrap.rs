@@ -256,9 +256,10 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
     let resume_target = resolve_resume_target(&args)?;
     let prior_messages = match resume_target {
         Some(tid) => {
-            // 全盘定位 + 回放(跨日期桶 + 轮转副本),不再受「近 3 天」限制 ——
-            // `reader::replay` 只扫今天/昨天/前天且按文件名 thread id 拼路径,
-            // 3 天以上前的会话会回放为空(历史静默丢失)。见 `crate::resume`。
+            // 定位 + 回放(任意日期桶 + 轮转副本 + 双 id 入口)走 submodule
+            // 共享 API `reader::replay` —— 此前共享实现只扫近 3 天,本仓库
+            // 维护过全盘扫描 workaround,共享 API 补齐后回归共享实现。
+            // 见 `crate::resume`。
             let records =
                 crate::resume::replay_all(&reflect_rollout::path::default_base(), &tid).await?;
             let msgs = reflect_core::resume::records_to_preload(&records);

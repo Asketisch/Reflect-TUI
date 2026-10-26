@@ -3,115 +3,43 @@
 //! 与 `reflect_core::resume::records_to_preload` 的分工:后者负责
 //! **记录 → LLM 消息**的映射(单一事实源,在 submodule 内);本模块只负责
 //! **定位与回放** —— 找到某会话的全部记录文件,按时间正序读出
-//! [`RolloutRecord`]。submodule 只读消费,不复用其内部实现。
+//! [`RolloutRecord`]。
 //!
-//! ## 为什么不能直接用 `reflect_rollout::reader::replay`
+//! ## 为什么回放直接走 submodule 共享 API
 //!
-//! `reader::replay` 用 `Utc::now() - days(0..3)` 拼日期桶(即只扫今天 /
-//! 昨天 / 前天),并且路径由 **文件名 thread id** 拼出(`session_path_at`)。
-//! 于是:
+//! submodule `reflect_rollout::reader::replay` 升级后(7912323 → e4560bc)
+//! 已具备全盘定位能力:任意日期目录、轮转副本(`<id>.1.jsonl` 编号越大越
+//! 旧,活跃文件殿后)合并、以及「文件名 thread id / 首行内部 session id」
+//! 双入口。本仓库此前因共享 API 只扫近 3 天而维护的本地全盘扫描
+//! (`collect_session_files`)随之删除,消费点回归共享实现。
 //!
-//! - **3 天以上前创建的会话 → 回放为空**,`--resume` 静默丢历史(用户
-//!   看到的是「续作成功但没有任何上文」);
-//! - **文件名 thread id ≠ 文件内首行 `SessionMeta` 的内部 id** 时(双 ID
-//!   设计,UI 与索引展示的是内部 id),拼出来的路径根本不存在;
-//! - **轮转副本**(`<id>.1.jsonl` / `.2.jsonl` …)不参与合并,长会话只能
-//!   回放最后一段。
-//!
-//! 本模块改为**全盘扫描** `<base>/YYYY/MM/DD/**` 下的 `.jsonl`,按
-//! 「首行内部 id == 目标」或「文件名 stem == 目标」匹配,再按
-//! (日期桶升序 → 轮转号降序 → 活跃文件殿后)合并成一条时间正序的记录流。
+//! 本模块在共享 API 之上只保留一层「会话不存在 → 显式报错」语义:共享
+//! `replay` 对定位不到的会话返回**空 Vec**,直接透传会让 `--resume` 静默
+//! 以空历史续作(用户看到「续作成功」却没有任何上文)。
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use reflect_protocol::{RolloutRecord, ThreadId};
 
-/// 收集某会话的全部记录文件(跨日期桶 + 轮转副本),按**时间正序**返回。
+/// 回放某会话的全部记录(跨日期桶 + 轮转副本,时间正序)。
 ///
-/// 命中条件(任一即可):
+/// 命中条件由共享 API 保证(任一即可):
+/// - 文件名 stem == `tid`(**thread id**);
 /// - 文件首行的 `SessionMeta.session_id` == `tid`(**内部 id**,UI 与索引
-///   展示的就是它);
-/// - 文件名 stem == `tid`(**thread id**)。
-///
-/// 排序:(日期桶目录升序 → 同桶内轮转号大者在前 → 活跃文件殿后)。
-/// writer 语义:`.jsonl` 写满后轮转为 `.1.jsonl`、再满轮转为 `.2.jsonl` ——
-/// 即**编号越大越旧**。
-pub fn collect_session_files(base: &Path, tid: &ThreadId) -> Result<Vec<PathBuf>> {
-    let target = tid.to_string();
-    let mut files: Vec<(String, u64, PathBuf)> = Vec::new();
-
-    // 递归扫描 base 下的所有子目录(布局为 YYYY/MM/DD)。
-    fn scan(
-        dir: &Path,
-        rel: &str,
-        target: &str,
-        tid: &ThreadId,
-        out: &mut Vec<(String, u64, PathBuf)>,
-    ) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let sub = if rel.is_empty() {
-                    entry.file_name().to_string_lossy().to_string()
-                } else {
-                    format!("{rel}/{}", entry.file_name().to_string_lossy())
-                };
-                scan(&path, &sub, target, tid, out);
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                continue;
-            };
-            // 只认 `.jsonl`;`.tmp` / `.bak` 等一律排除。
-            let Some(stem) = name.strip_suffix(".jsonl") else {
-                continue;
-            };
-            let by_name = stem == target;
-            let by_meta =
-                reflect_rollout::index::first_line_session_id(&path).as_ref() == Some(tid);
-            if !by_name && !by_meta {
-                continue;
-            }
-            // 轮转号:`<stem>.N.jsonl` 的 N 越大越旧;`<stem>.jsonl` 是活跃文件(键 0)。
-            let rot = match stem.rsplit_once('.') {
-                Some((_, num)) if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) => {
-                    num.parse().unwrap_or(0)
-                }
-                _ => 0,
-            };
-            out.push((rel.to_string(), rot, path));
-        }
-    }
-    scan(base, "", &target, tid, &mut files);
-
-    if files.is_empty() {
+///   展示的就是它,来自其它客户端写入的会话两者可能不同)。
+pub async fn replay_all(base: &Path, tid: &ThreadId) -> Result<Vec<RolloutRecord>> {
+    let records = reflect_rollout::reader::replay(base, *tid)
+        .await
+        .with_context(|| format!("回放 session {tid} 失败"))?;
+    if records.is_empty() {
         anyhow::bail!(
             "session {tid} 的记录文件不存在于 {}(无法 resume)",
             base.display()
         );
     }
-    // 时间正序:日期桶升序 → 同桶内轮转号大者(旧)在前 → 活跃文件(键 0)殿后。
-    // 末位以路径兜底,保证排序稳定可复现。
-    files.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
-    Ok(files.into_iter().map(|(_, _, p)| p).collect())
-}
-
-/// 回放某会话的全部记录(跨日期桶 + 轮转副本,时间正序)。
-pub async fn replay_all(base: &Path, tid: &ThreadId) -> Result<Vec<RolloutRecord>> {
-    let paths = collect_session_files(base, tid)?;
-    let mut out = Vec::new();
-    for p in &paths {
-        let mut chunk = reflect_rollout::reader::replay_path(p)
-            .await
-            .with_context(|| format!("回放 {} 失败", p.display()))?;
-        out.append(&mut chunk);
-    }
-    Ok(out)
+    Ok(records)
 }
 
 /// 解析 `--resume` 的 id:完整 UUID,或**唯一**前缀(≥4 位)。
@@ -174,83 +102,14 @@ mod tests {
     use super::*;
     use std::fs;
 
-    /// 造一个 session 目录:<base>/YYYY/MM/DD/<tid>.jsonl(首行 SessionMeta)。
-    fn write_session(base: &Path, day: &str, tid: &ThreadId, body: &str) -> PathBuf {
-        let dir = base.join(day);
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(format!("{tid}.jsonl"));
-        let meta = serde_json::json!({
-            "type": "session_meta",
-            "session_id": tid.to_string(),
-            "model": "test-model",
-            "started_at": "2026-01-01T00:00:00Z",
-        });
-        fs::write(&path, format!("{meta}\n{body}")).unwrap();
-        path
-    }
-
-    #[test]
-    fn 收集跨日期桶的全部文件() {
-        let tmp = std::env::temp_dir().join(format!("resume-collect-{}", uuid::Uuid::new_v4()));
-        let base = tmp.join("sessions");
-        let tid = ThreadId::new();
-        write_session(&base, "2026/01/01", &tid, "");
-        write_session(&base, "2026/02/02", &tid, "");
-        // 别的会话不应被收进来。
-        write_session(&base, "2026/01/01", &ThreadId::new(), "");
-
-        let files = collect_session_files(&base, &tid).unwrap();
-        assert_eq!(files.len(), 2, "应跨日期桶收齐 2 个文件");
-        let _ = fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn 轮转副本按编号降序排在活跃文件之前() {
-        let tmp = std::env::temp_dir().join(format!("resume-rot-{}", uuid::Uuid::new_v4()));
-        let base = tmp.join("sessions");
-        let tid = ThreadId::new();
-        let dir = base.join("2026/01/01");
-        fs::create_dir_all(&dir).unwrap();
-        let meta = serde_json::json!({
-            "type": "session_meta",
-            "session_id": tid.to_string(),
-            "model": "test-model",
-            "started_at": "2026-01-01T00:00:00Z",
-        });
-        // 活跃文件 + 两份轮转副本(编号越大越旧)。
-        for name in [
-            format!("{tid}.jsonl"),
-            format!("{tid}.1.jsonl"),
-            format!("{tid}.2.jsonl"),
-        ] {
-            fs::write(dir.join(name), format!("{meta}\n")).unwrap();
-        }
-
-        let files = collect_session_files(&base, &tid).unwrap();
-        assert_eq!(files.len(), 3, "活跃 + 2 份轮转副本");
-        let names: Vec<String> = files
-            .iter()
-            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
-            .collect();
-        // 时间正序:轮转号大者(旧)在前 → 活跃文件殿后。
-        assert_eq!(
-            names,
-            vec![
-                format!("{tid}.2.jsonl"),
-                format!("{tid}.1.jsonl"),
-                format!("{tid}.jsonl"),
-            ],
-            "轮转副本应按编号降序在前、活跃文件殿后"
-        );
-        let _ = fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn 不存在的会话报错() {
+    #[tokio::test]
+    async fn 不存在的会话回放报错() {
+        // 共享 replay 对定位不到的会话返回空 Vec;包装层必须转成显式错误,
+        // 否则 --resume 会以空历史静默续作。
         let tmp = std::env::temp_dir().join(format!("resume-miss-{}", uuid::Uuid::new_v4()));
         let base = tmp.join("sessions");
         fs::create_dir_all(&base).unwrap();
-        let err = collect_session_files(&base, &ThreadId::new()).unwrap_err();
+        let err = replay_all(&base, &ThreadId::new()).await.unwrap_err();
         assert!(
             err.to_string().contains("无法 resume"),
             "应报「无法 resume」: {err}"
@@ -258,19 +117,32 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
-    #[test]
-    fn 非_jsonl_干扰文件被排除() {
-        let tmp = std::env::temp_dir().join(format!("resume-ext-{}", uuid::Uuid::new_v4()));
+    #[tokio::test]
+    async fn 回放命中跨日期桶与轮转副本的记录() {
+        // 行为级守护:共享 API 的定位面(任意日期 + 轮转副本)必须原样到达
+        // 本仓库消费点 —— 造一个「旧日期桶里放轮转副本、新日期桶放活跃文件」
+        // 的会话,全部记录都应被读出且按时间正序拼接。
+        let tmp = std::env::temp_dir().join(format!("replay-all-{}", uuid::Uuid::new_v4()));
         let base = tmp.join("sessions");
         let tid = ThreadId::new();
-        write_session(&base, "2026/01/01", &tid, "");
-        // 同名的 .tmp / .bak 干扰文件不应被收进来。
-        let dir = base.join("2026/01/01");
-        fs::write(dir.join(format!("{tid}.jsonl.tmp")), "").unwrap();
-        fs::write(dir.join(format!("{tid}.jsonl.bak")), "").unwrap();
+        let meta = serde_json::json!({
+            "type": "session_meta",
+            "session_id": tid.to_string(),
+            "model": "test-model",
+            "started_at": "2026-01-01T00:00:00Z",
+        });
+        // 旧日期桶:轮转副本(编号越大越旧);新日期桶:活跃文件。
+        let old_dir = base.join("2026/01/01");
+        let new_dir = base.join("2026/02/02");
+        fs::create_dir_all(&old_dir).unwrap();
+        fs::create_dir_all(&new_dir).unwrap();
+        fs::write(old_dir.join(format!("{tid}.2.jsonl")), format!("{meta}\n")).unwrap();
+        fs::write(old_dir.join(format!("{tid}.1.jsonl")), format!("{meta}\n")).unwrap();
+        fs::write(new_dir.join(format!("{tid}.jsonl")), format!("{meta}\n")).unwrap();
 
-        let files = collect_session_files(&base, &tid).unwrap();
-        assert_eq!(files.len(), 1, "只应收到 .jsonl 正式文件");
+        let records = replay_all(&base, &tid).await.unwrap();
+        // 每个文件首行都是一条 SessionMeta 记录 → 3 个文件 3 条记录。
+        assert_eq!(records.len(), 3, "跨日期桶 + 轮转副本应全部回放");
         let _ = fs::remove_dir_all(&tmp);
     }
 }

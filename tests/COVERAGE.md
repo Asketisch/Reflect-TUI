@@ -173,6 +173,8 @@
 | P5 | 非法 `--resume` id | 快速失败(非 0),不挂死 |
 | P6 | 会话名落盘 | `~/.reflect/sessions/_names/<id>.name` |
 | P7 | Plan 落盘 | `<workspace>/.reflect/plan/*.md` + 正文 |
+| P8 | 旧日期会话恢复 + 续写原文件 | 会话文件挪进旧日期桶后 `--resume` 历史回填;新轮次追加进原文件,当天桶不另立新文件 |
+| P9 | 双 id 恢复(外部命名会话) | 文件名与首行 `SessionMeta.session_id` 脱钩后,按内部 id 恢复仍回填历史 |
 
 ### C 组 headless CLI 语义(`test_cli.py`)
 | # | 用例 | 断言 |
@@ -340,6 +342,7 @@
 | 压缩 | `bootstrap.rs` + `reflect-compact` | `🗜 已压缩上下文:…` 通知 |
 | 权限模式 | `Op::CyclePermissionMode` | HUD `[plan]` / `[accept_edits]` 段 |
 | 工具参数流(`ToolCallArgsDelta`) | `tui/conversion.rs` + `adapter.rs` | 调用行参数摘要 `✓ glob (…) · *.rs` |
+| 会话恢复回放(任意日期 + 轮转副本 + 双 id) | `resume.rs::replay_all`(`reflect_rollout::reader::replay`) | 旧日期会话 `--resume` 历史回填 + 续写原文件(P8);按内部 session id 恢复(P9) |
 | 路由事件(failover / 冷却 / 跨模型降级) | `tui/conversion.rs` + `routing_status.rs` | `↻ 路由切换 · main: …` / `↘ 模型降级 · …` 通知行 |
 | 目标模式状态快照 | `tui/mod.rs`(`AgentThread::goal_snapshot`) | `/goal` 无参 → `目标模式 · 进行中` + 进度行 |
 | provider 模型清单 + 免费判定 | `reflect_config::fetch_catalog` + `reflect_llm::model_catalog` | `/model` 无参 → 清单行 + `免费` / `免费?` 标记 |
@@ -384,8 +387,10 @@
 - **`--resume` 只扫近 3 天的日期桶**:`reader::replay` 用
   `Utc::now() - days(0..3)` 拼路径,3 天以上前创建的会话回放为空 ——
   续作「成功」但历史静默丢失;轮转副本(`<id>.N.jsonl`)也不参与合并。
-  → **已修**:改为全盘扫描所有日期桶 + 合并轮转副本,按(日期桶升序 →
-  轮转号降序 → 活跃文件殿后)取时间正序(W7c)。
+  → **已修**:先由本仓库维护全盘扫描 workaround;submodule `e4560bc` 起
+  共享 `reader::replay` 具备同等定位能力(任意日期桶 + 轮转副本合并 +
+  文件名/内部 id 双入口),workaround 已删除、消费点回归共享实现
+  (P8、P9),恢复后的写入也续写原日期目录的原文件(writer 侧同步修复)。
 - **Shift+Tab 实际是三态循环**(Auto → AcceptEdits → Plan → Auto):
   `keymap.rs` 注释宣称五模式(含 Prompt / Bypass),但循环到不了后两者
   (K1 锁定,见 §6 D11)。
