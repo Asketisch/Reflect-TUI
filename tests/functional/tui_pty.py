@@ -39,8 +39,8 @@ from typing import Callable
 # 仓库根:tests/functional/pty.py → 上溯两级。
 ROOT = Path(__file__).resolve().parents[2]
 # 被测二进制:默认 release 产物(与 tests/lib.sh 的约定一致)。
-REFLECT_TUI_BIN = Path(
-    os.environ.get("REFLECT_TUI_BIN", str(ROOT / "target" / "release" / "reflect-tui"))
+ZHUYE_CLI_BIN = Path(
+    os.environ.get("ZHUYE_CLI_BIN", str(ROOT / "target" / "release" / "zhuye-cli"))
 )
 
 # 墙钟预算:等待事件/文案的统一上限。回归时断言失败,绝不挂死整个套件。
@@ -124,7 +124,7 @@ class Sandbox:
     cwd: Path
 
     @classmethod
-    def create(cls, prefix: str = "reflect-tui-test-") -> "Sandbox":
+    def create(cls, prefix: str = "zhuye-cli-test-") -> "Sandbox":
         """建隔离目录,并预写空的 `~/.zhuye/config.toml`。
 
         `reflect_config::load_default()` 对缺文件是「回落默认配置」而非报错,
@@ -185,7 +185,7 @@ class Sandbox:
 
 
 class TuiSession:
-    """在 pty 里跑一个 reflect-tui 进程,用 pyte 维护屏幕快照。
+    """在 pty 里跑一个 zhuye-cli 进程,用 pyte 维护屏幕快照。
 
     用法::
 
@@ -213,7 +213,7 @@ class TuiSession:
         self._pyte = pyte
         self.sandbox = sandbox
         self.args = list(args or [])
-        self.binary = Path(binary or REFLECT_TUI_BIN)
+        self.binary = Path(binary or ZHUYE_CLI_BIN)
         self.cols = cols
         self.rows = rows
 

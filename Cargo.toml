@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/reflect-tui"]
+members = ["crates/zhuye-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -50,7 +50,7 @@ zhuye-integration = { path = "reflect-agent/crates/integrations/zhuye-integratio
 # orchestration 层
 # 注:zhuye-goal 是 zhuye-core 的传递依赖(core Cargo.toml 引用),必须声明;
 # zhuye-task/subagent 被 TUI 直接依赖。v1.x 起 submodule 的 facade/CLI crate
-# (reflect/zhuye-exec)以 workspace 继承方式引用 discussion/pipeline,
+# (zhuye/zhuye-exec)以 workspace 继承方式引用 discussion/pipeline,
 # 因此镜像必须列全,否则外层解析继承时缺表报错。
 zhuye-task        = { path = "reflect-agent/crates/orchestration/zhuye-task" }
 zhuye-subagent    = { path = "reflect-agent/crates/orchestration/zhuye-subagent" }

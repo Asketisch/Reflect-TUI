@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ── scripts/install.sh ───────────────────────────────────────────────
-# Reflect-TUI 全局安装脚本:把 reflect-tui 二进制装到 PATH。
+# ZhuYe-CLI 全局安装脚本:把 zhuye-cli 二进制装到 PATH。
 #
-# 优先从已编译的 target/release/reflect-tui 安装;若不存在,自动
+# 优先从已编译的 target/release/zhuye-cli 安装;若不存在,自动
 # 触发 cargo build --release。
 #
 # 安装位置:
@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BIN_NAME="reflect-tui"
+BIN_NAME="zhuye-cli"
 
 INSTALL_DIR="/usr/local/bin"
 SUDO=""
@@ -80,7 +80,7 @@ if [[ "${INSTALL_DIR}" == "${HOME}/.local/bin" ]]; then
             for rc in "${HOME}/.zshrc" "${HOME}/.bashrc"; do
                 [[ -f "${rc}" ]] || continue
                 if ! grep -q "export PATH=\"${INSTALL_DIR}:\$PATH\"" "${rc}"; then
-                    printf '\n# Added by Reflect-TUI installer\nexport PATH="%s:$PATH"\n' "${INSTALL_DIR}" >> "${rc}"
+                    printf '\n# Added by ZhuYe-CLI installer\nexport PATH="%s:$PATH"\n' "${INSTALL_DIR}" >> "${rc}"
                     echo "→ 已把 ${INSTALL_DIR} 加入 $(basename "${rc}") 的 PATH"
                 fi
             done

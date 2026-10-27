@@ -1,4 +1,4 @@
-# tests/ —— Reflect-TUI 全功能测试套件
+# tests/ —— ZhuYe-CLI 全功能测试套件
 
 本目录是仓库的**统一测试入口**,覆盖 TUI 表现层的全部对外功能:
 启动与渲染(含全屏模式)、84 条 slash 命令、11 个弹层、对话轮次、
@@ -18,7 +18,7 @@ headless CLI,以及 Rust 编译面。
 ./tests/run_all.sh live         # live 端到端(需真实 LLM + API key)
 ```
 
-前置:`cargo build --release -p reflect-tui`(入口脚本会自动补建)、
+前置:`cargo build --release -p zhuye-cli`(入口脚本会自动补建)、
 Python 3 + pytest + pyte(`pip install pytest pyte`)、Node 不需要。
 缺依赖的批次自动 **SKIP**,不算失败。
 
@@ -32,7 +32,7 @@ make coverage-audit    # = 覆盖自审(有未覆盖命令即失败)
 
 ## 三层分工
 
-> 分层的理由:本仓是**表现层**,对外只有一个二进制(`reflect-tui`),
+> 分层的理由:本仓是**表现层**,对外只有一个二进制(`zhuye-cli`),
 > 但它有两类完全不同的测试对象 —— **屏幕上的像素** 与 **命令行的输出**。
 > 所以分三层,各测各的,不互相顶替。
 
@@ -78,7 +78,7 @@ make coverage-audit    # = 覆盖自审(有未覆盖命令即失败)
 
 ## 设计要点
 
-- **真二进制 + pty**:能力覆盖层起真实 `reflect-tui` 进程,用 `pyte`
+- **真二进制 + pty**:能力覆盖层起真实 `zhuye-cli` 进程,用 `pyte`
   维护屏幕快照,断言**屏幕上真实出现的文字**。不 mock 渲染层 ——
   接线错误(事件没接到 UI、命令没注册、文件没落)在单元测试里看不见。
 - **屏幕断言带超时**:所有「等待某段文字出现」的断言都有墙钟上限

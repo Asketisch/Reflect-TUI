@@ -27,9 +27,9 @@ source "$HERE/../lib.sh"
 cd "$ROOT"
 
 # release 二进制不存在则构建(幂等)
-if [ ! -x "$REFLECT_TUI_BIN" ]; then
+if [ ! -x "$ZHUYE_CLI_BIN" ]; then
     echo "── 构建 release 二进制 ──"
-    cargo build --release -p reflect-tui --quiet || exit 2
+    cargo build --release -p zhuye-cli --quiet || exit 2
 fi
 
 if ! require_cmd python3; then

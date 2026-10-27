@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mock Anthropic Messages API —— 供 reflect-tui 的**真实 HTTP 链路**测试使用。
+"""Mock Anthropic Messages API —— 供 zhuye-cli 的**真实 HTTP 链路**测试使用。
 
 监听 127.0.0.1(端口由内核分配),处理 `POST /v1/messages`(stream=true),
 按脚本回放 SSE 事件流。零外部依赖(标准库 http.server)。

@@ -5,7 +5,7 @@
   - 会话名:`~/.zhuye/sessions/_names/<thread_id>.name`
   - prompt 历史:`~/.zhuye/prompt_history.jsonl`
   - 恢复回填标记「已恢复历史会话」  tui/mod.rs(bootstrap 侧回填)
-  - fork 提示「Resume with: reflect-tui --resume <child_id>」  cli/session.rs:383
+  - fork 提示「Resume with: zhuye-cli --resume <child_id>」  cli/session.rs:383
 """
 
 from __future__ import annotations
@@ -234,10 +234,10 @@ def test_session_name_is_written_by_rename(tui, sandbox, mock_script) -> None:
     # headless CLI 的 `session rename` 验证落盘路径。
     import subprocess
 
-    from tui_pty import REFLECT_TUI_BIN
+    from tui_pty import ZHUYE_CLI_BIN
 
     r = subprocess.run(
-        [str(REFLECT_TUI_BIN), "session", "rename", files[-1].stem, "P6_RENAME"],
+        [str(ZHUYE_CLI_BIN), "session", "rename", files[-1].stem, "P6_RENAME"],
         capture_output=True,
         text=True,
         timeout=30,

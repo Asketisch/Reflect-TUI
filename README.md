@@ -1,4 +1,4 @@
-# Reflect-TUI
+# ZhuYe-CLI
 
 [![CI](https://github.com/Asketisch/Reflect-TUI/actions/workflows/ci.yml/badge.svg)](https://github.com/Asketisch/Reflect-TUI/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -8,20 +8,20 @@
 > 📖 **English version**: [README.en.md](README.en.md) — translated README for international readers.
 > 注意:本仓库所有代码注释、commit message、PR 描述仍**强制使用中文**(详见 [CONTRIBUTING.md](CONTRIBUTING.md))。
 
-Reflect Agent 的终端交互式客户端,面向终端 AI Agent 工作流,基于 [ratatui](https://github.com/ratatui-org/ratatui)。
+ZhuYe 的终端交互式客户端,面向终端 AI Agent 工作流,基于 [ratatui](https://github.com/ratatui-org/ratatui)。
 
-本仓库**只包含 TUI 表现层**(`reflect-tui` crate),agent 核心引擎(AgentThread / StateGraph / 工具 / 协议等)由 [Reflect-Agent](https://github.com/Asketisch/Reflect-Agent) 提供,通过 **git submodule** 复用。
+本仓库**只包含 TUI 表现层**(`zhuye-cli` crate),agent 核心引擎(AgentThread / StateGraph / 工具 / 协议等)由 [Reflect-Agent](https://github.com/Asketisch/Reflect-Agent) 提供,通过 **git submodule** 复用。
 
 ## 仓库关系
 
 ```
 Reflect-Agent (核心引擎,submodule 提供方)
   └─ crates/{protocol,abilities,resources,orchestration,integrations,runtime}
-  └─ reflect-core (AgentThread + StateGraph)
+  └─ zhuye-core (AgentThread + StateGraph)
 
-Reflect-TUI (本仓库)  ──submodule──► Reflect-Agent
-  └─ crates/reflect-tui (ratatui 交互界面 + 事件循环)
-  └─ reflect-tui 二进制 (终端入口)
+ZhuYe-CLI (本仓库)  ──submodule──► Reflect-Agent
+  └─ crates/zhuye-cli (ratatui 交互界面 + 事件循环)
+  └─ zhuye-cli 二进制 (终端入口)
 ```
 
 ## 快速开始
@@ -29,7 +29,7 @@ Reflect-TUI (本仓库)  ──submodule──► Reflect-Agent
 ```bash
 # 1. 克隆(带 submodule)
 git clone --recursive https://github.com/Asketisch/Reflect-TUI.git
-cd Reflect-TUI
+cd ZhuYe-CLI
 
 # 2. 构建
 make build
@@ -37,33 +37,33 @@ make build
 # 3. 配置 LLM provider(二选一)
 #    方式一:环境变量
 export ANTHROPIC_API_KEY=sk-ant-...
-#    方式二:~/.reflect/config.toml 设置 [active]/[anthropic]/[openai]
+#    方式二:~/.zhuye/config.toml 设置 [active]/[anthropic]/[openai]
 
 # 4. 运行
 make run
 # 或直接:
-./target/release/reflect-tui
+./target/release/zhuye-cli
 ```
 
 Rust 版本由 `rust-toolchain.toml` 锁定(stable,MSRV 1.85,edition 2024)。
 
 ## TUI 启动参数
 
-无子命令默认启动 TUI。常用参数(完整列表见 `reflect-tui --help`):
+无子命令默认启动 TUI。常用参数(完整列表见 `zhuye-cli --help`):
 
 ```bash
-reflect-tui [--cwd PATH] [--prompt TEXT] [-c] [-r N] [--resume ID]
+zhuye-cli [--cwd PATH] [--prompt TEXT] [-c] [-r N] [--resume ID]
             [--plan-mode] [--fullscreen] [--auto-root]
             [--ephemeral-tasks] [--ephemeral-teams]
 
 # 示例
-reflect-tui "帮我重构这个模块"        # 直接带 prompt 启动
-reflect-tui --resume sess_abc123     # 恢复指定 session
-reflect-tui -c                       # 继续上一次会话
-reflect-tui -r 2                     # 恢复最近第 2 个 session
-reflect-tui --plan-mode              # 以 Plan mode 启动
-reflect-tui --fullscreen             # 全屏模式(备用屏;也可用 REFLECT_TUI_FULLSCREEN=1)
-reflect-tui --cwd /path/to/project   # 指定工作目录
+zhuye-cli "帮我重构这个模块"        # 直接带 prompt 启动
+zhuye-cli --resume sess_abc123     # 恢复指定 session
+zhuye-cli -c                       # 继续上一次会话
+zhuye-cli -r 2                     # 恢复最近第 2 个 session
+zhuye-cli --plan-mode              # 以 Plan mode 启动
+zhuye-cli --fullscreen             # 全屏模式(备用屏;也可用 ZHUYE_CLI_FULLSCREEN=1)
+zhuye-cli --cwd /path/to/project   # 指定工作目录
 ```
 
 ## TUI 内 slash 命令
@@ -94,26 +94,26 @@ reflect-tui --cwd /path/to/project   # 指定工作目录
 
 ```bash
 # 列本地 session(支持 --limit/-n、--model 子串过滤)
-reflect-tui session ls -n 20
-reflect-tui session ls --model anthropic
+zhuye-cli session ls -n 20
+zhuye-cli session ls --model anthropic
 
 # 看某 session 元数据 + 前 5 条消息预览 + 累计 tokens/cost
-reflect-tui session show <id-or-prefix>
+zhuye-cli session show <id-or-prefix>
 
 # 删除 session(--yes 跳过确认)
-reflect-tui session rm <id> --yes
+zhuye-cli session rm <id> --yes
 
 # fork 父会话截至当前的完整历史到新子会话
-reflect-tui session fork <id> --branch my-branch
+zhuye-cli session fork <id> --branch my-branch
 # fork 后打印 child id,提示:
-#   Resume with: reflect-tui --resume <child_id> "..."
+#   Resume with: zhuye-cli --resume <child_id> "..."
 
 # 给会话设置人可读名(写到 ~/.reflect/sessions/_names/<id>.name)
-reflect-tui session rename <id> "my session name"
+zhuye-cli session rename <id> "my session name"
 
 # 导出为 markdown(无 --out 打印 stdout)
-reflect-tui session export <id>
-reflect-tui session export <id> --out session.md
+zhuye-cli session export <id>
+zhuye-cli session export <id> --out session.md
 ```
 
 `<id>` 支持完整 UUID 或前 8 字符前缀(唯一命中)。
@@ -122,10 +122,10 @@ reflect-tui session export <id> --out session.md
 
 ```bash
 # 列 traces(每个 session 一行:session_id / title / calls / last / model)
-reflect-tui traces ls -n 20
+zhuye-cli traces ls -n 20
 
 # 看某 session 的逐条 LLM 调用详情(model / latency / usage / request+response 摘要)
-reflect-tui traces show <id-or-prefix>
+zhuye-cli traces show <id-or-prefix>
 ```
 
 数据来自 `~/.reflect/traces/model-io-sess_<session_id>.jsonl`(由 reflect-telemetry 写入)。
@@ -139,7 +139,7 @@ make test-fast      # nextest 加速(需 cargo-nextest)
 make test-suite     # 全功能测试套件(能力覆盖层 + Rust 编译面 + 覆盖自审)
 make test-suite-fast # 只跑能力覆盖层(跳过 cargo 编译面)
 make coverage-audit # 覆盖自审:slash 命令 × 测试矩阵的差集核对(有缺口即失败)
-make check-fast C=reflect-tui   # 单 crate 快速类型检查
+make check-fast C=zhuye-cli   # 单 crate 快速类型检查
 make dist           # 构建 + 打包当前平台分发包(tar.gz/zip)到 dist/
 make install        # 安装到 /usr/local/bin(或 ~/.local/bin,见 scripts/install.sh)
 make help           # 全部 target

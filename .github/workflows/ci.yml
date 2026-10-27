@@ -1,4 +1,4 @@
-# Reflect-TUI 持续集成。
+# ZhuYe-CLI 持续集成。
 #
 # push / PR 触发,在 ubuntu + macOS 上跑 fmt / clippy / test。
 # 注意:本仓库通过 `reflect-agent/` submodule 引用核心 crate,
@@ -161,7 +161,7 @@ jobs:
         run: python3 -m pip install --upgrade pip pytest pyte
 
       - name: Build release binary
-        run: cargo build --release -p reflect-tui --locked
+        run: cargo build --release -p zhuye-cli --locked
 
       - name: Run functional suite
         run: ./tests/run_all.sh functional

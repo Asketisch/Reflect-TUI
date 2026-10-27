@@ -22,7 +22,7 @@ OpenCode inference 车道:v2 客户端指纹门(UA / 会话头 / 逐字 read+she
 免费模型集合由**上游**决定,随时可能增删 —— 写死 id 必然腐烂:
 
 1. `REFLECT_LIVE_MODELS` 给了逗号分隔列表 → 用它;
-2. 否则调 `reflect-tui models list --free-only --json` 拿清单 ——
+2. 否则调 `zhuye-cli models list --free-only --json` 拿清单 ——
    免费判定规则只有一份实现(在 Rust 侧 `reflect_llm::FreeModelRules`),
    不在 Python 里复写;
 3. 逐个做**能力探测**(带 tools 的最小请求)→ 不支持 tools 的模型标为
@@ -48,7 +48,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from tui_pty import REFLECT_TUI_BIN
+from tui_pty import ZHUYE_CLI_BIN
 
 # 默认车道:Kilo 公共免费池(免 Key、无客户端指纹门)。
 DEFAULT_BASE_URL = "https://api.kilo.ai/api/gateway"
@@ -176,7 +176,7 @@ def clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 def fetch_free_models(lane: Lane | None = None) -> list[str]:
     """拉取 provider 的免费模型清单(返回 model id 列表)。
 
-    走 `reflect-tui models list --free-only --json` —— 免费判定规则只有
+    走 `zhuye-cli models list --free-only --json` —— 免费判定规则只有
     一份实现(在 Rust 侧 `reflect_llm::FreeModelRules`),不在 Python 里
     重写一遍,避免规则漂移。
     """
@@ -188,7 +188,7 @@ def fetch_free_models(lane: Lane | None = None) -> list[str]:
         write_lane_config(home, model="free", lane=lane)
         env = clean_env({"HOME": str(home)})
         proc = subprocess.run(
-            [str(REFLECT_TUI_BIN), "models", "list", "--free-only", "--json"],
+            [str(ZHUYE_CLI_BIN), "models", "list", "--free-only", "--json"],
             env=env,
             capture_output=True,
             text=True,
@@ -196,7 +196,7 @@ def fetch_free_models(lane: Lane | None = None) -> list[str]:
         )
         if proc.returncode != 0:
             raise RuntimeError(
-                f"reflect-tui models list 失败(rc={proc.returncode}):{proc.stderr.strip()}"
+                f"zhuye-cli models list 失败(rc={proc.returncode}):{proc.stderr.strip()}"
             )
         payload = json.loads(proc.stdout)
     ids = [m.get("id") for m in payload.get("models", []) if m.get("id")]

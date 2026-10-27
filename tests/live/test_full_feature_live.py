@@ -54,7 +54,7 @@ from live_lane import (
     session_stats,
     write_lane_config,
 )
-from tui_pty import REFLECT_TUI_BIN, ROOT, Sandbox, TuiSession
+from tui_pty import ZHUYE_CLI_BIN, ROOT, Sandbox, TuiSession
 
 FUNCTIONAL_DIR = Path(__file__).resolve().parents[1] / "functional"
 
@@ -388,7 +388,7 @@ def test_live_session_persists_and_cli_reads_it(
 
     def _cli(*args: str) -> tuple[int, str]:
         proc = subprocess.run(
-            [str(REFLECT_TUI_BIN), *args],
+            [str(ZHUYE_CLI_BIN), *args],
             env=env,
             capture_output=True,
             text=True,
@@ -806,7 +806,7 @@ def test_live_cli_fork_rename_rm(live_tui, live_sandbox: Sandbox) -> None:
 
     def _cli(*args: str) -> tuple[int, str]:
         proc = subprocess.run(
-            [str(REFLECT_TUI_BIN), *args],
+            [str(ZHUYE_CLI_BIN), *args],
             env=env,
             capture_output=True,
             text=True,

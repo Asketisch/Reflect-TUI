@@ -4,11 +4,11 @@
 行、composer 占位符、终端标题,以及各种退出路径。
 
 锚点字面量来源(证据见 `tests/COVERAGE.md` §B 组):
-  - `  Reflect v<version> — /help for commands`  cells.rs:160
+  - `  ZhuYe-CLI v<version> — /help for commands`  cells.rs:160
   - `Send a message… (shift+enter for newline)`   events.rs:593 / tui/mod.rs:990
   - ` (no tool calls yet)`                        statusline.rs:273
   - `Ctrl+C to quit`                              statusline.rs:218
-  - 终端标题 `Reflect · <model> · [<mode>] · …`   tui/mod.rs:958-971
+  - 终端标题 `ZhuYe-CLI · <model> · [<mode>] · …`   tui/mod.rs:958-971
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def test_boot_renders_banner_and_version_line(tui) -> None:
     """B1 启动到稳定首屏:banner + 版本提示行。"""
     with tui() as s:
         txt = s.wait_boot(timeout=30)
-        assert "Reflect" in txt, f"首屏应含 Reflect 字样: {txt[:300]}"
+        assert "ZhuYe-CLI" in txt, f"首屏应含 ZhuYe-CLI 字样: {txt[:300]}"
         assert "/help for commands" in txt, f"首屏应含 /help 提示: {txt[:300]}"
 
 

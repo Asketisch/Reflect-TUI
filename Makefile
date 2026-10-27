@@ -1,12 +1,12 @@
-# ── Reflect-TUI Makefile ──────────────────────────────────────────
+# ── ZhuYe-CLI Makefile ──────────────────────────────────────────
 # 终端 TUI 独立仓库 —— Reflect-Agent 核心 crate 通过 submodule 复用。
 .PHONY: build run test test-fast test-suite test-suite-fast test-suite-live coverage-audit release-check check check-fast watch clean gc dist dist-dry install release help
 
-BINARY_NAME := reflect-tui
+BINARY_NAME := zhuye-cli
 
 ## build: Compile the TUI in release mode
 build:
-	cargo build --release -p reflect-tui
+	cargo build --release -p zhuye-cli
 
 ## run: Build and launch the TUI directly
 run: build
@@ -61,7 +61,7 @@ release-check:
 check:
 	cargo check --workspace
 
-## check-fast: 快速类型检查单个 crate(示例:make check-fast C=reflect-tui)
+## check-fast: 快速类型检查单个 crate(示例:make check-fast C=zhuye-cli)
 check-fast:
 	cargo check -p $(C)
 

@@ -1,24 +1,24 @@
-# Reflect-TUI
+# ZhuYe-CLI
 
 [![CI](https://github.com/Asketisch/Reflect-TUI/actions/workflows/ci.yml/badge.svg)](https://github.com/Asketisch/Reflect-TUI/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%20%7C%20edition%202024-orange.svg)](rust-toolchain.toml)
 [![中文](https://img.shields.io/badge/README-中文-red.svg)](README.md)
 
-An interactive terminal client for the Reflect Agent, designed for terminal-based AI agent workflows, built on [ratatui](https://github.com/ratatui-org/ratatui).
+An interactive terminal client for ZhuYe (烛夜), designed for terminal-based AI agent workflows, built on [ratatui](https://github.com/ratatui-org/ratatui).
 
-This repository contains **only the TUI presentation layer** (`reflect-tui` crate). The agent core engine (AgentThread, StateGraph, tools, protocol, …) is provided by [Reflect-Agent](https://github.com/Asketisch/Reflect-Agent) and consumed via a **git submodule**.
+This repository contains **only the TUI presentation layer** (`zhuye-cli` crate). The agent core engine (AgentThread, StateGraph, tools, protocol, …) is provided by [Reflect-Agent](https://github.com/Asketisch/ZhuYe) and consumed via a **git submodule**.
 
 ## Repository Layout
 
 ```
-Reflect-Agent (core engine, provided as submodule)
+ZhuYe (core engine, provided as submodule)
   └─ crates/{protocol,abilities,resources,orchestration,integrations,runtime}
-  └─ reflect-core (AgentThread + StateGraph)
+  └─ zhuye-core (AgentThread + StateGraph)
 
-Reflect-TUI (this repo)  ──submodule──► Reflect-Agent
-  └─ crates/reflect-tui (ratatui UI + event loop)
-  └─ reflect-tui binary (terminal entry point)
+ZhuYe-CLI (this repo)  ──submodule──► Reflect-Agent
+  └─ crates/zhuye-cli (ratatui UI + event loop)
+  └─ zhuye-cli binary (terminal entry point)
 ```
 
 ## Quick Start
@@ -26,7 +26,7 @@ Reflect-TUI (this repo)  ──submodule──► Reflect-Agent
 ```bash
 # 1. Clone (with submodules)
 git clone --recursive https://github.com/Asketisch/Reflect-TUI.git
-cd Reflect-TUI
+cd Reflect-TUI  # 仓库目录名以实际 clone 为准
 
 # 2. Build
 make build
@@ -34,33 +34,33 @@ make build
 # 3. Configure an LLM provider (pick one)
 #    Option A: environment variable
 export ANTHROPIC_API_KEY=sk-ant-...
-#    Option B: ~/.reflect/config.toml — [active] / [anthropic] / [openai]
+#    Option B: ~/.zhuye/config.toml — [active] / [anthropic] / [openai]
 
 # 4. Run
 make run
 # or directly:
-./target/release/reflect-tui
+./target/release/zhuye-cli
 ```
 
 The Rust toolchain is pinned by `rust-toolchain.toml` (stable, MSRV 1.85, edition 2024).
 
 ## TUI Command-Line Flags
 
-With no subcommand, the binary launches the TUI. Common flags (see `reflect-tui --help` for the full list):
+With no subcommand, the binary launches the TUI. Common flags (see `zhuye-cli --help` for the full list):
 
 ```bash
-reflect-tui [--cwd PATH] [--prompt TEXT] [-c] [-r N] [--resume ID]
+zhuye-cli [--cwd PATH] [--prompt TEXT] [-c] [-r N] [--resume ID]
             [--plan-mode] [--fullscreen] [--auto-root]
             [--ephemeral-tasks] [--ephemeral-teams]
 
 # Examples
-reflect-tui "refactor this module for me"   # launch with an initial prompt
-reflect-tui --resume sess_abc123            # resume a specific session
-reflect-tui -c                              # continue the last session
-reflect-tui -r 2                            # resume the 2nd most recent session
-reflect-tui --plan-mode                     # start in Plan mode
-reflect-tui --fullscreen                    # alternate-screen fullscreen (also REFLECT_TUI_FULLSCREEN=1)
-reflect-tui --cwd /path/to/project          # set the working directory
+zhuye-cli "refactor this module for me"   # launch with an initial prompt
+zhuye-cli --resume sess_abc123            # resume a specific session
+zhuye-cli -c                              # continue the last session
+zhuye-cli -r 2                            # resume the 2nd most recent session
+zhuye-cli --plan-mode                     # start in Plan mode
+zhuye-cli --fullscreen                    # alternate-screen fullscreen (also ZHUYE_CLI_FULLSCREEN=1)
+zhuye-cli --cwd /path/to/project          # set the working directory
 ```
 
 ## In-TUI Slash Commands
@@ -91,26 +91,26 @@ When invoked with a subcommand, the binary runs headlessly and exits without ent
 
 ```bash
 # List local sessions (supports --limit/-n, --model substring filter)
-reflect-tui session ls -n 20
-reflect-tui session ls --model anthropic
+zhuye-cli session ls -n 20
+zhuye-cli session ls --model anthropic
 
 # Show metadata for a session + the first 5 message previews + cumulative tokens/cost
-reflect-tui session show <id-or-prefix>
+zhuye-cli session show <id-or-prefix>
 
 # Delete a session (--yes to skip confirmation)
-reflect-tui session rm <id> --yes
+zhuye-cli session rm <id> --yes
 
 # Fork a parent session's full history up to now into a new child session
-reflect-tui session fork <id> --branch my-branch
+zhuye-cli session fork <id> --branch my-branch
 # After forking the child id is printed and the hint:
-#   Resume with: reflect-tui --resume <child_id> "..."
+#   Resume with: zhuye-cli --resume <child_id> "..."
 
 # Set a human-readable name (written to ~/.reflect/sessions/_names/<id>.name)
-reflect-tui session rename <id> "my session name"
+zhuye-cli session rename <id> "my session name"
 
 # Export to Markdown (prints to stdout without --out)
-reflect-tui session export <id>
-reflect-tui session export <id> --out session.md
+zhuye-cli session export <id>
+zhuye-cli session export <id> --out session.md
 ```
 
 `<id>` accepts a full UUID or the first 8-character prefix (unique match).
@@ -119,10 +119,10 @@ reflect-tui session export <id> --out session.md
 
 ```bash
 # List traces (one line per session: session_id / title / calls / last / model)
-reflect-tui traces ls -n 20
+zhuye-cli traces ls -n 20
 
 # Show per-call LLM details for a session (model / latency / usage / request+response summary)
-reflect-tui traces show <id-or-prefix>
+zhuye-cli traces show <id-or-prefix>
 ```
 
 Data comes from `~/.reflect/traces/model-io-sess_<session_id>.jsonl` (written by reflect-telemetry).
@@ -136,7 +136,7 @@ make test-fast      # cargo nextest (requires cargo-nextest)
 make test-suite     # full functional suite (capability coverage + Rust compile surface + coverage audit)
 make test-suite-fast # capability coverage only (skips the cargo compile surface)
 make coverage-audit # coverage audit: diff declared slash commands against tested ones (fails on gaps)
-make check-fast C=reflect-tui   # fast type-check for a single crate
+make check-fast C=zhuye-cli   # fast type-check for a single crate
 make dist           # build + package current-platform artifacts (tar.gz/zip) into dist/
 make install        # install to /usr/local/bin (or ~/.local/bin, see scripts/install.sh)
 make help           # list all targets
@@ -177,7 +177,7 @@ For local joint development on the core: make changes in the Reflect-Agent repo 
 
 This project builds on the following open-source works (full attribution in [NOTICE](NOTICE)):
 
-- [Reflect-Agent](https://github.com/Asketisch/Reflect-Agent) — Core engine (Apache-2.0), consumed via git submodule
+- [Reflect-Agent](https://github.com/Asketisch/ZhuYe) — Core engine (Apache-2.0), consumed via git submodule
 - [nornagon/ratatui](https://github.com/nornagon/ratatui) and [nornagon/crossterm](https://github.com/nornagon/crossterm) — Forks that expose unstable features (MIT)
 
 ---

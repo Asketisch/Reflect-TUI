@@ -18,7 +18,7 @@
 # ── 仓库根与二进制定位 ────────────────────────────────────────────────────
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$TESTS_DIR/.." && pwd)"
-REFLECT_TUI_BIN="${REFLECT_TUI_BIN:-$ROOT/target/release/reflect-tui}"
+ZHUYE_CLI_BIN="${ZHUYE_CLI_BIN:-$ROOT/target/release/zhuye-cli}"
 
 # ── 全局状态 ──────────────────────────────────────────────────────────────
 declare -i PASS_COUNT=0
@@ -189,8 +189,8 @@ run_with_timeout() {
 #   但显式写入可让「配置文件存在」这一前提在用例里显式成立,避免依赖
 #   宿主机残留配置(宿主机若有 provider 配置,会改变启动行为)。
 make_isolated_env() {
-    ISO_HOME="$(mktemp -d "${TMPDIR:-/tmp}/reflect-tui-test-home.XXXXXX")"
-    ISO_CWD="$(mktemp -d "${TMPDIR:-/tmp}/reflect-tui-test-cwd.XXXXXX")"
+    ISO_HOME="$(mktemp -d "${TMPDIR:-/tmp}/zhuye-cli-test-home.XXXXXX")"
+    ISO_CWD="$(mktemp -d "${TMPDIR:-/tmp}/zhuye-cli-test-cwd.XXXXXX")"
     mkdir -p "$ISO_HOME/.zhuye"
     cat > "$ISO_HOME/.zhuye/config.toml" <<'EOF'
 # 测试用最小配置:空配置(不指定 provider,靠 ZHUYE_MODEL 环境变量)。
@@ -232,8 +232,8 @@ make_mock_script() {
 
 # require_binary:确认 release 二进制存在,否则提示构建命令后退出。
 require_binary() {
-    if [ ! -x "$REFLECT_TUI_BIN" ]; then
-        echo "FAIL: $REFLECT_TUI_BIN 不存在;先执行 cargo build --release -p reflect-tui" >&2
+    if [ ! -x "$ZHUYE_CLI_BIN" ]; then
+        echo "FAIL: $ZHUYE_CLI_BIN 不存在;先执行 cargo build --release -p zhuye-cli" >&2
         exit 2
     fi
 }

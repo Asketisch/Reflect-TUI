@@ -5,9 +5,9 @@
 
 ## 项目概览
 
-Reflect-TUI — Reflect Agent 的终端交互式客户端(ratatui + crossterm),面向终端 AI Agent 工作流。
+ZhuYe-CLI — ZhuYe 的终端交互式客户端(ratatui + crossterm),面向终端 AI Agent 工作流。
 
-- 单 crate workspace:仅 `crates/reflect-tui`(lib `reflect_tui` + thin binary `reflect-tui`)
+- 单 crate workspace:仅 `crates/zhuye-cli`(lib `zhuye_cli` + thin binary `zhuye-cli`)
 - 核心引擎(AgentThread / StateGraph / 工具 / 协议)由 `reflect-agent/` **git submodule** 提供,
   本 crate 只负责表现层:事件循环、布局、渲染、协议事件适配
 - Rust stable,edition 2024,MSRV 1.85(`rust-toolchain.toml` 锁定)
@@ -27,9 +27,9 @@ Reflect-TUI — Reflect Agent 的终端交互式客户端(ratatui + crossterm),�
 ## 常用命令
 
 ```bash
-make build                      # cargo build --release -p reflect-tui
+make build                      # cargo build --release -p zhuye-cli
 make run                        # 构建并启动 TUI
-make check / make check-fast C=reflect-tui   # 类型检查(全 workspace / 单 crate)
+make check / make check-fast C=zhuye-cli   # 类型检查(全 workspace / 单 crate)
 make test                       # cargo test --workspace
 make test-fast                  # cargo nextest(需已安装 cargo-nextest)
 make test-suite                 # ./tests/run_all.sh:全功能套件(能力覆盖层+编译面+覆盖自审)
@@ -60,21 +60,21 @@ make gc                         # 清 target/debug 中 cargo 不自动 GC 的中
 | `tui/` + `events.rs` + `adapter.rs` | **本地**事件循环、布局、`UiEvent`/`UiState` 状态机、协议事件适配边界 |
 | `tui_core/` | 自包含呈现原语(自定义终端后端、流式历史插入、CJK 换行、composer 等) |
 | `history_render/`、`transcript_pager.rs`、`tasks_pager.rs` | 历史行渲染、滚动回放、任务面板 |
-| `cli/{session,traces}.rs` | headless 子命令实现(调 reflect-rollout / reflect-telemetry) |
+| `cli/{session,traces}.rs` | headless 子命令实现(调 zhuye-rollout / zhuye-telemetry) |
 
 ### 核心引擎(submodule,只读消费,勿改)
 
 `reflect-agent/crates/{protocol,abilities,resources,orchestration,integrations,runtime}(烛夜更名后 crate 名为 `zhuye-*`)` 六层。
-本 crate 直接依赖的关键 crate:reflect-core(AgentThread)、reflect-llm(ModelRegistry)、
-reflect-tools(内置工具)、reflect-config、reflect-rollout、reflect-telemetry、
-reflect-task/subagent、reflect-protocol。
+本 crate 直接依赖的关键 crate:zhuye-core(AgentThread)、zhuye-llm(ModelRegistry)、
+zhuye-tools(内置工具)、zhuye-config、zhuye-rollout、zhuye-telemetry、
+zhuye-task/subagent、zhuye-protocol。
 
 ## 关键约束(改代码前必读)
 
 1. **Cargo 不支持嵌套 workspace**:核心 crate **不**列入本仓库 `workspace.members`,
    只用 `path` 依赖(`zhuye-core = { path = "reflect-agent/crates/runtime/zhuye-core" }`)。
    核心 crate 大量 `workspace = true` 继承依赖会解析到**本仓库**根 `[workspace.dependencies]`,
-   因此该段必须**完整声明**核心引用的全部 reflect-* 与外部依赖 —— 升级 submodule 或新增
+   因此该段必须**完整声明**核心引用的全部 zhuye-* 与外部依赖 —— 升级 submodule 或新增
    核心 crate 依赖时,同步补声明,否则跨 workspace 解析失败。详见 [CONTRIBUTING.md](CONTRIBUTING.md) 的「submodule 工作流」小节。
 2. **ratatui/crossterm 是 nornagon fork**(根 `Cargo.toml` `[patch.crates-io]` 固定 rev),
    依赖官方版没有的 unstable feature(`scrolling-regions`、`unstable-backend-writer`、
@@ -85,7 +85,7 @@ reflect-task/subagent、reflect-protocol。
 5. `tui_core/` 为本仓库自包含的呈现原语,行为以本仓库代码为准;第三方来源与
    许可证见 [NOTICE](NOTICE)。
 6. vendored 上游测试 fixtures 由 feature `tui-upstream-tests` gate,默认关闭
-   (`cargo test -p reflect-tui --features tui-upstream-tests` 才跑)。
+   (`cargo test -p zhuye-cli --features tui-upstream-tests` 才跑)。
 7. Plan mode 写盘:PlanWrite 工具把 plan markdown 写到 `<workspace>/.zhuye/plan/<name>.md`,
    ExitPlanMode 读取;`PlanWriteTool` 必须与 Enter/ExitPlanMode 一起注册(见 `bootstrap.rs`)。
 8. **slash 命令有两条分发通道**,行为不一致,改命令时两条都要看:
@@ -118,7 +118,7 @@ reflect-task/subagent、reflect-protocol。
    - 能力覆盖用例**只写在 `tests/functional/`** —— 不要在 `tests/rust/*.sh`
      里重复写行为断言,那里只管 CLI **参数面**;
    - 只改内部纯逻辑(渲染辅助函数、CJK 换行、状态机转换)
-     → 补 Rust 单测(`crates/reflect-tui/src/**`),不必硬凑 pty 用例。
+     → 补 Rust 单测(`crates/zhuye-cli/src/**`),不必硬凑 pty 用例。
 2. **按改动面选测试落点** —— 能力覆盖层按面分组,新用例进对应组:
 
    | 改动面 | 用例落点 |
@@ -134,7 +134,7 @@ reflect-task/subagent、reflect-protocol。
    | 审批 / AskUser / 容错 / 信号 | `tests/functional/test_flow.py`(W 组) |
    | 插件面 | `tests/functional/test_plugin.py`(G 组) |
    | CLI 参数矩阵 | `tests/rust/cli_core.sh`、`tests/rust/cli_modules.sh` |
-   | 内部纯逻辑 | `crates/reflect-tui/src/**` 的 Rust 单测 |
+   | 内部纯逻辑 | `crates/zhuye-cli/src/**` 的 Rust 单测 |
 
    分层判据与用例规模见 [tests/README.md](tests/README.md);
    「能力 × 覆盖层」映射见 [tests/COVERAGE.md](tests/COVERAGE.md)。

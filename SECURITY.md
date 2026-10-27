@@ -26,14 +26,14 @@
 ## 安全设计要点（供审计参考）
 
 - **沙箱**：bash 工具支持 macOS Seatbelt / Linux Landlock
-  （`[sandbox].os_level = true` 或 `REFLECT_SANDBOX_OS_LEVEL=1`）。
-- **权限链**：`~/.reflect/config.toml [permissions]`（只读展平）+
-  `~/.reflect/permissions.toml`（运行期 always-allow 落盘）→ 链式解析；
+  （`[sandbox].os_level = true` 或 `ZHUYE_SANDBOX_OS_LEVEL=1`）。
+- **权限链**：`~/.zhuye/config.toml [permissions]`（只读展平）+
+  `~/.zhuye/permissions.toml`（运行期 always-allow 落盘）→ 链式解析；
   MCP / plugin / runtime 来源的工具强制 `Prompt` 安全下限，防静态放行。
 - **脱敏**：rollout 落盘与工具输出默认经 `Sanitizer`（10 类密钥 pattern，
   `[sanitize]` 可扩展），16KiB 截断。
 - **信任边界**：TUI 是进程内宿主，wire 协议（Submission / EventMsg）的
-  外部暴露面在引擎仓库的 `reflect serve` stdio 模式；MCP server / LSP
+  外部暴露面在引擎仓库的 `zhuye serve` stdio 模式；MCP server / LSP
   server 是按 config.toml 显式配置拉起的外部进程。
 - **依赖**：每周 `cargo audit`（audit.yml）；git fork 的 ratatui/crossterm
   不在 crates.io 扫描范围，需人工跟 GSA。

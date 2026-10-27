@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢关注 Reflect-TUI！本仓库只包含 **TUI 表现层**（`crates/reflect-tui`）；
+感谢关注 ZhuYe-CLI！本仓库只包含 **TUI 表现层**（`crates/zhuye-cli`）；
 核心引擎由 [Reflect-Agent](https://github.com/Asketisch/Reflect-Agent) 通过
 git submodule 复用。请先读 [README](README.md) 的架构说明。
 
@@ -8,9 +8,9 @@ git submodule 复用。请先读 [README](README.md) 的架构说明。
 
 ```bash
 git clone --recursive https://github.com/Asketisch/Reflect-TUI.git
-cd Reflect-TUI
-cargo build --release          # 产物在 target/release/reflect-tui
-cargo test -p reflect-tui      # TUI 侧测试
+cd ZhuYe-CLI
+cargo build --release          # 产物在 target/release/zhuye-cli
+cargo test -p zhuye-cli      # TUI 侧测试
 ```
 
 配置：`~/.zhuye/config.toml`（provider / MCP / LSP / hooks / permissions），
@@ -39,14 +39,14 @@ python3 tests/tools/coverage_audit.py --strict   # 覆盖自审
 
 后两项是**功能面**的门禁，与前两项的**编译面**互补：
 
-- `./tests/run_all.sh functional` 起真实的 `reflect-tui` 进程，用 pty +
+- `./tests/run_all.sh functional` 起真实的 `zhuye-cli` 进程，用 pty +
   屏幕快照断言「用户真的看到了什么、真的落了什么盘」，并覆盖全部
   84 条 slash 命令的运行时结局。详见 [tests/README.md](tests/README.md)。
 - `coverage_audit.py` 从 Rust 源码解析出声明的 slash 命令，与测试矩阵做
   差集 —— **新增命令忘了加用例，这里直接失败**。改 slash 命令时，
   `tests/functional/test_slash.py` 的 `MATRIX` 要同步补一行。
 
-> 前置：`cargo build --release -p reflect-tui`（入口脚本会自动补建）、
+> 前置：`cargo build --release -p zhuye-cli`（入口脚本会自动补建）、
 > Python 3 + `pytest` + `pyte`（`pip install pytest pyte`）。
 > 缺依赖的批次自动 SKIP，不算失败。
 
@@ -77,8 +77,8 @@ python3 tests/tools/coverage_audit.py --strict   # 覆盖自审
 ```bash
 git submodule update --remote reflect-agent   # 拉取最新指针
 git -C reflect-agent log --oneline <旧指针>..HEAD   # 逐条读变更
-cargo check -p reflect-tui --all-targets       # 确认编译面
-cargo test -p reflect-tui && cargo clippy -p reflect-tui --all-targets -- -D warnings
+cargo check -p zhuye-cli --all-targets       # 确认编译面
+cargo test -p zhuye-cli && cargo clippy -p zhuye-cli --all-targets -- -D warnings
 git add reflect-agent && git commit            # 指针与代码适配一起提交
 ```
 

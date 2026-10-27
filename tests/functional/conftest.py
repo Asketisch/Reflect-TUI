@@ -12,7 +12,7 @@ from typing import Callable, Iterator
 
 import pytest
 
-from tui_pty import DRAIN_TIMEOUT, REFLECT_TUI_BIN, Sandbox, TuiSession, text_reply, tool_call
+from tui_pty import DRAIN_TIMEOUT, ZHUYE_CLI_BIN, Sandbox, TuiSession, text_reply, tool_call
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -22,9 +22,9 @@ def _require_binary() -> None:
     缺依赖的批次自动 SKIP,不算失败 —— 与 submodule `tests/run_all.sh`
     的「缺依赖的批次自动 SKIP」语义一致。
     """
-    if not REFLECT_TUI_BIN.is_file():
+    if not ZHUYE_CLI_BIN.is_file():
         pytest.skip(
-            f"{REFLECT_TUI_BIN} 不存在;先执行 cargo build --release -p reflect-tui"
+            f"{ZHUYE_CLI_BIN} 不存在;先执行 cargo build --release -p zhuye-cli"
         )
 
 

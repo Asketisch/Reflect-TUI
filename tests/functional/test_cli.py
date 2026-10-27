@@ -17,13 +17,13 @@ from pathlib import Path
 
 import pytest
 
-from tui_pty import REFLECT_TUI_BIN
+from tui_pty import ZHUYE_CLI_BIN
 
 
 def run_cli(sandbox, *args: str, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
-    """在隔离 HOME 下跑 `reflect-tui <args>`。"""
+    """在隔离 HOME 下跑 `zhuye-cli <args>`。"""
     return subprocess.run(
-        [str(REFLECT_TUI_BIN), *args],
+        [str(ZHUYE_CLI_BIN), *args],
         capture_output=True,
         text=True,
         timeout=timeout,

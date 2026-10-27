@@ -107,7 +107,7 @@ def main() -> int:
         wanted = {c.strip() for c in args.only.split(",")}
         commands = [c for c in commands if c in wanted]
 
-    sandbox = Sandbox.create("reflect-tui-probe-")
+    sandbox = Sandbox.create("zhuye-cli-probe-")
     out: list[dict] = []
     try:
         for cmd in commands:

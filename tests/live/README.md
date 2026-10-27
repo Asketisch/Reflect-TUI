@@ -1,6 +1,6 @@
 # 实模型演练层(`tests/live/`)
 
-这一层用**真实模型**跑 Reflect-TUI 的完整 agent 链路,补上 mock provider
+这一层用**真实模型**跑 ZhuYe-CLI 的完整 agent 链路,补上 mock provider
 永远测不到的行为:真实 SSE 帧、真实工具调用质量、真实限流(429)、
 真实思考过程、真实截断续作。
 
@@ -70,7 +70,7 @@ dsh 车道 = 本仓用户自己的 `dsh-our-free-model` 实例(26 个模型,多�
 ## 模型从哪来(不写死)
 
 1. `REFLECT_LIVE_MODELS` 给了 → 用它;
-2. 否则调 `reflect-tui models list --free-only --json` → 拿 provider 的实时清单
+2. 否则调 `zhuye-cli models list --free-only --json` → 拿 provider 的实时清单
    (免费判定规则只有一份实现,在 Rust 侧 `reflect_llm::FreeModelRules`);
 3. 逐个做**能力探测**(带 `tools` 的最小请求)→ 不支持 tools 的模型标为
    **跳过**而不是失败;

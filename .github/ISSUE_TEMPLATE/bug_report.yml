@@ -1,5 +1,5 @@
 name: Bug 报告
-description: 报告 Reflect-TUI 的 bug
+description: 报告 ZhuYe-CLI 的 bug
 title: "[Bug]: "
 labels: ["bug"]
 assignees: []
@@ -14,8 +14,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: reflect-tui 版本
-      description: '运行 `reflect-tui --version` 的输出,或 commit SHA'
+      label: zhuye-cli 版本
+      description: '运行 `zhuye-cli --version` 的输出,或 commit SHA'
       placeholder: 例如 0.1.0 或 a353f2a
     validations:
       required: true
@@ -79,7 +79,7 @@ body:
       label: 复现步骤
       description: '触发 bug 的最小步骤序列'
       placeholder: |
-        1. 运行 `reflect-tui`
+        1. 运行 `zhuye-cli`
         2. 输入 `/model claude-sonnet-4`
         3. 在 chat composer 输入「...」
         4. 观察到 ...
@@ -105,7 +105,7 @@ body:
   - type: textarea
     id: config
     attributes:
-      label: ~/.reflect/config.toml(脱敏)
+      label: ~/.zhuye/config.toml(脱敏)
       description: '贴出相关配置段(隐藏 API key),帮助复现'
       placeholder: |
         [active]
@@ -121,7 +121,7 @@ body:
     id: logs
     attributes:
       label: 相关日志 / trace
-      description: '若启用了 tracing,贴 `~/.reflect/traces/` 下相关 .jsonl 摘要;或 `RUST_LOG=debug reflect-tui 2>&1 | tail -200` 的输出'
+      description: '若启用了 tracing,贴 `~/.zhuye/traces/` 下相关 .jsonl 摘要;或 `RUST_LOG=debug zhuye-cli 2>&1 | tail -200` 的输出'
     validations:
       required: false
 

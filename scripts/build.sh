@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ── Reflect-TUI 跨平台构建脚本 ───────────────────────────────────────
-# 编译 `reflect-tui` 二进制,可选打包成平台分发包。
+# ── ZhuYe-CLI 跨平台构建脚本 ───────────────────────────────────────
+# 编译 `zhuye-cli` 二进制,可选打包成平台分发包。
 #
 # 核心 crate 由 `reflect-agent/` submodule 提供,打包前会检查 submodule
 # 是否已初始化,未初始化时提示 `git submodule update --init --recursive`。
@@ -23,7 +23,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BINARY_NAME="reflect-tui"
+BINARY_NAME="zhuye-cli"
 INSTALL_DIR="/usr/local/bin"
 
 usage() {
@@ -139,7 +139,7 @@ case "$PLATFORM" in
     *)       BIN_PATH="${REPO_ROOT}/target/${TARGET_SUBDIR}${BIN_SUBDIR}/${BINARY_NAME}" ;;
 esac
 
-echo "── Reflect-TUI 构建 ──────────────────────────────────────"
+echo "── ZhuYe-CLI 构建 ──────────────────────────────────────"
 echo "平台:          $PLATFORM ($OS_NAME)"
 echo "profile:       $PROFILE"
 echo "target:        ${TARGET_OVERRIDE:-<host>}"
@@ -203,7 +203,7 @@ if $DO_DIST; then
 
     PKG_NAME="${BINARY_NAME}-${VERSION}-${TRIPLE}"
     DIST_DIR="${REPO_ROOT}/dist"
-    STAGING_DIR="$(mktemp -d -t reflect-tui-dist)"
+    STAGING_DIR="$(mktemp -d -t zhuye-cli-dist)"
     PKG_DIR="${STAGING_DIR}/${PKG_NAME}"
     mkdir -p "${PKG_DIR}" "${DIST_DIR}"
 
@@ -211,10 +211,10 @@ if $DO_DIST; then
     cp "${BIN_PATH}" "${PKG_DIR}/"
     [[ -f "${REPO_ROOT}/LICENSE" ]] && cp "${REPO_ROOT}/LICENSE" "${PKG_DIR}/" || true
     cat > "${PKG_DIR}/README.txt" <<README_EOF
-Reflect-TUI ${VERSION}  (${TRIPLE})
+ZhuYe-CLI ${VERSION}  (${TRIPLE})
 =========================================================
 
-Reflect-TUI 是 Reflect Agent 的终端交互界面(TUI)。
+ZhuYe-CLI 是 ZhuYe 的终端交互界面(TUI)。
 
 【安装】解压后把二进制放到 PATH:
     tar xzf ${PKG_NAME}.tar.gz        # 或解压 zip

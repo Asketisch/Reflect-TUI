@@ -1,4 +1,4 @@
-# Reflect-TUI 依赖漏洞扫描。
+# ZhuYe-CLI 依赖漏洞扫描。
 #
 # 每周一 + PR 触发,跑 cargo-audit(RustSec Advisory Database)。
 # 结果上传到 GitHub Security tab(Code Scanning)。

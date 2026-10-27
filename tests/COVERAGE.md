@@ -21,7 +21,7 @@
 | **覆盖自审层** | `tests/tools/coverage_audit.py` | 「声明了什么」× 「测了什么」的**机械差集** | ❌ | 4 条门禁 |
 | CLI 参数面 | `tests/rust/cli_core.sh`、`cli_modules.sh` | 17 个子命令的**参数矩阵**与输出契约(bash,含退出码) | ❌ | 101 断言 |
 | CLI 语义面 | `tests/functional/test_cli.py` | CLI 输出的**语义**(列结构、预览条数、统计口径) | ❌ | 10 条 |
-| Rust 单测 | `crates/reflect-tui/src/**` | 内部单元与集成(既有基线) | — | 332 条(自有)+ vendored |
+| Rust 单测 | `crates/zhuye-cli/src/**` | 内部单元与集成(既有基线) | — | 332 条(自有)+ vendored |
 | live 端到端 | `tests/live/` | 真实 LLM + 真实工具(需 API key) | — | 手动跑 |
 
 **判据**:
@@ -409,14 +409,14 @@
 
 | # | 缺陷 | 证据 | 状态 |
 |---|---|---|---|
-| D1 | **`session show` 对真实会话的消息预览恒为空**:`preview_message_body` 只认 `content` 为字符串 / `{text}` 对象,认不出 v1.2 起的 **ContentBlock 数组**形态 —— 而那正是引擎的实际落盘形态 | `crates/reflect-tui/src/cli/session.rs:607`(修复前) | **已修**(`crates/reflect-tui/src/cli/session.rs:607-641` + 4 条单测)。同款缺陷在 submodule `reflect-cli` 亦存在,未同步修复 |
+| D1 | **`session show` 对真实会话的消息预览恒为空**:`preview_message_body` 只认 `content` 为字符串 / `{text}` 对象,认不出 v1.2 起的 **ContentBlock 数组**形态 —— 而那正是引擎的实际落盘形态 | `crates/zhuye-cli/src/cli/session.rs:607`(修复前) | **已修**(`crates/zhuye-cli/src/cli/session.rs:607-641` + 4 条单测)。同款缺陷在 submodule `reflect-cli` 亦存在,未同步修复 |
 | D2 | **未知 slash 命令的拒绝提示被丢弃**:`chat_composer.rs:2801-2806` 发出的 `AppEvent::InsertHistoryCell("Unrecognized command '/x'")` 没有消费方(`ComposerInput::handle_app_events` 只处理 `StartFileSearch`),`src/tui/mod.rs` 也从不调 `take_app_events` | `tui_core/public_widgets/composer_input.rs:483-493` | 未修(记录)。用户只看到「输入还在框里、没发出去」 |
 | D3 | **`TurnAborted` 与 `TurnComplete` 折叠**:协议两者都映射 `UiEventKind::TurnCompleted`,屏幕无法区分「正常结束」与「被 Esc/Ctrl-C 中断」 | `tui/conversion.rs:53-54` | 未修(记录)。只能靠中断瞬间的 `⏹ 已发送中断请求…` notice 间接区分 |
 | D4 | **4 个协议事件被静默丢弃**:`McpToolInvoked` / `PermissionBubble` / `ConfigReloaded` / `CollabMessage` / `Routing` 在 `convert_event` 里返回 `None`,屏幕无任何痕迹 | `tui/conversion.rs:226-241` | 未修(记录) |
 | D5 | **picker 的 `Nop` 键位不吞键**:在 image/keymap/statusline/theme/skills_hub 里按 `j`/`k` 既移动选择又往 composer 输入框打字;keymap / skills_hub / statusline 的 `Enter` 也是 `Nop`(会提交草稿) | `tui/mod.rs:2594, 2721, 2737, 2772, 2788, 2804, 2848` | 未修(记录)。本套件一律用 `Esc` 关闭弹层以规避 |
-| D6 | **`REFLECT_TUI_UPDATE_CHECK` 无人读取**:旧 harness 设它以屏蔽启动期更新探测,但本 fork 的 `update_action.rs:29-33` 恒返回 `None` | `crates/reflect-tui/src/tui_core/update_action.rs:29-33` | 未修(记录)。无害,但属残留 |
+| D6 | **`REFLECT_TUI_UPDATE_CHECK` 无人读取**:旧 harness 设它以屏蔽启动期更新探测,但本 fork 的 `update_action.rs:29-33` 恒返回 `None` | `crates/zhuye-cli/src/tui_core/update_action.rs:29-33` | 未修(记录)。无害,但属残留 |
 | D7 | **mock provider 一次提交触发多次模型调用**:实测 4 次,导致脚本行与最终落盘的 assistant 消息不是一一对应 | `reflect-agent/crates/abilities/reflect-llm/src/providers/mock.rs:163` | 引擎侧行为,记录 |
-| D8 | **`Ctrl+Shift+D` 快捷键在真实终端不可达**:终端无法区分 Ctrl+D 与 Ctrl+Shift+D(同为字节 `0x04`),crossterm 把 `0x04` 解析成 `Char('d') + CONTROL`(**不带 SHIFT**),而 `keymap.rs` 的 `OpenDiff` 分支要求 `CONTROL|SHIFT` —— 该分支永远命中不了,实际落到 `Ctrl+D → Exit` | `crates/reflect-tui/src/keymap.rs:88-94`(要求 SHIFT)vs `:60-65`(Ctrl+D 排除 SHIFT);实测见 `test_overlay.py::test_ctrl_shift_d_is_unreachable_from_a_terminal` | 未修(记录)。diff overlay 的实际入口只有 `/diff` |
+| D8 | **`Ctrl+Shift+D` 快捷键在真实终端不可达**:终端无法区分 Ctrl+D 与 Ctrl+Shift+D(同为字节 `0x04`),crossterm 把 `0x04` 解析成 `Char('d') + CONTROL`(**不带 SHIFT**),而 `keymap.rs` 的 `OpenDiff` 分支要求 `CONTROL|SHIFT` —— 该分支永远命中不了,实际落到 `Ctrl+D → Exit` | `crates/zhuye-cli/src/keymap.rs:88-94`(要求 SHIFT)vs `:60-65`(Ctrl+D 排除 SHIFT);实测见 `test_overlay.py::test_ctrl_shift_d_is_unreachable_from_a_terminal` | 未修(记录)。diff overlay 的实际入口只有 `/diff` |
 | D9 | ~~**坏 `config.toml` 静默回落**~~:`this is [ not valid toml {{{` 这类非法内容不产生任何用户可见告警,TUI 以默认配置照常启动 —— 用户改了配置却不生效时无从得知 | W9 实证(2026-10):进程存活、无 panic、raw 无 config 相关输出 | **已修**:bootstrap 启动前显式体检 config.toml,解析失败在终端打印 `⚠ 警告:<路径> 解析失败(...)`,仍回落默认配置不挡启动 |
 | D10 | **busy 窗口内的 composer 提交被吞且草稿保留**:回合进行中按 Enter,提交内容不上传也不清框;`/loop stop` 在迭代 busy 窗口内提交即失效,且残留草稿会污染后续输入(与 `/loop` 的自动提交叠加尤其明显) | W5 调试实证(2026-10):第 2 轮触发后立刻 stop 无效,拖到空闲窗口才生效;残留草稿使后续 stop 拼成非法命令 | 未修(记录) |
 | D11 | **Shift+Tab 权限模式循环与注释不符**:`keymap.rs:45-100` 注释宣称 Plan/Auto/Prompt/AcceptEdits/Bypass 五模式循环,实测 HUD 可见循环只有三态 Auto → AcceptEdits → Plan → Auto,Prompt / Bypass 到不了 | K1 实证(2026-10):连续 6 次 Shift+Tab 交替出现 `[accept_edits]`/`[plan]`/无标记 | 未修(记录) |

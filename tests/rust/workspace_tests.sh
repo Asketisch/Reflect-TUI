@@ -28,7 +28,7 @@ if [ "${REFLECT_SKIP_WORKSPACE:-0}" = "1" ]; then
 fi
 
 TOTAL_RC=0
-LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/reflect-tui-workspace.XXXXXX")"
+LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zhuye-cli-workspace.XXXXXX")"
 trap 'rm -rf "$LOG_DIR"' EXIT
 
 # step <名称> <命令...>:跑一步,落日志,按**命令自身**的退出码判定成败。

@@ -120,7 +120,7 @@ def _run_scenario(
 ) -> ScenarioResult:
     """跑一个场景:起 TUI → 逐轮提交 → 收集结果。"""
     result = ScenarioResult(model=model, scenario=scenario)
-    sb = Sandbox.create(prefix="reflect-tui-practice-")
+    sb = Sandbox.create(prefix="zhuye-cli-practice-")
     lane = current_lane()
     write_lane_config(sb.home, model=model, lane=lane, fallbacks=fallbacks)
     child_env = {var: "" for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ZHUYE_MODEL", "ZHUYE_PROVIDER")}

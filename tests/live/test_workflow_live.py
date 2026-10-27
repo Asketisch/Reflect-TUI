@@ -14,7 +14,7 @@
 每条都把渲染后的屏幕 dump 出来,便于人工复核模型到底做了什么。
 
 ⚠️ 工作目录是**临时目录**(pytest `tmp_path`),不再往仓库根写文件 ——
-旧脚本把 `WORKDIR` 硬编码成 `~/Code/CNB/Reflect-TUI`,会污染工作区。
+旧脚本把 `WORKDIR` 硬编码成 `~/Code/CNB/ZhuYe-CLI`,会污染工作区。
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def _submit(s: TuiSession, text: str, settle: float = 1.0) -> None:
 @pytest.fixture()
 def live_sandbox(tmp_path: Path) -> Sandbox:
     """隔离 HOME + 临时工作目录(不污染仓库)。"""
-    sb = Sandbox.create(prefix="reflect-tui-live-")
+    sb = Sandbox.create(prefix="zhuye-cli-live-")
     # 工作目录直接用 sb.cwd —— plan / 文件产物都落在这里。
     yield sb
     sb.cleanup()

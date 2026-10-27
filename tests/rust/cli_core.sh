@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/rust/cli_core.sh —— 顶层 CLI 参数矩阵与输出契约。
 #
-# 覆盖 `reflect-tui` 顶层分派面:
+# 覆盖 `zhuye-cli` 顶层分派面:
 #   - `--help` / `-h` / `--version` 的输出契约
 #   - 全局 `--cwd` / `-C` 的路径切换语义
 #   - TUI 模式参数(`--prompt` / `-c` / `-r` / `--resume` / `--plan-mode` /
@@ -21,10 +21,10 @@ source "$HERE/../lib.sh"
 cd "$ROOT"
 require_binary
 
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/reflect-tui-cli-core.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/zhuye-cli-cli-core.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
-BIN="$REFLECT_TUI_BIN"
+BIN="$ZHUYE_CLI_BIN"
 HOME_DIR="$TMP/home"
 SESS_DIR="$HOME_DIR/.zhuye/sessions"
 SESSION_ID="11111111-2222-4333-8444-555555555555"
@@ -58,7 +58,7 @@ run_cli "$TMP/help_short.txt" -h
 assert_contains "短选项 -h 同样输出 usage" "Usage:" "$TMP/help_short.txt"
 
 run_cli "$TMP/version.txt" --version
-assert_matches "version 输出含版本号形状" "reflect-tui [0-9]+\.[0-9]+" "$TMP/version.txt"
+assert_matches "version 输出含版本号形状" "zhuye-cli [0-9]+\.[0-9]+" "$TMP/version.txt"
 
 # ── 2. 未知子命令 / 未知参数 → 有诊断输出 ────────────────────────────────
 

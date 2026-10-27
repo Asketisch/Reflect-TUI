@@ -23,10 +23,10 @@ source "$HERE/../lib.sh"
 cd "$ROOT"
 require_binary
 
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/reflect-tui-cli-modules.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/zhuye-cli-cli-modules.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
-BIN="$REFLECT_TUI_BIN"
+BIN="$ZHUYE_CLI_BIN"
 HOME_DIR="$TMP/home"
 SESS_DIR="$HOME_DIR/.zhuye/sessions"
 TODAY="$(date -u +%Y/%m/%d)"

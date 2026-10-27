@@ -30,7 +30,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from tui_pty import REFLECT_TUI_BIN, Sandbox, TuiSession, text_reply, tool_call
+from tui_pty import ZHUYE_CLI_BIN, Sandbox, TuiSession, text_reply, tool_call
 
 
 def _wait_exit(s: TuiSession, timeout: float = 25.0) -> int | None:
@@ -370,7 +370,7 @@ def test_stdin_not_a_tty_fails_fast(sandbox) -> None:
     """W12 stdin 非 tty(管道):快速失败不挂死,错误可诊断。"""
     env = sandbox.env(sandbox.mock_env())
     proc = subprocess.run(
-        [str(REFLECT_TUI_BIN)],
+        [str(ZHUYE_CLI_BIN)],
         input="",
         capture_output=True,
         text=True,

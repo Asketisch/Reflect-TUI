@@ -5,11 +5,11 @@
 手工维护覆盖矩阵(哪怕是 markdown 表)必然漂移 —— 新增一条命令却忘了加
 用例,矩阵不会自己报警。本工具做**机械核对**:
 
-1. 从 `crates/reflect-tui/src/tui_core/slash_command.rs` 解析 `SlashCommand`
+1. 从 `crates/zhuye-cli/src/tui_core/slash_command.rs` 解析 `SlashCommand`
    枚举的**全部变体与其对外命令名**(含 `#[strum(serialize=...)]` 覆盖);
-2. 从 `crates/reflect-tui/src/history_render.rs` 解析 legacy 通道的
+2. 从 `crates/zhuye-cli/src/history_render.rs` 解析 legacy 通道的
    **白名单**(`is_legacy_passthrough_slash`)与**实现臂**(`dispatch_slash`);
-3. 从 `crates/reflect-tui/src/picker/` 解析各 picker 的**标题字面量**;
+3. 从 `crates/zhuye-cli/src/picker/` 解析各 picker 的**标题字面量**;
 4. 从 `tests/functional/test_slash.py` 的 `MATRIX` 解析**已被测的命令**;
 5. 报告差集。
 
@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "crates" / "reflect-tui" / "src"
+SRC = ROOT / "crates" / "zhuye-cli" / "src"
 SLASH_RS = SRC / "tui_core" / "slash_command.rs"
 HISTORY_RS = SRC / "history_render.rs"
 PICKER_DIR = SRC / "picker"
@@ -227,7 +227,7 @@ def audit() -> dict:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Reflect-TUI 覆盖自审")
+    ap = argparse.ArgumentParser(description="ZhuYe-CLI 覆盖自审")
     ap.add_argument("--json", action="store_true", help="输出 JSON")
     ap.add_argument("--strict", action="store_true", help="有未覆盖命令即退出码 1")
     args = ap.parse_args()
@@ -238,7 +238,7 @@ def main() -> int:
     else:
         c = report["counts"]
         print("=" * 60)
-        print("  Reflect-TUI 覆盖自审")
+        print("  ZhuYe-CLI 覆盖自审")
         print("=" * 60)
         print(f"  声明的命令总数        : {c['declared']}")
         print(f"    └ SlashCommand 枚举 : {c['enum']}")

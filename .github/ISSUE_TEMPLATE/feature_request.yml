@@ -1,5 +1,5 @@
 name: 功能请求
-description: 提议 Reflect-TUI 的新功能或改进
+description: 提议 ZhuYe-CLI 的新功能或改进
 title: "[Feature]: "
 labels: ["enhancement"]
 assignees: []
@@ -8,7 +8,7 @@ body:
   - type: markdown
     attributes:
       content: |
-        提议新功能时,请先确认它属于 Reflect-TUI(表现层)职责,
+        提议新功能时,请先确认它属于 ZhuYe-CLI(表现层)职责,
         而不是 Reflect-Agent(核心引擎)职责。核心引擎的改进请到
         https://github.com/Asketisch/Reflect-Agent 提 issue。
 
