@@ -22,6 +22,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -50,24 +51,46 @@ def _start_server(delay_secs: float) -> tuple[subprocess.Popen, str]:
     env = dict(os.environ)
     env["MOCK_ANTHROPIC_PORT"] = str(port)
     env["MOCK_ANTHROPIC_DELAY"] = str(delay_secs)
+    # stderr 落临时文件而非 DEVNULL:启动失败时能带着报错文本抛出,
+    # 否则 CI 上只能看到「超时」二字,无从定位。
+    stderr_file = tempfile.TemporaryFile()
     proc = subprocess.Popen(
         [sys.executable, str(MOCK_SERVER)],
         env=env,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr_file,
     )
     base_url = f"http://127.0.0.1:{port}"
-    deadline = time.time() + 15.0
+    # 30s:CI runner 偶发冷启动极慢(macos 上实测 15s 不够),慢不算错,
+    # 起不来才算错。
+    deadline = time.time() + 30.0
     while time.time() < deadline:
         if proc.poll() is not None:
-            raise RuntimeError("mock Anthropic server 启动即退出")
+            raise RuntimeError(
+                "mock Anthropic server 启动即退出,"
+                f"stderr 尾部:{_stderr_tail(stderr_file)}"
+            )
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                stderr_file.close()
                 return proc, base_url
         except OSError:
             time.sleep(0.1)
     proc.terminate()
-    raise RuntimeError("mock Anthropic server 启动超时")
+    raise RuntimeError(
+        f"mock Anthropic server 启动超时(30s),stderr 尾部:{_stderr_tail(stderr_file)}"
+    )
+
+
+def _stderr_tail(stderr_file: "tempfile.TemporaryFile[str]") -> str:
+    """读出 stderr 临时文件的尾部文本,供失败信息携带。"""
+    try:
+        stderr_file.seek(0)
+        return stderr_file.read().decode(errors="replace")[-400:]
+    except Exception:
+        return "<stderr 不可读>"
+    finally:
+        stderr_file.close()
 
 
 def _stop_server(proc: subprocess.Popen) -> None:

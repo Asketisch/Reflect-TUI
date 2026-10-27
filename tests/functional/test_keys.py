@@ -74,8 +74,10 @@ def test_ctrl_o_copies_last_reply(tui, mock_script) -> None:
         s.wait_boot(timeout=30)
         s.type_text("hi")
         s.key("enter")
+        # Ctrl+O 只认**已提交**的回复(流中按会提示 no agent reply yet):
+        # 先等文本上屏,再等回合收尾,避开慢机器上的流中竞态。
         s.wait_text("K2_REPLY_TO_COPY", timeout=30)
-        s._pump(settle=1.0, max_wait=1.5)
+        s.wait_idle(timeout=30)
         s.key("ctrl+o")
         txt = s.wait_text("Copied last reply", timeout=10)
         assert "clipboard" in txt, f"通知应提到 clipboard:\n{txt[-300:]}"

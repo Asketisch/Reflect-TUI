@@ -51,6 +51,12 @@ DRAIN_TIMEOUT = DEFAULT_TIMEOUT
 # 启动稳定等待:boot banner 动画 + 首帧渲染。
 BOOT_TIMEOUT = 25.0
 
+# HUD 忙碌 spinner(history_render/statusline.rs 的 SPINNER_FRAMES,共 10 帧)。
+# 忙碌时状态行渲染成 `<帧> <model> · cwd…`,空闲时无此前缀。判定用
+# 「帧字符后跟 ASCII 空格」:boot banner 的 braille 画虽含同款帧字形,
+# 但内部以 braille 空白(U+2800,非 Unicode 空白)连接,不会命中。
+_BUSY_RE = re.compile("[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] ")
+
 # 按键名 → 字节序列。覆盖 TUI 用到的全部非普通字符输入。
 KEY_SEQS: dict[str, bytes] = {
     "enter": b"\r",
@@ -347,6 +353,24 @@ class TuiSession:
         """等屏幕上出现 `needle`(大小写不敏感)。"""
         low = needle.lower()
         return self.wait(lambda t: low in t.lower(), timeout, label=needle)
+
+    def wait_idle(self, timeout: float = DEFAULT_TIMEOUT) -> str:
+        """等回合收尾:状态行的忙碌 spinner 消失,返回当时屏幕文本。
+
+        `wait_text` 在文本刚上屏(可能还是 `○ ` 未提交活尾)就会返回;
+        而历史行定型(`• ` 前缀)、回合分隔线、会话落盘、Ctrl+O 可复制
+        等都发生在**回合提交**时。凡要断言提交态、继续交互(下一轮
+        输入 / 按键)或读落盘产物的用例,先 `wait_text(marker)` 再
+        `wait_idle()`,避免慢机器上的流中竞态(实测:本地快机与
+        ubuntu CI 通过,macos CI 偶发 `○` 态断言失败)。
+
+        空闲信号 = `_BUSY_RE`(spinner 帧 + 空格)不再出现。
+        """
+        return self.wait(
+            lambda t: not _BUSY_RE.search(t),
+            timeout,
+            label="回合收尾(spinner 消失)",
+        )
 
     def wait_absent(self, needle: str, timeout: float = 5.0) -> str:
         """等 `needle` 从屏幕上消失。"""

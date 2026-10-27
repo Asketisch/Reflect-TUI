@@ -40,9 +40,12 @@ def test_agent_reply_uses_marker_prefix(tui, mock_script) -> None:
         s.wait_boot(timeout=30)
         s.type_text("go")
         s.key("enter")
+        # 先等文本上屏,再等回合收尾:活尾(`○ `)阶段前缀还是 `○`,
+        # 直接断言会在慢机器上命中流中竞态。
         s.wait_text("T2_REPLY_BODY", timeout=30)
-        assert "• T2_REPLY_BODY" in s.normalized(), (
-            f"agent 流式回复应带 • 前缀:\n{s.normalized()[-500:]}"
+        txt = s.wait_idle(timeout=30)
+        assert "• T2_REPLY_BODY" in txt, (
+            f"agent 流式回复应带 • 前缀:\n{txt[-500:]}"
         )
 
 
@@ -73,7 +76,10 @@ def test_streamed_reply_lands_in_scrollback(tui, mock_script) -> None:
         for i in range(3):
             s.type_text(f"turn {i}")
             s.key("enter")
+            # 等本轮收尾再发下一轮:活尾阶段提交键会把输入挤进进行中的
+            # 回合,历史行归属错乱。
             s.wait_text(f"T3_LINE_{['ONE', 'TWO', 'THREE'][i]}", timeout=30)
+            s.wait_idle(timeout=30)
         txt = s.normalized()
         for marker in ("T3_LINE_ONE", "T3_LINE_TWO", "T3_LINE_THREE"):
             assert marker in txt, f"{marker} 应在 scrollback 里"
@@ -127,11 +133,9 @@ def test_turn_with_tool_shows_separator(tui, mock_script) -> None:
         s.wait_boot(timeout=30)
         s.type_text("go")
         s.key("enter")
-        s.wait_text("T6_DONE", timeout=30)
-        s._pump(settle=0.8, max_wait=1.5)
-        assert "─ ─ ─" in s.normalized(), (
-            f"回合应出现分隔线:\n{s.normalized()[-600:]}"
-        )
+        # 分隔线只在回合提交时渲染,等它出现本身就是确定性的完成信号。
+        txt = s.wait_text("─ ─ ─", timeout=30)
+        assert "T6_DONE" in txt, f"回合应出现分隔线且回复在屏:\n{txt[-600:]}"
 
 
 def test_multi_turn_keeps_history(tui, mock_script) -> None:
@@ -149,11 +153,14 @@ def test_multi_turn_keeps_history(tui, mock_script) -> None:
         s.type_text("first question")
         s.key("enter")
         s.wait_text("T7_FIRST", timeout=30)
+        s.wait_idle(timeout=30)
         s.type_text("second question")
         s.key("enter")
         s.wait_text("T7_SECOND", timeout=30)
-        txt = s.normalized()
-        assert "T7_FIRST" in txt and "T7_SECOND" in txt, "两轮回复都应保留"
+        txt = s.wait_idle(timeout=30)
+        assert "T7_FIRST" in txt and "T7_SECOND" in txt, (
+            f"两轮回复都应保留:\n{txt[-600:]}"
+        )
 
 
 def test_mock_script_exhaustion_falls_back(tui, mock_script) -> None:
@@ -163,7 +170,9 @@ def test_mock_script_exhaustion_falls_back(tui, mock_script) -> None:
         s.wait_boot(timeout=30)
         s.type_text("first")
         s.key("enter")
+        # 收尾后再发第二轮(同 T3/T7 的竞态防护)。
         s.wait_text("T8_ONLY_ONE", timeout=30)
+        s.wait_idle(timeout=30)
         s.type_text("second")
         s.key("enter")
         s.wait_text("Hello from mock LLM", timeout=30)

@@ -23,8 +23,11 @@ def test_cjk_roundtrip_renders_correctly(tui, mock_script, sandbox) -> None:
         s.wait_boot(timeout=30)
         s.type_text("你好,世界这是一段中文输入")
         s.key("enter")
+        # 落盘发生在回合提交时:先等文本上屏,再等回合收尾,确保退出前
+        # 回合已收尾,否则慢机器上拿到的是只有用户消息的会话文件。
         txt = s.wait_text("中文回复标记", timeout=30)
         assert "你好,世界" in txt, f"中文回复应完整上屏:\n{txt[-300:]}"
+        s.wait_idle(timeout=30)
         assert not s.has_panic()
 
     body = "\n".join(f.read_text() for f in sandbox.session_files())

@@ -34,7 +34,10 @@ def test_session_file_is_written(tui, sandbox, mock_script) -> None:
         s.wait_boot(timeout=30)
         s.type_text("persist me")
         s.key("enter")
+        # 会话落盘把 assistant 消息写在回合提交时:先等文本上屏,再等
+        # 回合收尾,否则慢机器上读到的文件只有 user 消息。
         s.wait_text("P1_REPLY", timeout=30)
+        s.wait_idle(timeout=30)
         s._pump(settle=1.5, max_wait=3.0)
 
     files = _session_files(sandbox)
