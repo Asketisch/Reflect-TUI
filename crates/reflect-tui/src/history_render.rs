@@ -88,18 +88,22 @@ pub fn history_item_to_lines(item: &UiHistoryItem, width: u16, cwd: &Path) -> Ve
             error,
             elapsed_ms,
             diff: _,
+            args,
         } => Box::new(crate::history_render::cells::tool_call_cell(
             name,
             output,
             *error,
             *elapsed_ms,
+            args.as_deref(),
         )),
         UiHistoryItem::Separator {
             elapsed_secs,
             had_work,
+            turn_cost,
         } => Box::new(crate::history_render::cells::separator_cell(
             *elapsed_secs,
             *had_work,
+            *turn_cost,
         )),
         UiHistoryItem::Plan(text) => Box::new(new_proposed_plan(text.clone(), cwd)),
         UiHistoryItem::Error(text) => Box::new(new_error_event(text.clone())),
@@ -178,18 +182,22 @@ pub fn history_to_cells(history: &[UiHistoryItem], cwd: &Path) -> Vec<Arc<dyn Hi
                     error,
                     elapsed_ms,
                     diff: _,
+                    args,
                 } => Arc::new(crate::history_render::cells::tool_call_cell(
                     name,
                     output,
                     *error,
                     *elapsed_ms,
+                    args.as_deref(),
                 )),
                 UiHistoryItem::Separator {
                     elapsed_secs,
                     had_work,
+                    turn_cost,
                 } => Arc::new(crate::history_render::cells::separator_cell(
                     *elapsed_secs,
                     *had_work,
+                    *turn_cost,
                 )),
                 UiHistoryItem::Plan(text) => Arc::new(new_proposed_plan(text.clone(), cwd)),
                 UiHistoryItem::Error(text) => Arc::new(new_error_event(text.clone())),
@@ -239,6 +247,9 @@ pub enum SlashOutcome {
     ShowUsage,
     /// 切换到指定模型(通知 agent 更新 model 参数)。
     SetModel { model: String },
+    /// v1.5:`/model`(无参)—— 列出 provider 的真实模型清单。
+    /// 由调用方后台拉取 provider 的 `/models` 端点(网络 IO,不能同步做)。
+    ListModels,
     /// v1.x Plan mode：请求进入 plan 模式(由调用方发 `Op::EnterPlanMode`)。
     EnterPlan { task: String },
     /// v1.x Plan mode：退出 plan 模式(发 `Op::ExitPlanMode`)。
@@ -253,9 +264,26 @@ pub enum SlashOutcome {
     /// v1.x `/effort low|medium|high`：设定推理深度（发 `Op::SetEffort`）。
     SetEffort { effort: ReasoningEffort },
     /// v1.x `/goal <text>`：进入目标模式（发 `Op::EnterGoalMode`）。
-    EnterGoal { goal: String },
+    ///
+    /// `verify_command` / `token_budget` 来自 `--verify <cmd>` / `--budget <n>`
+    /// 选项 —— `Op::EnterGoalMode` 把它们交给引擎的 `reflect_goal::GoalController`,
+    /// 此前 TUI 硬编码 `None`,校验命令与预算上限从 TUI 侧无法设置。
+    EnterGoal {
+        goal: String,
+        verify_command: Option<String>,
+        token_budget: Option<u64>,
+    },
     /// v1.x `/goal clear`：退出目标模式（发 `Op::ExitGoalMode`）。
     ExitGoal,
+    /// v1.5 `/goal`（无参）：显示目标模式状态快照（权威读口）。
+    /// 由调用方从 `AgentThread::goal_snapshot()` 取 `reflect_goal::GoalState`。
+    ShowGoal,
+    /// v1.x `/lsp`：显示语言服务诊断状态（文档数 / 诊断条数）。
+    /// 由调用方从 `reflect_lsp::DiagnosticRegistry` 取数。
+    ShowLsp,
+    /// v1.x `/todo`：显示 agent 当前的待办清单。
+    /// 由调用方从 `AgentConfig::todos_slot` 取数。
+    ShowTodo,
     /// v0.4+ `/loop <secs> <cmd>`：在 TUI 内部以 interval 秒为周期重复提交 cmd。
     /// 调度是本地状态，不发 agent round-trip。`/loop stop` 取消。
     /// `interval_secs == 0` 表示取消当前 loop（语义同 stop）。
@@ -465,14 +493,12 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         "/compact" => SlashOutcome::Compact,
         "/cost" => SlashOutcome::ShowCost,
         "/usage" => SlashOutcome::ShowUsage,
-        // /model <name> 切换到指定模型。
+        // /model <name> 切换到指定模型;无参 → 列出 provider 的模型清单。
         "/model" => {
             let args: Vec<&str> = trimmed.split_whitespace().skip(1).collect();
             let model = args.first().unwrap_or(&"").to_string();
             if model.is_empty() {
-                return SlashOutcome::Handled {
-                    notice: Some("/model: Missing model name. Usage: /model <model-name>".into()),
-                };
+                return SlashOutcome::ListModels;
             }
             SlashOutcome::SetModel { model }
         }
@@ -549,17 +575,27 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
                 .unwrap_or("")
                 .trim();
             if rest.is_empty() {
-                return SlashOutcome::Handled {
-                    notice: Some(
-                        "/goal: usage: /goal <objective>  (e.g. /goal refactor auth module)".into(),
-                    ),
-                };
+                // v1.5:无参 → 显示目标状态快照(权威读口)。此前只回一句
+                // usage,用户看不到「跑到第几轮 / 判定是什么 / 卡在哪」。
+                return SlashOutcome::ShowGoal;
             }
             if rest.eq_ignore_ascii_case("clear") {
                 SlashOutcome::ExitGoal
             } else {
-                SlashOutcome::EnterGoal {
-                    goal: rest.to_string(),
+                // v1.x:`--verify <cmd>` / `--budget <n>` 选项 —— 透传给
+                // `Op::EnterGoalMode`,引擎的 GoalController 据此启用
+                // 命令式校验与 token 预算上限。
+                match crate::goal_state_view::parse_goal_command(rest) {
+                    Some(cmd) => SlashOutcome::EnterGoal {
+                        goal: cmd.objective,
+                        verify_command: cmd.verify_command,
+                        token_budget: cmd.token_budget,
+                    },
+                    // 只给了选项、没给目标 —— 不进目标模式(否则 `--verify`
+                    // 会被静默吞进目标文本,选项也失效)。
+                    None => SlashOutcome::Handled {
+                        notice: Some(crate::goal_state_view::GOAL_USAGE.to_string()),
+                    },
                 }
             }
         }
@@ -795,6 +831,10 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
         "/plugin" => SlashOutcome::OpenPlugin,
         // /mcp — 打开 mcp overlay（显示 MCP 服务器状态）
         "/mcp" => SlashOutcome::OpenMcp,
+        // /lsp — 显示语言服务诊断状态（诊断文档数 / 条数）
+        "/lsp" => SlashOutcome::ShowLsp,
+        // /todo — 显示 agent 当前的待办清单
+        "/todo" => SlashOutcome::ShowTodo,
         // /prompt [list|reload|<layer>] — 提示词层管理（v1.6.1，引擎内置
         // 命令，不开 turn）。解析语义与 headless 的 expand_prompt_slash 一致。
         "/prompt" => {
@@ -1196,7 +1236,15 @@ mod sanitize_tests {
     #[test]
     fn dispatch_slash_goal_enter_and_clear() {
         match dispatch_slash("/goal refactor auth") {
-            SlashOutcome::EnterGoal { goal } => assert_eq!(goal, "refactor auth"),
+            SlashOutcome::EnterGoal {
+                goal,
+                verify_command,
+                token_budget,
+            } => {
+                assert_eq!(goal, "refactor auth");
+                assert!(verify_command.is_none());
+                assert!(token_budget.is_none());
+            }
             other => panic!("/goal 应产出 EnterGoal, 实为 {other:?}"),
         }
         match dispatch_slash("/goal clear") {
@@ -1208,10 +1256,39 @@ mod sanitize_tests {
             SlashOutcome::ExitGoal => {}
             other => panic!("/goal CLEAR 应产出 ExitGoal, 实为 {other:?}"),
         }
-        // 空参 → Handled
+        // 空参 → ShowGoal(v1.5:显示目标状态快照,不再是 usage 提示)
         match dispatch_slash("/goal") {
-            SlashOutcome::Handled { notice } => assert!(notice.unwrap().contains("usage")),
-            other => panic!("/goal 空参应产出 Handled, 实为 {other:?}"),
+            SlashOutcome::ShowGoal => {}
+            other => panic!("/goal 空参应产出 ShowGoal, 实为 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dispatch_slash_goal_carries_verify_and_budget() {
+        // v1.x:`--verify` / `--budget` 透传给引擎的 GoalController。
+        match dispatch_slash("/goal ship it --verify cargo test --budget 50000") {
+            SlashOutcome::EnterGoal {
+                goal,
+                verify_command,
+                token_budget,
+            } => {
+                assert_eq!(goal, "ship it");
+                assert_eq!(verify_command.as_deref(), Some("cargo test"));
+                assert_eq!(token_budget, Some(50000));
+            }
+            other => panic!("/goal 带选项应产出 EnterGoal, 实为 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dispatch_slash_goal_with_only_options_does_not_enter_goal_mode() {
+        // 只给选项、没给目标 → 给用法提示,不进目标模式(否则 `--verify`
+        // 会被静默吞进目标文本、选项也失效)。
+        match dispatch_slash("/goal --verify cargo test") {
+            SlashOutcome::Handled { notice } => {
+                assert!(notice.unwrap().contains("/goal"));
+            }
+            other => panic!("/goal 只带选项应产出 Handled, 实为 {other:?}"),
         }
     }
 

@@ -28,10 +28,16 @@ fn fmt_tool_elapsed(elapsed_ms: u64) -> String {
 /// - 首行 `✓ name (Nms)` 绿色粗体 / `✗ name (Nms)` 红色(`error=true`)。
 /// - 输出截断到前 [`MAX_OUTPUT_LINES`] 行,超出加 `… (+N more lines)` dim。
 /// - 输出每行 `│   ` 暗灰前缀 + 白字;错误输出标红。
-pub fn tool_call_cell(name: &str, output: &str, error: bool, elapsed_ms: u64) -> PlainHistoryCell {
+pub fn tool_call_cell(
+    name: &str,
+    output: &str,
+    error: bool,
+    elapsed_ms: u64,
+    args: Option<&str>,
+) -> PlainHistoryCell {
     let glyph = if error { "✗" } else { "✓" };
     let head_color = if error { Color::Red } else { Color::Green };
-    let header = Line::from(vec![
+    let mut header_spans = vec![
         Span::styled(
             format!("{glyph} {name}"),
             Style::default().fg(head_color).add_modifier(Modifier::BOLD),
@@ -40,7 +46,16 @@ pub fn tool_call_cell(name: &str, output: &str, error: bool, elapsed_ms: u64) ->
             format!(" ({})", fmt_tool_elapsed(elapsed_ms)),
             Style::default().fg(Color::DarkGray),
         ),
-    ]);
+    ];
+    // v1.5:参数摘要(path / command / 正文长度)—— 让用户一眼看到
+    // 「这个工具到底动了哪个文件」。
+    if let Some(a) = args.map(str::trim).filter(|a| !a.is_empty()) {
+        header_spans.push(Span::styled(
+            format!(" · {a}"),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    let header = Line::from(header_spans);
 
     let trimmed = output.trim();
     let mut lines = vec![header];
@@ -167,7 +182,11 @@ pub fn banner_cell(version: &str) -> PlainHistoryCell {
 ///
 /// 不复用 Reflect `FinalMessageSeparator`(其 `new` 是 `pub(crate)` 但依赖
 /// `RuntimeMetricsSummary`),这里手画,避免改 Reflect 可见性。
-pub fn separator_cell(elapsed_secs: Option<u64>, had_work: bool) -> PlainHistoryCell {
+pub fn separator_cell(
+    elapsed_secs: Option<u64>,
+    had_work: bool,
+    turn_cost: Option<f64>,
+) -> PlainHistoryCell {
     let mut label_parts = Vec::new();
     if had_work {
         if let Some(secs) = elapsed_secs.filter(|s| *s > 60) {
@@ -176,6 +195,10 @@ pub fn separator_cell(elapsed_secs: Option<u64>, had_work: bool) -> PlainHistory
                 crate::tui_core::status_indicator_widget::fmt_elapsed_compact(secs)
             ));
         }
+    }
+    // 回合小结:provider 上报了本回合成本时附在分隔符上。
+    if let Some(cost) = turn_cost.filter(|c| *c > 0.0) {
+        label_parts.push(format!("${:.4}", cost));
     }
     // 宽度无关:取一个固定长度分隔;`take_prefix_by_width` 在 display_lines 时裁切。
     let rule = if label_parts.is_empty() {
@@ -199,7 +222,7 @@ mod tests {
 
     #[test]
     fn tool_call_ok_header_green_with_elapsed() {
-        let cell = tool_call_cell("Bash", "done", false, 42);
+        let cell = tool_call_cell("Bash", "done", false, 42, None);
         let lines = cell.display_lines(60);
         let rendered = line_to_plain(&lines[0]).to_string();
         assert!(rendered.contains("✓ Bash"), "ok header: {rendered}");
@@ -208,7 +231,7 @@ mod tests {
 
     #[test]
     fn tool_call_error_header_red() {
-        let cell = tool_call_cell("Glob", "nope", true, 5);
+        let cell = tool_call_cell("Glob", "nope", true, 5, None);
         let lines = cell.display_lines(60);
         let rendered = line_to_plain(&lines[0]).to_string();
         assert!(rendered.contains("✗ Glob"), "error header: {rendered}");
@@ -217,7 +240,7 @@ mod tests {
     #[test]
     fn tool_call_truncates_long_output() {
         let output: String = (0..12).map(|i| format!("line{i}\n")).collect();
-        let cell = tool_call_cell("Read", output.trim(), false, 10);
+        let cell = tool_call_cell("Read", output.trim(), false, 10, None);
         let lines = cell.display_lines(60);
         // 表头 + 5 行主体 + 1 行截断提示
         assert_eq!(lines.len(), 1 + MAX_OUTPUT_LINES + 1);
@@ -236,7 +259,7 @@ mod tests {
 
     #[test]
     fn separator_has_rule() {
-        let cell = separator_cell(None, true);
+        let cell = separator_cell(None, true, None);
         let lines = cell.display_lines(60);
         let s = line_to_plain(&lines[0]).to_string();
         assert!(s.contains("─"), "separator rule: {s}");
@@ -244,10 +267,28 @@ mod tests {
 
     #[test]
     fn separator_with_elapsed_label() {
-        let cell = separator_cell(Some(125), true);
+        let cell = separator_cell(Some(125), true, None);
         let lines = cell.display_lines(60);
         let s = line_to_plain(&lines[0]).to_string();
         assert!(s.contains("Worked for"), "elapsed label: {s}");
+    }
+
+    #[test]
+    fn separator_with_turn_cost_label() {
+        // 回合小结:provider 上报了本回合成本时附在分隔符上。
+        let cell = separator_cell(None, true, Some(0.0125));
+        let lines = cell.display_lines(60);
+        let s = line_to_plain(&lines[0]).to_string();
+        assert!(s.contains("$0.0125"), "turn cost label: {s}");
+    }
+
+    #[test]
+    fn separator_omits_zero_turn_cost() {
+        // 成本为 0(未计费模型 / 未上报)时不显示成本标签,避免误导。
+        let cell = separator_cell(None, true, Some(0.0));
+        let lines = cell.display_lines(60);
+        let s = line_to_plain(&lines[0]).to_string();
+        assert!(!s.contains('$'), "零成本不应显示成本标签: {s}");
     }
 
     #[test]

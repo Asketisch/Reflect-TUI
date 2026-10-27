@@ -40,11 +40,18 @@ pub struct TuiRuntimeHandles {
     /// shell hooks / slash 命令)。主循环在提交用户输入前用它展开
     /// `/plugin:ns:name` 命令;未装插件时为空句柄。
     pub plugin_runtime: reflect_plugin::runtime::SharedPluginRuntime,
+    /// LSP 连接管理器(LSP server 启动后共享)。`/lsp` 用它读诊断注册表 ——
+    /// 此前 manager 被 bootstrap 直接丢弃,诊断数据拿不到。
+    pub lsp_manager: Option<Arc<reflect_lsp::LspConnectionManager>>,
 }
 
 /// 加载 config + 构建 Reflect runtime,然后进入 TUI 主循环。
 pub fn run(args: TuiArgs) -> Result<()> {
-    crate::logging::init();
+    // v1.3 接线:`[analytics]` 段此前是死配置 —— TUI 从不启动 OTLP exporter
+    // (headless `reflect-exec` 有)。这里先读一次配置拿到该段,交给
+    // logging::init 决定是否挂 OpenTelemetryLayer。
+    let initial_cfg = reflect_config::load_default();
+    crate::logging::init(initial_cfg.analytics.as_ref());
 
     // M4:v1.4 D1 真实分词器(tokenizer feature)—— 压缩触发阈值与上下文
     // 估算用 tiktoken 替代 len/3.5 启发式。set-once;失败仅 warn,回退
@@ -78,11 +85,33 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
         build_quota_tracker, build_sanitizer, build_telemetry_sink,
     };
 
+    // 0. config.toml 语法体检:`load_default` 对解析失败静默回退默认值
+    // (内部只记 tracing::debug,被 warn 级过滤器吞掉),用户的 providers /
+    // 权限规则 / hooks 会**无声失效**。这里显式探测一次,解析失败立即在
+    // 终端上给出可见告警。
+    if let Some(path) = reflect_config::default_config_path()
+        && path.exists()
+        && let Err(e) = reflect_config::load_from_file(&path)
+    {
+        eprintln!(
+            "⚠ 警告:{} 解析失败({e}) —— 已回退默认配置,providers/权限规则/hooks 可能未生效!",
+            path.display()
+        );
+    }
+
     // 1. 加载 config + provider/model。
     let reflect_cfg = reflect_config::load_default();
+    // `[sandbox].os_level` 的 `Option<bool>` 语义(与 reflect-exec 对齐):
+    // - `None` = 用户未表态 → 不桥接 env,让 `OsSandbox::from_env()` 走核心
+    //   基线(env 未设置 = 默认开启);
+    // - `Some(true)` = 显式要求开 → 桥接 env=1;
+    // - `Some(false)` = 显式关闭 → 尊重表态,不桥接。
+    // env 优先于 TOML,让 `REFLECT_SANDBOX_OS_LEVEL=0` 能临时覆盖配置。
     // SAFETY: 使用 current_thread runtime，此时保证所有代码在单线程中执行，
     // 无并发读取环境变量的可能。set_var 仅在 bootstrap 阶段调用一次。
-    if reflect_cfg.sandbox.os_level && std::env::var_os("REFLECT_SANDBOX_OS_LEVEL").is_none() {
+    if reflect_cfg.sandbox.os_level == Some(true)
+        && std::env::var_os("REFLECT_SANDBOX_OS_LEVEL").is_none()
+    {
         #[allow(unsafe_op_in_unsafe_fn)]
         unsafe {
             std::env::set_var("REFLECT_SANDBOX_OS_LEVEL", "1");
@@ -99,12 +128,12 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
         )
     })?;
     // v1.3 model 解析诚实化:不再回落内置默认,缺配置时如实报错。
-    //
-    // v1.7:`model = "free"` 这类「运行时才知道」的特殊值(从 provider 的
-    // 模型清单里挑一个免费模型)在此解析成**真实** id —— 与 headless
-    // (`reflect-exec::bootstrap_common`)同款。解析失败(清单端点不存在 /
-    // 拉取失败 / 没有免费模型)→ 启动即报错,不静默拿占位串 `"provider/free"`
-    // 去打请求。
+    // v1.5:改走 `resolve_model_spec` —— 它是「静态值 + 动态值」的统一入口:
+    // `model = "free"` 这类运行时才知道的值(从 provider 清单里挑一个免费
+    // 模型)在此解析成真实 id。此前 TUI 走同步的 `resolve_model`,会把字面量
+    // `"free"` 当模型名发给 provider(headless 能用、TUI 不能)。
+    // 解析需要 registry(清单发现要打 provider 的 `/models` 端点),故放在
+    // `apply_to_registry` 之后。
     let model = reflect_config::resolve_model_spec(&reflect_cfg, &registry)
         .await
         .map_err(|e| anyhow::anyhow!("model 解析失败: {e}"))?
@@ -227,9 +256,12 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
     let resume_target = resolve_resume_target(&args)?;
     let prior_messages = match resume_target {
         Some(tid) => {
+            // 定位 + 回放(任意日期桶 + 轮转副本 + 双 id 入口)走 submodule
+            // 共享 API `reader::replay` —— 此前共享实现只扫近 3 天,本仓库
+            // 维护过全盘扫描 workaround,共享 API 补齐后回归共享实现。
+            // 见 `crate::resume`。
             let records =
-                reflect_rollout::reader::replay(&reflect_rollout::path::default_base(), tid)
-                    .await?;
+                crate::resume::replay_all(&reflect_rollout::path::default_base(), &tid).await?;
             let msgs = reflect_core::resume::records_to_preload(&records);
             tracing::info!(
                 thread_id = %tid,
@@ -335,6 +367,10 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
         let mut c = AgentConfig::new(model.clone(), workspace.clone())
             .with_approvals(true)
             .with_m4(m4)
+            // v1.5:用**已解析**的 spec 构建 routing(main slot 的 primary
+            // 必须等于真实请求的模型)。`routing_policy()` 走同步解析,
+            // 在 `model = "free"` 场景下拿到的是占位串 `"openai/free"`,
+            // 会盖掉真实 id。
             .with_policy(Arc::new(reflect_cfg.routing_policy_with(&model)))
             .with_token_budget(token_budget)
             .with_max_iterations(max_iterations)
@@ -393,7 +429,9 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
     // lifecycle channel 进 TUI 事件循环(/mcp overlay 与 Notice 行)。
     let (lifecycle_tx, lifecycle_rx) = tokio::sync::mpsc::channel::<reflect_protocol::Event>(64);
     let mcp_manager = bootstrap_mcp(&reflect_cfg, lifecycle_tx.clone(), tools.clone()).await;
-    let _lsp_manager = bootstrap_lsp(&reflect_cfg, lifecycle_tx.clone(), tools.clone()).await;
+    // v1.x:保留 LSP 连接管理器 —— `/lsp` 用它读诊断注册表(此前被丢弃,
+    // publishDiagnostics 缓存的数据永远拿不到)。
+    let lsp_manager = bootstrap_lsp(&reflect_cfg, lifecycle_tx.clone(), tools.clone()).await;
 
     // MCP 资源 / Prompts 读取工具(与 exec 对齐;MCP 未启用时挂空
     // manager,工具自身对空列表返回友好结果)。v1.6 补 Prompts 原语。
@@ -445,6 +483,7 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
             config: reflect_cfg,
             prior_messages,
             plugin_runtime,
+            lsp_manager,
         },
     )
     .await
@@ -454,9 +493,10 @@ async fn bootstrap_and_run(args: TuiArgs) -> Result<()> {
 /// 与 exec 的 `resolve_resume_thread_id` 同语义;返回目标线程 id。
 fn resolve_resume_target(args: &TuiArgs) -> Result<Option<reflect_protocol::ThreadId>> {
     if let Some(s) = &args.resume {
-        let parsed = uuid::Uuid::parse_str(s)
-            .map_err(|e| anyhow::anyhow!("invalid thread id '{s}': {e}"))?;
-        return Ok(Some(reflect_protocol::ThreadId(parsed)));
+        // 支持完整 UUID 或唯一前缀(≥4 位),前缀语义与 headless `session show`
+        // 对齐:短前缀直接拒绝,命中多个会话时报错并给出候选数。
+        let tid = crate::resume::resolve_thread_id(s)?;
+        return Ok(Some(tid));
     }
     if args.continue_last || args.resume_by.is_some() {
         let base = reflect_rollout::path::default_base();

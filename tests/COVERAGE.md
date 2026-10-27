@@ -17,7 +17,7 @@
 
 | 层 | 位置 | 测谁 | 依赖 SDK? | 规模 |
 |---|---|---|---|---|
-| **能力覆盖层**(主) | `tests/functional/` | **Rust 代码在真产物上的行为**(真二进制 + pty + pyte 屏幕快照) | ❌ | 202 条 |
+| **能力覆盖层**(主) | `tests/functional/` | **Rust 代码在真产物上的行为**(真二进制 + pty + pyte 屏幕快照) | ❌ | 215 条 |
 | **覆盖自审层** | `tests/tools/coverage_audit.py` | 「声明了什么」× 「测了什么」的**机械差集** | ❌ | 4 条门禁 |
 | CLI 参数面 | `tests/rust/cli_core.sh`、`cli_modules.sh` | 17 个子命令的**参数矩阵**与输出契约(bash,含退出码) | ❌ | 101 断言 |
 | CLI 语义面 | `tests/functional/test_cli.py` | CLI 输出的**语义**(列结构、预览条数、统计口径) | ❌ | 10 条 |
@@ -42,14 +42,15 @@
 | 能力域 | 能力覆盖层 | CLI 参数面 | 覆盖自审 |
 |---|---|---|---|
 | 启动 / 渲染锚点 / 退出生命周期 / 全屏模式 / model 解析 | B1–B15 | cli_core(`--help`/`--version`) | — |
-| slash 命令面(84 条命令) | S1–S8 | — | ✅ 全覆盖门禁 |
+| slash 命令面(86 条命令) | S1–S8 | — | ✅ 全覆盖门禁 |
 | 弹层 / 浮层 / 选择器 / 鼠标反向门禁 | O1–O12 | — | ✅ picker 数门禁 |
-| 对话轮次 / 流式 / 工具 / 统计 | T1–T10 | — | — |
-| 会话持久化 / 恢复 / plan 落盘 | P1–P7 | cli_modules(session) | — |
+| 对话轮次 / 流式 / 工具 / 统计 | T1–T11 | — | — |
+| 会话持久化 / 恢复 / plan 落盘 | P1–P9 | cli_modules(session) | — |
 | headless CLI 语义 | C1–C10 | cli_modules(traces) | — |
 | 键盘交互(权限循环 / 历史召回 / 编辑器 / 复制 / 多行 / vim) | K1–K11(无 K6) | — | — |
 | 渲染与视觉(宽字符 / 折行 / markdown / 主题 / resize / 小窗) | V1–V9 | — | — |
 | 工作流与容错(审批 / AskUser / loop / 恢复边界 / 坏输入 / 信号) | W1–W12 | — | — |
+| 真实 HTTP 链路(Anthropic SSE / 跨天恢复 / busy 窗口中断) | H1–H3 | — | — |
 | Rust 编译面 | — | workspace_tests(cargo test/clippy/fmt/doc) | — |
 
 ---
@@ -150,6 +151,7 @@
 | T8 | 脚本耗尽回退 | `Hello from mock LLM!` |
 | T9 | Esc 打断回合 | 回合收尾 / 中断提示 |
 | T10 | 回合后 HUD 用量段 | `context left` |
+| T11 | 工具参数分片下发 | 调用行带参数摘要(`✓ glob (…) · *.rs`) |
 
 > **mock provider 的语义(测试必须知道)**:
 > `REFLECT_MOCK_SCRIPT` 是 JSONL,**每次模型调用消费一行**
@@ -175,6 +177,8 @@
 | P5 | 非法 `--resume` id | 快速失败(非 0),不挂死 |
 | P6 | 会话名落盘 | `~/.reflect/sessions/_names/<id>.name` |
 | P7 | Plan 落盘 | `<workspace>/.reflect/plan/*.md` + 正文 |
+| P8 | 旧日期会话恢复 + 续写原文件 | 会话文件挪进旧日期桶后 `--resume` 历史回填;新轮次追加进原文件,当天桶不另立新文件 |
+| P9 | 双 id 恢复(外部命名会话) | 文件名与首行 `SessionMeta.session_id` 脱钩后,按内部 id 恢复仍回填历史 |
 
 ### C 组 headless CLI 语义(`test_cli.py`)
 | # | 用例 | 断言 |
@@ -199,6 +203,7 @@
 | K1 | Shift+Tab 循环权限模式 | identity 行 `[accept_edits]` → `[plan]` → 无标记(Auto),实测三态循环(见 §6 D11) |
 | K2 | Ctrl+O 复制最后回复 | `⚠ Copied last reply (N chars) to clipboard.` |
 | K3 | Ctrl+G 外部编辑器往返 | `⚠ External editor closed; content loaded into composer.` + `▶ TEXT_FROM_EDITOR` 提交 |
+| K3b | 全屏模式 Ctrl+G 外部编辑器 | 编辑器前真正离开备用屏(`ESC[?1049l`),退出后重进(`ESC[?1049h`) |
 | K4 | Ctrl+R 反向搜索历史 | composer 回填命中条目(`beta probe two`) |
 | K5 | Up 召回最近历史 | composer 回填 `HIST_LAST_ENTRY` |
 | K7 | alt+enter 多行输入 | composer 两行 + 落盘消息体含 `\n`(shift+enter 依赖 kitty 协议,哑 pty 用等价路径) |
@@ -235,9 +240,11 @@
 | W4 | ask_user 自由文本条 | `❓ AGENT 等待你的回答` → 输入回车 → `▶ (回答) <text>` + `✓ ask_user` + 回合继续 |
 | W5 | `/loop` 离线定时触发 | raw 流 `LOOPFIRE` 标记 ≥8(≥2 轮,视口计数会漏须用 raw);`/loop stop` → `⚠ /loop: stopped (was: /status every 3s)` |
 | W6 | `-c` 无历史会话 | 非 0 退出 + `no sessions found` + `nothing to resume` |
-| W7 | `--resume` 短前缀拒绝 | 非 0 退出 + `invalid thread id`(只认完整 UUID) |
+| W7 | `--resume` 前缀过短拒绝 | 非 0 退出 + `前缀过短`(<4 位直接拒绝) |
+| W7b | `--resume` 唯一前缀命中 | `↩ 已恢复历史会话 <id> · 回放 1 条消息` |
+| W7c | `--resume` 跨天会话(完整 UUID) | `↩ 已恢复历史会话 <id> · 回放 1 条消息` |
 | W8 | 200 条消息大会话恢复 | 不挂死、可继续对话、无 panic(旧消息进原生 scrollback,pyte 视口不可见) |
-| W9 | 坏 config.toml | **静默回落默认配置**,TUI 照常启动(锁定现状,见 §6 D9) |
+| W9 | 坏 config.toml | 终端给出显式告警(`解析失败` + 路径),并回落默认配置,TUI 照常启动 |
 | W10 | 非法 `REFLECT_MODEL` | 非 0 退出 + 错误含 `provider` |
 | W11 | SIGTERM | rc=-15(死于信号)+ 无 panic + 会话文件已落盘 |
 | W12 | stdin 非 tty(管道) | 非 0 退出 + `Error: Device not configured`,不挂死 |
@@ -276,9 +283,25 @@
 > 这一组守的是**测试基础设施的正确性** —— 设施坏了,上面所有能力断言都会
 > 变成「假绿」。
 
+### H 组 真实 HTTP 链路(`test_http_mock.py`)
+
+| # | 用例 | 断言 |
+|---|---|---|
+| H1 | 真实 Anthropic SSE 往返 | 请求打到本地 mock server,`content_block_delta` 聚合出的回复上屏 |
+| H2 | 跨天会话 resume(真实 HTTP 产出) | 会话搬到 `2026/01/01` 桶后 `--resume` 仍回放既往消息 |
+| H3 | 确定性 busy 窗口下 Esc 中断 | 出现「已发送中断请求」,且连按 3 次只出现一次(去抖生效) |
+
+> **为什么要有这一组**:其余用例都用 `REFLECT_MODEL=mock/mock-1` —— 那是
+> reflect-llm `ModelClient` 层的内置 provider,**完全绕过** HTTP 传输、
+> SSE 分帧与 Anthropic 协议形态;内置 mock 还「瞬时完成」,离线造不出
+> **确定性 busy 窗口**(这正是 §6 里「Ctrl+C busy 首按中断」等条目长期
+> 锁在「未设用例」的原因)。本组用 `mock_anthropic_server.py` 起一个本地
+> HTTP server,补上那一层,并用 `MOCK_ANTHROPIC_DELAY` 拉长模型响应来
+> 制造 busy 窗口。
+
 ---
 
-## 3. CLI 子命令(10 个,不含 help)
+## 3. CLI 子命令(14 个,不含 help)
 
 | 子命令 | 参数矩阵(bash) | 语义断言(Python) |
 |---|---|---|
@@ -289,9 +312,13 @@
 | `session rename` | cli_modules | P6 |
 | `session export` | cli_modules | C6, C7 |
 | `session stats` | cli_modules | C8 |
+| `session search` | cli_core | — |
 | `traces ls` | cli_modules | — |
 | `traces show` | cli_modules | — |
 | `traces spans` | cli_modules | C9 |
+| `workspace clone` | cli_core | — |
+| `discussion run` | cli_core | — |
+| `security audit` | cli_core | — |
 
 顶层:`--help` / `-h` / `--version` / `--cwd` / `-C` / TUI 参数
 (`--prompt` / `-c` / `-r` / `--resume` / `--plan-mode` /
@@ -318,6 +345,19 @@
 | Telemetry | `bootstrap_wiring.rs:75-129` | `~/.reflect/traces/` 产物 + `traces spans` |
 | 压缩 | `bootstrap.rs` + `reflect-compact` | `🗜 已压缩上下文:…` 通知 |
 | 权限模式 | `Op::CyclePermissionMode` | HUD `[plan]` / `[accept_edits]` 段 |
+| 工具参数流(`ToolCallArgsDelta`) | `tui/conversion.rs` + `adapter.rs` | 调用行参数摘要 `✓ glob (…) · *.rs` |
+| 会话恢复回放(任意日期 + 轮转副本 + 双 id) | `resume.rs::replay_all`(`reflect_rollout::reader::replay`) | 旧日期会话 `--resume` 历史回填 + 续写原文件(P8);按内部 session id 恢复(P9) |
+| 路由事件(failover / 冷却 / 跨模型降级) | `tui/conversion.rs` + `routing_status.rs` | `↻ 路由切换 · main: …` / `↘ 模型降级 · …` 通知行 |
+| 目标模式状态快照 | `tui/mod.rs`(`AgentThread::goal_snapshot`) | `/goal` 无参 → `目标模式 · 进行中` + 进度行 |
+| provider 模型清单 + 免费判定 | `reflect_config::fetch_catalog` + `reflect_llm::model_catalog` | `/model` 无参 → 清单行 + `免费` / `免费?` 标记 |
+| 配置热重载 | `reflect_config::ConfigWatcher` + `config_reload.rs` | `🔄 配置已重载(…)· 变更段: …` 通知行 |
+| 分析遥测(OTLP) | `logging.rs`(`reflect_config::init_exporter`) | `[analytics] enabled=true` → OTLP span 导出 |
+| LSP 诊断 | `reflect_lsp::DiagnosticRegistry` | `/lsp` → `诊断文档: N · 诊断条数: M` |
+| Agent 待办清单 | `AgentConfig::todos_slot` | `/todo` → `N 项(✅ … 完成 · 🔄 … 进行中 · ⬜ … 待办)` |
+| MCP 精选目录 | `reflect_mcp::curated_catalog` | `/mcp` overlay 的 `Curated catalog` 段 + 安装片段 |
+| 目标模式校验 / 预算 | `reflect_goal` + `Op::EnterGoalMode` | `/goal <目标> --verify <cmd> --budget <n>` |
+| OS 级沙箱状态 | `reflect_sandbox::OsSandbox::status_line` | `/status` 的 `sandbox:` 段 |
+| 终端通知开关 / 通道 | `reflect_config::TuiNotificationsSection` | `[notifications.tui]` 的 `enabled` / `on_*` / `channels` 真正生效 |
 
 ---
 
@@ -345,11 +385,23 @@
 - **`/prompt` 子命令**(`list` / `reload` / `rescan`)在当前构建未接线。
 - **`--resume` 只认完整 UUID**:3 字符或 8 字符前缀都报 `invalid thread id
   … invalid length`;前缀解析只在 headless `session show` 里有(W7 锁定)。
+  → **已修**:TUI 侧 `--resume` 支持唯一前缀(≥4 位,语义与 `session show`
+  对齐),过短前缀仍拒绝并提示「前缀过短」;唯一前缀命中后回放既往消息
+  (W7b),跨天会话也照常回放(W7c)。
+- **`--resume` 只扫近 3 天的日期桶**:`reader::replay` 用
+  `Utc::now() - days(0..3)` 拼路径,3 天以上前创建的会话回放为空 ——
+  续作「成功」但历史静默丢失;轮转副本(`<id>.N.jsonl`)也不参与合并。
+  → **已修**:先由本仓库维护全盘扫描 workaround;submodule `e4560bc` 起
+  共享 `reader::replay` 具备同等定位能力(任意日期桶 + 轮转副本合并 +
+  文件名/内部 id 双入口),workaround 已删除、消费点回归共享实现
+  (P8、P9),恢复后的写入也续写原日期目录的原文件(writer 侧同步修复)。
 - **Shift+Tab 实际是三态循环**(Auto → AcceptEdits → Plan → Auto):
   `keymap.rs` 注释宣称五模式(含 Prompt / Bypass),但循环到不了后两者
   (K1 锁定,见 §6 D11)。
 - **坏 `config.toml` 静默回落默认配置**:解析失败无任何用户可见告警,
   TUI 照常启动(W9 锁定「不崩」,见 §6 D9)。
+  → **已修**:bootstrap 启动前显式体检 config.toml,解析失败即在终端打印
+  `⚠ 警告:<路径> 解析失败(...)`,同时仍回落默认配置不挡启动(W9)。
 
 ---
 
@@ -365,10 +417,11 @@
 | D6 | **`REFLECT_TUI_UPDATE_CHECK` 无人读取**:旧 harness 设它以屏蔽启动期更新探测,但本 fork 的 `update_action.rs:29-33` 恒返回 `None` | `crates/reflect-tui/src/tui_core/update_action.rs:29-33` | 未修(记录)。无害,但属残留 |
 | D7 | **mock provider 一次提交触发多次模型调用**:实测 4 次,导致脚本行与最终落盘的 assistant 消息不是一一对应 | `reflect-agent/crates/abilities/reflect-llm/src/providers/mock.rs:163` | 引擎侧行为,记录 |
 | D8 | **`Ctrl+Shift+D` 快捷键在真实终端不可达**:终端无法区分 Ctrl+D 与 Ctrl+Shift+D(同为字节 `0x04`),crossterm 把 `0x04` 解析成 `Char('d') + CONTROL`(**不带 SHIFT**),而 `keymap.rs` 的 `OpenDiff` 分支要求 `CONTROL|SHIFT` —— 该分支永远命中不了,实际落到 `Ctrl+D → Exit` | `crates/reflect-tui/src/keymap.rs:88-94`(要求 SHIFT)vs `:60-65`(Ctrl+D 排除 SHIFT);实测见 `test_overlay.py::test_ctrl_shift_d_is_unreachable_from_a_terminal` | 未修(记录)。diff overlay 的实际入口只有 `/diff` |
-| D9 | **坏 `config.toml` 静默回落**:`this is [ not valid toml {{{` 这类非法内容不产生任何用户可见告警,TUI 以默认配置照常启动 —— 用户改了配置却不生效时无从得知 | W9 实证(2026-10):进程存活、无 panic、raw 无 config 相关输出 | 未修(记录) |
+| D9 | ~~**坏 `config.toml` 静默回落**~~:`this is [ not valid toml {{{` 这类非法内容不产生任何用户可见告警,TUI 以默认配置照常启动 —— 用户改了配置却不生效时无从得知 | W9 实证(2026-10):进程存活、无 panic、raw 无 config 相关输出 | **已修**:bootstrap 启动前显式体检 config.toml,解析失败在终端打印 `⚠ 警告:<路径> 解析失败(...)`,仍回落默认配置不挡启动 |
 | D10 | **busy 窗口内的 composer 提交被吞且草稿保留**:回合进行中按 Enter,提交内容不上传也不清框;`/loop stop` 在迭代 busy 窗口内提交即失效,且残留草稿会污染后续输入(与 `/loop` 的自动提交叠加尤其明显) | W5 调试实证(2026-10):第 2 轮触发后立刻 stop 无效,拖到空闲窗口才生效;残留草稿使后续 stop 拼成非法命令 | 未修(记录) |
 | D11 | **Shift+Tab 权限模式循环与注释不符**:`keymap.rs:45-100` 注释宣称 Plan/Auto/Prompt/AcceptEdits/Bypass 五模式循环,实测 HUD 可见循环只有三态 Auto → AcceptEdits → Plan → Auto,Prompt / Bypass 到不了 | K1 实证(2026-10):连续 6 次 Shift+Tab 交替出现 `[accept_edits]`/`[plan]`/无标记 | 未修(记录) |
 | D12 | **整段输入(paste-burst)会丢字符**:一次 `write` 写入的连续按键被当作 bracketed paste 处理,部分字符被吞 —— 实测 `/demo:hello` → `/emo:hello`、`/plugin` → `/lugin`,表现为 slash 弹窗不弹、命令不被识别 | G 组实证(2026-10):`test_plugin.py` 的 G2/G3/G4 在整组跑时**间歇**失败(单跑恒过),屏上可见缺字;与 submodule 升级无关(升级前后各复现一次,基线代码同样复现) | 未修(记录)。测试侧规避:分两段写入 + `_pump` 让出(G2/G3/G4 已按此改);产品侧 paste-burst 的字符丢弃待定 |
+| D13 | **满载下 Ctrl+G 按键间歇丢失**:套件满载连续跑时 `ctrl+g`(0x07)偶发未被处理 —— 编辑器未拉起、无任何通知、composer 草稿原样保留;单跑稳定复现不了 | K3 / K3b 实证(2026-10-27,合并 submodule `e4560bc` 后):全套件跑复现 2 次(K3+K3b 同批)+ 单跑复现 1 次,随后单跑连 7 次全过;失败批次均在 7 分钟连续 pty 压测的高负载窗口。 ede1639 长驻阻塞读取任务事件循环下出现,基线(每轮 spawn poll 任务)同批次未复现 | 未修(记录)。疑与高负载下 fork 版 crossterm poll/read 或输入通道交接时序有关;复现率低,先挂观察 |
 
 ---
 
@@ -376,19 +429,20 @@
 
 | 文件 | 规模 |
 |---|---|
-| `functional/test_slash.py` | 92 条(85 行命令矩阵覆盖 84 条命令 + 7 条独立用例) |
+| `functional/test_slash.py` | 96 条(89 行命令矩阵覆盖 86 条命令 + 7 条独立用例) |
 | `functional/test_overlay.py` | 20 条(10 条可达弹层 + 9 条不可达弹层反向门禁 + 1 条鼠标反向门禁) |
 | `functional/test_boot.py` | 15 条(含 2 条全屏模式 + 3 条 model 解析) |
-| `functional/test_flow.py` | 12 条(审批 / AskUser / loop / 恢复边界 / 容错 / 信号) |
-| `functional/test_turn.py` | 11 条 |
-| `functional/test_keys.py` | 10 条(键盘交互) |
+| `functional/test_flow.py` | 14 条(审批 / AskUser / loop / 恢复边界 / 容错 / 信号) |
+| `functional/test_turn.py` | 12 条 |
+| `functional/test_keys.py` | 11 条(键盘交互) |
 | `functional/test_cli.py` | 10 条 |
 | `functional/test_render.py` | 9 条(渲染与视觉) |
 | `functional/test_pty_helpers.py` | 8 条 |
-| `functional/test_session.py` | 7 条 |
+| `functional/test_session.py` | 9 条 |
 | `functional/test_plugin.py` | 4 条 |
 | `functional/test_coverage_audit.py` | 4 条 |
-| **能力覆盖层合计** | **202 条** |
+| `functional/test_http_mock.py` | 3 条(真实 HTTP + SSE + 确定性 busy 窗口) |
+| **能力覆盖层合计** | **215 条** |
 | `rust/cli_core.sh` | 45 断言(含退出码) |
 | `rust/cli_modules.sh` | 56 断言(含退出码) |
 | 另有 `cargo test --workspace` / clippy / fmt / doc | 既有基线 |
@@ -403,7 +457,9 @@
   模型 4 次(落盘 4 条 `token_count`),但未定位到是哪几条辅助调用
   (title 生成 / compact 判定 / auto-review?),故未对调用次数做断言。
 - **Ctrl+C busy 首按中断**:mock 回复瞬时完成,离线无法确定性制造 busy
-  窗口;空闲态 Ctrl+C 是退出,两种结局不可区分。Esc 中断由 T9 覆盖。
+  窗口;空闲态 Ctrl+C 是退出,两种结局不可区分。Esc 中断由 T9 覆盖,
+  确定性 busy 窗口下的 Esc 中断(含去抖)由 H3 覆盖 —— 但 **Ctrl+C**
+  仍缺用例:它与空闲退出同键,需另设退出判据。
 - **真实 shift+enter 序列**:依赖 kitty 键盘协议(`ESC[13;2u`),哑 pty
   发不出;K7 用 composer 支持的等价路径 alt+enter 锁定多行语义。
 - **系统剪贴板真实内容**:K2 只断言 `Copied last reply` 通知,未读回
@@ -418,6 +474,22 @@
 - **vendored 上游测试(约 760 条)**:受 feature `tui-upstream-tests` 门控,
   且测的是**运行时不可达**的 `tui_core/bottom_pane` / `chatwidget` 一族,
   不宜当作「已覆盖」。
+- **`model = "free"` 的清单发现**:mock provider 不提供模型清单端点
+  (`list_models` 返回 `Ok(None)`),离线路径只能验到「如实报错」这一支;
+  真正的「从清单里挑一个免费模型」需要带 `/models` 端点的 provider。
+  判定规则(`reflect_llm::model_catalog::FreeModelRules`)本身有 Rust 单测。
+- **路由 failover / `SpecFallback` 跨模型降级**:需要同 provider 的多个
+  凭据(至少一个失效)+ `[routing] fallbacks` 配置,离线 mock 只有单凭据。
+  事件格式化(`routing_status.rs`)有 Rust 单测,真实切换路径未覆盖。
+- **配置热重载**:watcher 已接上(`ConfigWatcher` → 重建 provider client →
+  推 `🔄 配置已重载` 通知),但「改文件 → 界面出现通知」这条端到端路径
+  未加 pty 用例(依赖文件系统事件时序,易 flaky)。
+- **LSP 诊断**:需要真实语言服务器(rust-analyzer 等)推送
+  `publishDiagnostics`;`/lsp` 的空态路径有用例覆盖。
+- **分析遥测(OTLP)**:需要真实的 OTLP 端点;`[analytics]` 段的解析与
+  exporter 启动失败降级有 Rust 单测,导出内容未验证。
+- **终端通知的开关 / 通道**:策略判定(`enabled` / `on_*` / `channels`)有
+  Rust 单测;实际 OSC9 / BEL 序列发出依赖真实终端,pty 环境下不可观测。
 
 > 已从本清单移出(2026-10 离线实证可测,已纳入 W 组):审批链路
 > `⚠ APPROVAL NEEDED`(W1/W2)、`AskUserQuestion` / `ask_user` 面板

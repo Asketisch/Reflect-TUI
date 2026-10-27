@@ -5,6 +5,87 @@
 
 ## [Unreleased]
 
+### submodule 修复批次接线
+
+submodule 指针更新到 `e4560bc`(D1–D7 缺陷收口批次)后,把会话恢复链路
+的引擎侧修复接到 TUI:
+
+- **恢复回放换共享 API**:`reader::replay` 升级后支持任意日期桶、轮转副本
+  合并、文件名 thread id / 内部 session id 双入口 —— 删除本仓库此前因
+  共享实现只扫近 3 天而维护的全盘扫描 workaround(`resume.rs` 的
+  `collect_session_files`),消费点回归共享实现(见 CONTRIBUTING「submodule
+  工作流」的消费点原则)。共享 API 对定位不到的会话返回空 Vec,包装层
+  保留「会话不存在 → 显式报错」,`--resume` 不存在的 id 仍快速失败。
+- **恢复后续写原文件**(引擎 `JsonlRolloutWriter` 修复):恢复旧日期会话后
+  新轮次续写原日期目录的原文件,此前会落到当天桶的新文件、同一会话被
+  拆成两份。
+- 行为级守护:P8(旧日期恢复 + 续写原文件)、P9(双 id 恢复)进
+  `tests/functional/test_session.py`;`resume.rs` 单测锁定「不存在报错」
+  与「跨日期桶 + 轮转副本全量回放」两个包装层语义。
+
+### submodule 能力接线(v1.5 / v1.7 批次)
+
+submodule 指针更新到 `7912323`(归并远端 7 周演进)后,本仓库把此前**未接线**
+的引擎能力逐条接到界面上,顺带修掉两处升级带来的编译断点。
+
+**编译面修复**
+
+- `[sandbox].os_level` 由 `bool` 改为 `Option<bool>`(区分「用户未表态」与
+  「显式关闭」)—— TUI 按 `reflect-exec` 的同款语义桥接环境变量。
+- `EventMsg` 新增 `ToolCallArgsDelta` 变体,TUI 的事件转换 match 补齐分支。
+
+**新接线的引擎能力**
+
+- **工具参数流式预览**(`EventMsg::ToolCallArgsDelta`):模型生成 write / edit
+  等长参数工具时,live 区渐进显示「正在对什么动手」;工具完成后,参数摘要
+  (`✓ glob (12ms) · *.rs`)留在历史行 —— 此前 `ToolCallBegin.args` 恒为
+  `null`,界面完全看不到工具动了哪个文件。整包形态 provider(Ollama 等)用
+  `ToolCallBegin.args` 兜底。
+- **路由事件可见化**(`EventMsg::Routing`):credential failover / 进冷却 /
+  全部失败 / `SpecFallback` 跨模型降级都会在对话流留一行
+  (`↻ 路由切换 · main: …` / `↘ 模型降级 · …`)。协议侧文档本就要求
+  「TUI 收到后画一行 status」,此前整条被丢弃 —— 配了 `[routing] fallbacks`
+  却零提示。
+- **跨会话全文搜索**:新增 `reflect-tui session search <query>`
+  (`reflect_rollout::search_sessions`)。
+- **模型清单发现**:`model = "free"` 这类运行时才知道的 model 值现在在启动期
+  解析成真实 id(`reflect_config::resolve_model_spec`),并用
+  `routing_policy_with` 把真实 spec 喂给 routing —— 此前会把字面量
+  `"free"` 当模型名发给 provider。`/model` 无参列出 provider 的真实模型
+  清单(`reflect_config::fetch_catalog` + `reflect_llm::model_catalog` 的
+  免费判定三通道),带参则是**真切换**(枚举通道此前只回显「display only」)。
+- **目标模式状态读口**:`/goal` 无参显示 `AgentThread::goal_snapshot()` 的
+  权威状态(跑到第几轮 / LM 判定 / 累计 token / 3-strike 阻塞计数);
+  `/goal <目标> --verify <cmd> --budget <n>` 打通命令式校验与 token 预算
+  (此前硬编码 `None`)。
+- **配置热重载**:监听 `~/.reflect/config.toml` 变更,重建 provider client、
+  必要时切 model,并在对话流提示变更了哪些段(此前改配置必须重启 TUI)。
+- **分析遥测**:`[analytics]` 段启动 OTLP/HTTP exporter(此前是死配置)。
+- **语言服务诊断**:`/lsp` 显示 `reflect_lsp::DiagnosticRegistry` 的诊断统计
+  (此前 LSP manager 被直接丢弃,诊断数据永远读不到)。
+- **Agent 待办清单**:`/todo` 显示 `TodoWrite` 写入的清单(引擎侧早已回灌
+  模型上下文,界面却一个字都没有)。
+- **MCP 精选目录**:`/mcp` overlay 展示 `reflect_mcp::curated_catalog` 与安装
+  片段(此前只有「已连接」的服务器,没有「有哪些可选 / 怎么装」)。
+- **OS 级沙箱状态**:`/status` 增加 `sandbox:` 段(`reflect_sandbox::OsSandbox`)。
+- **终端通知开关**:`[notifications.tui]` 的 `enabled` / `on_turn_complete` /
+  `on_approval` / `on_error` / `channels` 真正生效(此前全是死配置)。
+- **工作区克隆**:新增 `reflect-tui workspace clone <url>`
+  (`reflect_stream::workspace_sync`,与 `reflect workspace clone` 对称)。
+- **多 agent 讨论**:新增 `reflect-tui discussion run --config <toml>`
+  (`reflect_discussion::cli::run` —— 讨论编排的 CLI 逻辑在库 crate 里,
+  是可复用入口)。
+- **安全扫描**:新增 `reflect-tui security audit`
+  (`reflect_integration::security_scan`;cargo-audit 不可用时如实降级)。
+
+**其它**
+
+- `reflect-tui session search` / `workspace clone` / `discussion run` / `security audit`
+  补进 CLI 参数矩阵;`/lsp` / `/todo` / `/goal`(无参)/ `/model`(无参)补进 slash
+  全量矩阵(86 条命令,覆盖自审 0 缺口)。
+- 修 `test_resume_with_invalid_id_fails_fast` 的断言口径(实现侧早已改成
+  中文错误文案,断言仍锚在英文措辞上,是一处先前遗留的红门禁)。
+
 ### 全功能测试套件(`tests/`)
 
 对标 submodule `reflect-agent/tests/` 的严格测试标准,新建统一测试入口

@@ -195,8 +195,14 @@ pub struct UiState {
     pub(crate) cwd: PathBuf,
     /// 当前回合开始时刻（用于回合分隔符的 "Worked for Nm"）。
     pub(crate) turn_started_at: Option<Instant>,
+    /// 本回合开始时的累计成本基线（回合小结 = 回合结束时总成本 - 此值）。
+    pub(crate) turn_cost_baseline: Option<f64>,
     /// 本回合是否出现过工具调用（决定是否画分隔符）。
     pub(crate) had_tool_this_turn: bool,
+    /// 已发出 `Op::Interrupt` 且尚未收到回合收尾事件。
+    ///
+    /// 防止 busy 期间连按 Esc 重复发中断请求 + 刷屏;回合开始 / 收尾时复位。
+    pub(crate) interrupt_requested: bool,
     /// 已写入 history 的工具调用 call_id（去重：begin/end 只写一条 end）。
     pub(crate) seen_tool_calls: HashSet<String>,
     /// begin 携带 tool_name、end 只带 call_id:用 call_id→name 映射补名。
@@ -244,6 +250,18 @@ pub struct UiState {
     /// 实时显示其 tail;`ToolCompleted` / 新回合时清空(完整输出走既有
     /// ToolCompleted 落 scrollback 路径)。
     pub tool_live: Option<ToolLiveStream>,
+    /// v1.5:进行中的工具调用参数流(`ToolCallArgsDelta`)。按 call_id
+    /// 累积原始 JSON 片段,live 区据此渐进渲染「正在写什么」。
+    /// 用 Vec 而非 HashMap:并行多工具时渲染顺序必须稳定(按首次出现序)。
+    /// `ToolCompleted` / 新回合时清空对应条目。
+    pub tool_args: Vec<ToolArgsStream>,
+    /// v1.x:LSP 诊断注册表(bootstrap 期连上语言服务后注入)。`/lsp` 用它
+    /// 展示「几个文档 / 几条诊断」—— 此前 manager 被直接丢弃,server 推的
+    /// `publishDiagnostics` 缓存永远读不到。
+    pub lsp_diagnostics: Option<std::sync::Arc<reflect_lsp::DiagnosticRegistry>>,
+    /// v1.x:`[notifications.tui]` 段(终端通知开关 + 通道)。
+    /// 此前 TUI 不读该段 —— 四个开关与 `channels` 全是死配置。
+    pub notify_section: Option<reflect_config::TuiNotificationsSection>,
     /// 从 SessionConfigured 获取的模型名,显示在状态栏。
     /// `None` 时 fallback 到环境变量(REFLECT_MODEL_DISPLAY / OPENAI_MODEL / ANTHROPIC_MODEL)。
     pub status_model: Option<String>,
@@ -347,6 +365,21 @@ pub struct ToolLiveStream {
     pub call_id: String,
     pub tool: String,
     pub tail: String,
+}
+
+/// v1.5:单个工具调用的参数累积状态(`ToolCallArgsDelta` 增量渲染)。
+///
+/// `raw` 是模型已生成的**原始 JSON 片段**拼接(可能是不完整 JSON),
+/// `preview` 是从中提取的人读预览。
+#[derive(Debug, Clone)]
+pub struct ToolArgsStream {
+    pub call_id: String,
+    /// 工具名(来自先于参数增量到达的 `ToolCallBegin`)。
+    pub tool: String,
+    /// 累积的原始 JSON 片段(按上限截断,防止超长参数吃内存)。
+    pub raw: String,
+    /// 人读预览。
+    pub preview: crate::tool_args::ToolArgsPreview,
 }
 
 /// v1.x Tier 4.5:一条 session 记录（用于 `/resume` / `/fork` 等 overlay 列表）。
@@ -601,7 +634,9 @@ impl Default for UiState {
             pending_approval: None,
             cwd,
             turn_started_at: None,
+            turn_cost_baseline: None,
             had_tool_this_turn: false,
+            interrupt_requested: false,
             seen_tool_calls: HashSet::new(),
             tool_names: HashMap::new(),
             context_usage: ContextUsage::default(),
@@ -621,6 +656,9 @@ impl Default for UiState {
             persistent_permissions: None,
             plugin_runtime: reflect_plugin::runtime::empty_plugin_runtime(),
             tool_live: None,
+            tool_args: Vec::new(),
+            lsp_diagnostics: None,
+            notify_section: None,
             status_model: None,
             permission_mode: reflect_protocol::PermissionMode::default(),
             plan_approval: None,

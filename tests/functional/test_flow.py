@@ -45,13 +45,19 @@ _SPINNER_CHARS = ("⠸", "⠹", "⠺", "⠼", "⠻", "⠶", "⠦", "⠧", "⠇",
 
 
 def _seed_session(sandbox: Sandbox, sid: str, msg: str) -> Path:
-    """预置一条最小会话 JSONL(形态与引擎落盘一致)。"""
+    """预置一条最小会话 JSONL(形态与引擎落盘一致)。
+
+    `turn_id` 必须是**合法 UUID**:`RolloutRecord::Message.turn_id` 是
+    `TurnId`(`#[serde(transparent)]` 包 Uuid),反序列化失败会让整行被
+    跳过 —— 回放时只剩 SessionMeta,消息正文丢失(此前夹具写的是
+    `"t1"`,只有「不崩」的断言时看不出来)。
+    """
     base = sandbox.home / ".reflect" / "sessions" / "2026" / "01" / "01"
     base.mkdir(parents=True, exist_ok=True)
     p = base / f"{sid}.jsonl"
     p.write_text(
         json.dumps({"type": "session_meta", "session_id": sid, "model": "mock/mock-1", "started_at": "2026-01-01T00:00:00Z"}) + "\n"
-        + json.dumps({"type": "message", "turn_id": "t1", "role": "user", "content": [{"type": "text", "text": msg}]}) + "\n"
+        + json.dumps({"type": "message", "turn_id": "11111111-2222-4333-8444-555555555555", "role": "user", "content": [{"type": "text", "text": msg}]}) + "\n"
     )
     return p
 
@@ -235,14 +241,54 @@ def test_continue_flag_with_no_sessions_fails_fast(tui) -> None:
 
 
 def test_resume_short_prefix_is_rejected(tui, sandbox) -> None:
-    """W7 `--resume` 只认完整 UUID:短前缀(即使无歧义)被快速拒绝。"""
+    """W7 `--resume` 前缀过短(<4 位)被快速拒绝。
+
+    此前只认完整 UUID;现支持唯一前缀(≥4 位)以便从 session 面板复制
+    短 id 续作,但过短的前缀仍直接拒绝(避免全盘扫描式歧义)。
+    """
     _seed_session(sandbox, "aaa11111-1111-4111-8111-111111111111", "W7_SEED_MSG")
-    with tui(args=["--resume", "aaa11111"]) as s:
+    with tui(args=["--resume", "aaa"]) as s:
         rc = _wait_exit(s, timeout=25)
-        assert rc is not None, "非法 resume id 应快速退出"
-        assert rc != 0, "非法 resume id 应非 0 退出"
+        assert rc is not None, "过短前缀应快速退出"
+        assert rc != 0, "过短前缀应非 0 退出"
         raw = s.raw_output()
-        assert "invalid thread id" in raw, f"错误应说明 id 非法:\n{raw[-400:]}"
+        assert "前缀过短" in raw, f"错误应说明前缀过短:\n{raw[-400:]}"
+
+
+def test_resume_unique_prefix_resumes_session(tui, sandbox) -> None:
+    """W7b `--resume <唯一前缀>`:命中唯一会话,并把既往消息真正回放出来。
+
+    观测锚点是 TUI 启动时的回填提示 `↩ 已恢复历史会话 <id> · 回放 N 条消息`
+    —— 修复前 `reader::replay` 只扫今天/昨天/前天且按文件名 thread id 拼
+    路径,2026-01-01 的会话回放为空(prior_messages 为空),该提示根本不出现,
+    用户看到的是「续作成功但没有任何上文」。
+
+    旧消息本身进的是终端原生 scrollback,pyte 视口看不到,故断言提示里的
+    回放条数而非消息正文。
+    """
+    _seed_session(sandbox, "aaa11111-1111-4111-8111-111111111111", "W7B_SEED_MSG")
+    with tui(args=["--resume", "aaa11111"]) as s:
+        s.wait_boot(timeout=30)
+        txt = s.wait_text("已恢复历史会话", timeout=20)
+        assert "已恢复历史会话" in txt, f"前缀命中后应给出回填提示:\n{txt[-400:]}"
+        assert "回放 1 条消息" in txt, f"应回放 1 条既往消息:\n{txt[-400:]}"
+        assert not s.has_panic()
+
+
+def test_resume_full_uuid_of_old_session_restores_history(tui, sandbox) -> None:
+    """W7c `--resume <完整 UUID>`:跨天会话(2026-01-01)也要能回放历史。
+
+    修复前 `reader::replay` 用 `Utc::now() - days(0..3)` 拼日期桶,3 天以上
+    前创建的会话回放为空 —— 续作「成功」但历史静默丢失。修复后改为全盘
+    扫描所有日期桶,跨天会话照常回放。
+    """
+    sid = "ccc44444-3333-4444-8444-555555555555"
+    _seed_session(sandbox, sid, "W7C_SEED_MSG")
+    with tui(args=["--resume", sid]) as s:
+        s.wait_boot(timeout=30)
+        txt = s.wait_text("已恢复历史会话", timeout=20)
+        assert "回放 1 条消息" in txt, f"跨天会话应回放既往消息:\n{txt[-400:]}"
+        assert not s.has_panic()
 
 
 def test_large_transcript_resume_stays_interactive(tui, mock_script, sandbox) -> None:
@@ -256,8 +302,10 @@ def test_large_transcript_resume_stays_interactive(tui, mock_script, sandbox) ->
     base.mkdir(parents=True, exist_ok=True)
     lines = [json.dumps({"type": "session_meta", "session_id": sid, "model": "mock/mock-1", "started_at": "2026-01-01T00:00:00Z"})]
     for i in range(100):
-        lines.append(json.dumps({"type": "message", "turn_id": f"t{i}", "role": "user", "content": [{"type": "text", "text": f"big user message {i} " + "x" * 40}]}))
-        lines.append(json.dumps({"type": "message", "turn_id": f"t{i}", "role": "assistant", "content": [{"type": "text", "text": f"big assistant reply {i} " + "y" * 40}]}))
+        # turn_id 必须是合法 UUID,否则整行反序列化失败被跳过(消息进不了回放)。
+        turn_id = f"{i:08x}-0000-4000-8000-000000000000"
+        lines.append(json.dumps({"type": "message", "turn_id": turn_id, "role": "user", "content": [{"type": "text", "text": f"big user message {i} " + "x" * 40}]}))
+        lines.append(json.dumps({"type": "message", "turn_id": turn_id, "role": "assistant", "content": [{"type": "text", "text": f"big assistant reply {i} " + "y" * 40}]}))
     (base / f"{sid}.jsonl").write_text("\n".join(lines) + "\n")
 
     script = mock_script([text_reply("W8_PONG")] * 6)
@@ -273,17 +321,22 @@ def test_large_transcript_resume_stays_interactive(tui, mock_script, sandbox) ->
 # ── 容错:坏输入与异常环境 ────────────────────────────────────────────────
 
 
-def test_malformed_config_falls_back_to_defaults(tui, sandbox) -> None:
-    """W9 坏 config.toml 不挡启动:静默回落默认配置,TUI 正常可用。
+def test_malformed_config_warns_and_falls_back_to_defaults(tui, sandbox) -> None:
+    """W9 坏 config.toml 不挡启动:给出显式告警,并回落默认配置,TUI 正常可用。
 
-    锁定现状(见 COVERAGE §8):解析失败无任何用户可见告警,属产品
-    决策 —— 本用例防的是「坏配置导致启动崩溃/挂死」这一退化。
+    `reflect_config::load_default()` 对解析失败静默回退默认值(内部只记
+    tracing::debug,被 warn 级过滤器吞掉)——用户的 providers / 权限规则 /
+    hooks 会**无声失效**。bootstrap 启动前显式体检一次,解析失败即在终端
+    打印可见告警;同时坏配置不能导致启动崩溃/挂死。
     """
     (sandbox.home / ".reflect" / "config.toml").write_text("this is [ not valid toml {{{\n")
     with tui() as s:
         s.wait_boot(timeout=30)
         txt = s.wait_text("/help for commands", timeout=15)
         assert "Send a message" in txt
+        raw = s.raw_output()
+        assert "解析失败" in raw, f"坏配置应给出可见告警:\n{raw[-600:]}"
+        assert "config.toml" in raw, f"告警应指出配置文件路径:\n{raw[-600:]}"
         assert not s.has_panic(), "坏配置不应导致 panic"
         assert s.alive(), "坏配置下进程应存活"
 

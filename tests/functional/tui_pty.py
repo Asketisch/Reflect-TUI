@@ -467,3 +467,18 @@ def tool_call(name: str, args: dict | None = None) -> str:
     return json.dumps(
         {"type": "tool_call", "name": name, "args": args or {}}, ensure_ascii=False
     )
+
+
+def tool_call_delta(name: str, chunks: list[str]) -> str:
+    """构造一条**分片形态**的工具调用 mock 回复。
+
+    参数不走 `ToolUseStart`,而是由若干 `ToolUseDelta` 分片送来 ——
+    engine 侧走 `args_from_start == false` 分支,逐段转发
+    `tool_call_args_delta` 事件给客户端(TUI 用来渐进预览工具参数)。
+    """
+    import json
+
+    return json.dumps(
+        {"type": "tool_call_delta", "name": name, "chunks": chunks},
+        ensure_ascii=False,
+    )

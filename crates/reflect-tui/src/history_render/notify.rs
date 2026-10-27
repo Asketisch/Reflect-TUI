@@ -61,13 +61,37 @@ impl NotifyTriggers {
     /// 回合完成**不是**无条件通知:只有干了实事(工具调用 / 子代理)或跑得够久
     /// 才发。否则用户刚敲完回车盯着屏幕,每轮都响一声是纯噪音。
     pub fn message(&self) -> Option<String> {
+        self.message_with(None)
+    }
+
+    /// 同 [`Self::message`],但受 `[notifications.tui]` 段的开关约束。
+    ///
+    /// v1.x 接线:submodule 的 `reflect_config::TuiNotificationsSection` 定义了
+    /// `enabled` / `on_turn_complete` / `on_approval` / `on_error` 四个开关,
+    /// 此前 TUI 完全没读 —— 用户在配置里写了 `on_turn_complete = false`
+    /// 也不会有任何效果(死配置)。
+    ///
+    /// `section = None`(配置段缺省)→ 全开(与内置默认一致)。
+    pub fn message_with(
+        &self,
+        section: Option<&reflect_config::TuiNotificationsSection>,
+    ) -> Option<String> {
         if let Some(e) = &self.error {
+            if !allows(section, NotifyTrigger::Error) {
+                return None;
+            }
             return Some(format!("Reflect error: {e}"));
         }
         if let Some(a) = &self.approval_needed {
+            if !allows(section, NotifyTrigger::Approval) {
+                return None;
+            }
             return Some(format!("Reflect needs approval: {a}"));
         }
         if self.turn_completed && self.did_work {
+            if !allows(section, NotifyTrigger::TurnComplete) {
+                return None;
+            }
             return Some("Reflect finished.".to_string());
         }
         None
@@ -81,6 +105,54 @@ impl NotifyTriggers {
     }
 }
 
+/// 通知触发类型(对应 `[notifications.tui]` 的三个分项开关)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotifyTrigger {
+    TurnComplete,
+    Approval,
+    Error,
+}
+
+/// 该触发类型是否允许发通知。
+///
+/// 段缺省 → 全开(与内置默认一致);`enabled = false` → 全关。
+pub fn allows(
+    section: Option<&reflect_config::TuiNotificationsSection>,
+    trigger: NotifyTrigger,
+) -> bool {
+    let Some(s) = section else {
+        return true;
+    };
+    if !s.enabled {
+        return false;
+    }
+    match trigger {
+        NotifyTrigger::TurnComplete => s.on_turn_complete,
+        NotifyTrigger::Approval => s.on_approval,
+        NotifyTrigger::Error => s.on_error,
+    }
+}
+
+/// 通知通道选择:`channels` 写了 `"osc9"` / `"bel"` 就按它来,否则自动探测。
+///
+/// v1.x 接线:`[notifications.tui].channels` 此前同样是死配置 —— 通道永远
+/// 由终端探测自动决定,用户指定的后端不生效。
+pub fn channel_method(
+    section: Option<&reflect_config::TuiNotificationsSection>,
+) -> crate::config_compat::types::NotificationMethod {
+    use crate::config_compat::types::NotificationMethod;
+    let Some(s) = section else {
+        return NotificationMethod::Auto;
+    };
+    let has = |k: &str| s.channels.iter().any(|c| c.eq_ignore_ascii_case(k));
+    match (has("osc9"), has("bel")) {
+        (true, false) => NotificationMethod::Osc9,
+        (false, true) => NotificationMethod::Bel,
+        // 两个都写 / 都没写 → 自动探测(与内置默认一致)。
+        _ => NotificationMethod::Auto,
+    }
+}
+
 /// 发送通知(封装后端调用,失败静默——通知是非关键体验,不应打断主循环)。
 pub fn notify(backend: &mut crate::tui_core::notifications::DesktopNotificationBackend, msg: &str) {
     let _ = backend.notify(msg);
@@ -89,6 +161,90 @@ pub fn notify(backend: &mut crate::tui_core::notifications::DesktopNotificationB
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn section(
+        enabled: bool,
+        on_turn_complete: bool,
+        on_approval: bool,
+        on_error: bool,
+    ) -> reflect_config::TuiNotificationsSection {
+        reflect_config::TuiNotificationsSection {
+            enabled,
+            on_turn_complete,
+            on_approval,
+            on_error,
+            channels: vec![],
+        }
+    }
+
+    #[test]
+    fn missing_section_allows_everything() {
+        // 段缺省 → 全开(与内置默认一致)。
+        for t in [
+            NotifyTrigger::TurnComplete,
+            NotifyTrigger::Approval,
+            NotifyTrigger::Error,
+        ] {
+            assert!(allows(None, t));
+        }
+    }
+
+    #[test]
+    fn disabled_section_silences_everything() {
+        let s = section(false, true, true, true);
+        for t in [
+            NotifyTrigger::TurnComplete,
+            NotifyTrigger::Approval,
+            NotifyTrigger::Error,
+        ] {
+            assert!(!allows(Some(&s), t));
+        }
+    }
+
+    #[test]
+    fn per_trigger_switches_are_honored() {
+        let s = section(true, false, true, false);
+        assert!(!allows(Some(&s), NotifyTrigger::TurnComplete));
+        assert!(allows(Some(&s), NotifyTrigger::Approval));
+        assert!(!allows(Some(&s), NotifyTrigger::Error));
+    }
+
+    #[test]
+    fn message_respects_turn_complete_switch() {
+        let mut t = NotifyTriggers::new();
+        t.observe(&UiEventKind::TurnCompleted);
+        t.observe(&UiEventKind::ToolStarted {
+            call_id: "c".into(),
+            name: "bash".into(),
+            args: None,
+        });
+        // 默认开 → 有消息。
+        assert!(t.message_with(None).is_some());
+        // 关掉 on_turn_complete → 无消息。
+        let s = section(true, false, true, true);
+        assert!(t.message_with(Some(&s)).is_none());
+    }
+
+    #[test]
+    fn message_respects_error_switch() {
+        let mut t = NotifyTriggers::new();
+        t.observe(&UiEventKind::Error("boom".into()));
+        let s = section(true, true, true, false);
+        assert!(t.message_with(Some(&s)).is_none());
+    }
+
+    #[test]
+    fn channel_method_reads_channels_list() {
+        use crate::config_compat::types::NotificationMethod;
+        let mut s = section(true, true, true, true);
+        s.channels = vec!["osc9".into()];
+        assert_eq!(channel_method(Some(&s)), NotificationMethod::Osc9);
+        s.channels = vec!["bel".into()];
+        assert_eq!(channel_method(Some(&s)), NotificationMethod::Bel);
+        s.channels = vec![];
+        assert_eq!(channel_method(Some(&s)), NotificationMethod::Auto);
+        assert_eq!(channel_method(None), NotificationMethod::Auto);
+    }
 
     #[test]
     fn empty_triggers_have_no_message() {
@@ -110,6 +266,7 @@ mod tests {
         t.observe(&UiEventKind::ToolStarted {
             call_id: "c1".into(),
             name: "bash".into(),
+            args: None,
         });
         assert_eq!(t.message().as_deref(), Some("Reflect finished."));
 
@@ -128,6 +285,7 @@ mod tests {
         t.observe(&UiEventKind::ToolStarted {
             call_id: "c".into(),
             name: "read".into(),
+            args: None,
         });
         t.observe(&UiEventKind::Error("boom".into()));
         assert_eq!(t.message().as_deref(), Some("Reflect error: boom"));
@@ -166,6 +324,7 @@ mod tests {
         t.observe(&UiEventKind::ToolStarted {
             call_id: "c1".into(),
             name: "bash".into(),
+            args: None,
         });
         assert_eq!(t.message().as_deref(), Some("Reflect finished."));
     }

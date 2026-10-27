@@ -38,6 +38,9 @@ import pytest
 MATRIX: list[tuple[str, str, str, str]] = [
     # ── wired:有真实行为 ──────────────────────────────────────────────
     ("model", "mock/gpt-4o", "wired", "switched to 'mock/gpt-4o'"),
+    # v1.5 接线:`/model` 无参 → 列出 provider 真实模型清单(mock provider
+    # 没有清单端点 → 如实报错,不能静默)。
+    ("model", "", "wired", "/model:"),
     ("vim", "", "wired", "Vim mode enabled"),
     ("status", "", "wired", "/status: model:"),
     ("usage", "", "wired", "/usage: input:"),
@@ -46,6 +49,11 @@ MATRIX: list[tuple[str, str, str, str]] = [
     ("compact", "", "wired", "Context compaction requested"),
     ("effort", "high", "wired", "reasoning effort set to high"),
     ("goal", "ship the release", "wired", "Goal mode entered"),
+    # v1.5 接线:`/goal` 无参 → 目标状态快照(权威读口 goal_snapshot());
+    # v1.x 接线:`/lsp` 语言服务诊断状态、`/todo` agent 待办清单。
+    ("goal", "", "wired", "/goal:"),
+    ("lsp", "", "wired", "/lsp:"),
+    ("todo", "", "wired", "/todo:"),
     ("loop", "30 /status", "wired", "every 30s"),
     ("side", "", "wired", "/side: 用法 /side <message>"),
     ("side", "hello", "wired", "侧边对话「hello」已收到"),

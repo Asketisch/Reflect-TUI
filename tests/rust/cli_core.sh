@@ -72,7 +72,7 @@ assert_exit_nonzero "未知参数非 0 退出" "$LAST_RC"
 
 # ── 3. 子命令层级 ─────────────────────────────────────────────────────────
 
-for sub in session traces; do
+for sub in session traces workspace discussion security; do
     run_cli "$TMP/${sub}_help.txt" "$sub" --help
     assert_contains "$sub --help 含 usage" "Usage:" "$TMP/${sub}_help.txt"
 done
@@ -85,16 +85,61 @@ assert_contains "session 列出 fork" "fork" "$TMP/session_help.txt"
 assert_contains "session 列出 rename" "rename" "$TMP/session_help.txt"
 assert_contains "session 列出 export" "export" "$TMP/session_help.txt"
 assert_contains "session 列出 stats" "stats" "$TMP/session_help.txt"
+# v1.5 接线:跨会话全文搜索(reflect_rollout::search_sessions)。
+assert_contains "session 列出 search" "search" "$TMP/session_help.txt"
+
+# ── 3b. session search:跨会话全文搜索 ──────────────────────────────────────
+
+run_cli "$TMP/search_hit.txt" session search "cli core probe"
+assert_contains "session search 命中预置会话" "cli core probe" "$TMP/search_hit.txt"
+assert_contains "session search 输出 session 前缀" "11111111" "$TMP/search_hit.txt"
+
+run_cli "$TMP/search_miss.txt" session search "zzz-not-present-zzz"
+assert_contains "session search 未命中给出明确说明" "no matches" "$TMP/search_miss.txt"
+
+run_cli "$TMP/search_json.txt" session search --json "cli core probe"
+assert_contains "session search --json 输出 JSON 行" "\"session_id\"" "$TMP/search_json.txt"
 
 run_cli "$TMP/traces_help.txt" traces --help
 assert_contains "traces 列出 ls" "ls" "$TMP/traces_help.txt"
 assert_contains "traces 列出 show" "show" "$TMP/traces_help.txt"
 assert_contains "traces 列出 spans" "spans" "$TMP/traces_help.txt"
 
+# v1.x 接线:workspace clone(reflect_stream::workspace_sync 共享 API)。
+run_cli "$TMP/workspace_help.txt" workspace --help
+assert_contains "workspace 列出 clone" "clone" "$TMP/workspace_help.txt"
+
+run_cli "$TMP/workspace_clone_help.txt" workspace clone --help
+assert_contains "workspace clone 列出 --dest" "--dest" "$TMP/workspace_clone_help.txt"
+assert_contains "workspace clone 列出 --branch" "--branch" "$TMP/workspace_clone_help.txt"
+
+# 空 URL → 立即失败(git clone 之前就被共享 API 拒掉),不挂死。
+run_cli "$TMP/workspace_clone_bad.txt" workspace clone ""
+assert_nonempty "workspace clone 空 url 有诊断输出" "$TMP/workspace_clone_bad.txt"
+assert_exit_nonzero "workspace clone 空 url 非 0 退出" "$LAST_RC"
+
+# v1.x 接线:多 agent 讨论(reflect_discussion::cli::run)与安全扫描
+# (reflect_integration::security_scan)。
+run_cli "$TMP/discussion_help.txt" discussion --help
+assert_contains "discussion 列出 run" "run" "$TMP/discussion_help.txt"
+
+run_cli "$TMP/discussion_run_help.txt" discussion run --help
+assert_contains "discussion run 列出 --config" "--config" "$TMP/discussion_run_help.txt"
+
+run_cli "$TMP/security_help.txt" security --help
+assert_contains "security 列出 audit" "audit" "$TMP/security_help.txt"
+
+run_cli "$TMP/security_audit_help.txt" security audit --help
+assert_contains "security audit 列出 --workspace" "--workspace" "$TMP/security_audit_help.txt"
+
+# 注:不实际跑 `security audit` —— cargo-audit 存在时要联网拉 advisory
+# 数据库,会让本套件(全程离线的参数面门禁)变慢且不稳定。这里只锁参数面。
+
 # ── 4. 缺参数 → 有诊断输出(clap 校验层)──────────────────────────────────
 
 for args in "session show" "session rm" "session fork" "session rename" \
-            "session export" "traces show"; do
+            "session export" "session search" "traces show" "workspace clone" \
+            "discussion run"; do
     # shellcheck disable=SC2086
     run_cli "$TMP/missing.txt" $args
     assert_nonempty "缺参数有诊断输出: $args" "$TMP/missing.txt"

@@ -99,6 +99,28 @@ pub async fn run_async(
         });
     }
 
+    // v1.x:配置热重载 —— 监听 `~/.reflect/config.toml` 变更,重建 provider
+    // client、必要时切 model,并把「哪些段变了」推一条 Notice 回对话流。
+    // 此前 TUI 完全没有 watcher:改 `[routing] fallbacks` / `[model]` 之类
+    // 的配置必须重启 TUI 才生效(headless `reflect-exec` 有)。
+    if let Some(path) = reflect_config::default_config_path() {
+        match reflect_config::ConfigWatcher::spawn(path.clone(), runtime.config.clone()) {
+            Ok(watcher) => {
+                crate::config_reload::spawn_config_reload_task(
+                    watcher,
+                    runtime.registry.clone(),
+                    thread.config().clone(),
+                    path,
+                    runtime.config.clone(),
+                    event_tx.clone(),
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "config watcher 启动失败(改配置需重启 TUI 才生效)");
+            }
+        }
+    }
+
     // 从 AgentConfig 直接读取模型名(启动期 SessionConfigured 还未发出,
     // 先写入 state.status_model 让第一帧状态栏就显示正确的模型)。
     // SessionConfigured 事件到达后会覆盖此值(保持一致)。
@@ -123,6 +145,8 @@ pub async fn run_async(
     state.model_registry = Some(runtime.registry.clone());
     state.reflect_config = Some(runtime.config.clone());
     state.persistent_permissions = runtime.persistent_permissions.clone();
+    // v1.x:LSP 诊断注册表 —— `/lsp` 读它展示语言服务诊断状态。
+    state.lsp_diagnostics = runtime.lsp_manager.as_ref().map(|m| m.diagnostics());
     // 插件 slash 命令展开句柄(SubmitAsUser / /loop 提交前消费)。
     state.plugin_runtime = runtime.plugin_runtime.clone();
     // 插件命令快照 → composer slash 弹窗补全 + 提交校验白名单。
@@ -229,10 +253,61 @@ pub async fn run_async(
     let mut pending_history_lines: Vec<Line<'static>> = Vec::new();
     // spinner 动画帧计数(每轮循环自增,驱动状态行 braille spinner)。
     let mut tick_frame: u32 = 0;
-    // 终端通知后端(OSC9/BEL,启动期按终端探测自动选;失败静默)。
+    // v1.x:`[notifications.tui]` 段 —— 通知开关与通道。段缺省 → 自动探测
+    // + 全开(与内置默认一致)。
+    state.notify_section = runtime
+        .config
+        .notifications
+        .as_ref()
+        .and_then(|n| n.tui.clone());
+    // 终端通知后端(OSC9/BEL;通道由 `[notifications.tui].channels` 决定,
+    // 缺省按终端探测自动选;失败静默)。
     let mut notifier = crate::tui_core::notifications::detect_backend(
-        crate::config_compat::types::NotificationMethod::Auto,
+        crate::history_render::notify::channel_method(state.notify_section.as_ref()),
     );
+
+    // ── 终端输入:长驻阻塞读取任务 ─────────────────────────────────────
+    // 旧实现每轮 select 前 spawn 一个 200ms poll 任务,select 命中 agent
+    // 事件 / 重绘分支时旧 poll_rx 被 drop:旧任务此时已 `event::read()` 吃掉
+    // 的按键会因 blocking_send 失败而**永久丢失**(agent 流式期间高频复现),
+    // 且残留任务与新任务并发 poll/read 会触发 fork 版 crossterm 的内部锁
+    // 竞争(poll 恒 false)。改为循环前 spawn 一个长驻任务 + 无界队列:
+    // 事件永不丢;200ms 无输入时发 Tick 心跳,继续驱动 spinner 重绘;
+    // poll Err(终端关闭 / SSH 断连)上报 TerminalDead 让主循环带错误退出,
+    // TerminalGuard 正常恢复终端,不再静默吞错空转。
+    enum InputTick {
+        Event(Event),
+        Tick,
+        TerminalDead(String),
+    }
+    let (input_tx, mut input_rx) = mpsc::unbounded_channel::<InputTick>();
+    {
+        let tx = input_tx.clone();
+        state
+            .background_tasks
+            .lock()
+            .unwrap()
+            .spawn_blocking(move || {
+                loop {
+                    match poll_event(Duration::from_millis(200)) {
+                        Ok(Some(ev)) => {
+                            if tx.send(InputTick::Event(ev)).is_err() {
+                                break;
+                            }
+                        }
+                        Ok(None) => {
+                            if tx.send(InputTick::Tick).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(InputTick::TerminalDead(e.to_string()));
+                            break;
+                        }
+                    }
+                }
+            });
+    }
 
     loop {
         // ── 1. 排空代理事件 ─────────────────────────────────────────────
@@ -281,13 +356,16 @@ pub async fn run_async(
         }
         // 回合完成 / 需审批 / 出错 → 终端通知(写裸 stdout,与帧缓冲分离)。
         // 纯对话回合不通知(用户还在看屏幕);跑得够久的长回合例外。
-        if let Some(msg) = notify_triggers.message() {
+        if let Some(msg) = notify_triggers.message_with(state.notify_section.as_ref()) {
             history_render::notify::notify(&mut notifier, &msg);
         } else if notify_triggers.long_turn_without_work(
             state
                 .turn_started_at
                 .map(|t| t.elapsed().as_secs())
                 .unwrap_or(0),
+        ) && crate::history_render::notify::allows(
+            state.notify_section.as_ref(),
+            crate::history_render::notify::NotifyTrigger::TurnComplete,
         ) {
             history_render::notify::notify(&mut notifier, "Reflect finished.");
         }
@@ -495,27 +573,31 @@ pub async fn run_async(
         }
 
         // ── 6. 等待输入 / agent / frame 请求 ──────────────────────────────
-        let (poll_tx, mut poll_rx) = mpsc::channel::<Option<Event>>(1);
-        tokio::task::spawn_blocking(move || {
-            let result = poll_event(Duration::from_millis(200));
-            let _ = poll_tx.blocking_send(result.ok().flatten());
-        });
-
         tokio::select! {
-            maybe_event = poll_rx.recv() => {
-                if let Some(Some(event)) = maybe_event {
-                    if handle_event(
-                        event,
-                        &mut state,
-                        &mut guard,
-                        &thread,
-                        &event_tx,
-                        &mut history_tail,
-                        &_frame_requester,
-                        fullscreen,
-                    )? {
-                        break;
+            maybe_tick = input_rx.recv() => {
+                match maybe_tick {
+                    Some(InputTick::Event(event)) => {
+                        if handle_event(
+                            event,
+                            &mut state,
+                            &mut guard,
+                            &thread,
+                            &event_tx,
+                            &mut history_tail,
+                            &_frame_requester,
+                            fullscreen,
+                        )? {
+                            break;
+                        }
                     }
+                    // 心跳:本轮无输入,落回循环顶部重绘(驱动 spinner / 动画)。
+                    Some(InputTick::Tick) => {}
+                    // 终端失效:带错误退出,TerminalGuard Drop 恢复终端状态。
+                    Some(InputTick::TerminalDead(msg)) => {
+                        anyhow::bail!("终端输入流失效: {msg}");
+                    }
+                    // 发送端关闭只发生在退出路径;继续等 agent 事件直到退出。
+                    None => {}
                 }
             }
             Some(ui_event) = event_rx.recv() => {
@@ -534,7 +616,7 @@ pub async fn run_async(
                     history_tail += 1;
                 }
                 sync_plan_mode_visuals(&mut state);
-                if let Some(msg) = triggers.message() {
+                if let Some(msg) = triggers.message_with(state.notify_section.as_ref()) {
                     history_render::notify::notify(&mut notifier, &msg);
                 }
             }
@@ -1048,15 +1130,22 @@ fn open_external_editor(
     // 而不是从空 buffer 起步导致原内容丢失。
     let draft = state.composer.current_text();
 
-    // 1. suspend terminal:leave alt-screen + 退出 raw mode。
-    let _ = guard.leave_alt_screen();
+    // 1. suspend terminal:真正离开 alt-screen（fullscreen 下
+    //    `leave_alt_screen` 会短路，必须走 suspend 变体）+ 退出 raw mode。
+    //    记下此前是否在备用屏，编辑器退出后据此决定要不要重进。
+    let was_alt = guard.is_alt_screen();
+    let _ = guard.suspend_alt_screen();
     let _ = crossterm::terminal::disable_raw_mode();
 
     // 2. run editor。失败时尝试恢复 terminal 再返回。
     let result = crate::tui_core::external_editor::run_editor(&draft);
 
-    // 3. restore terminal:raw mode + alt-screen,下一帧重绘。
+    // 3. restore terminal:raw mode + (此前在备用屏时)重进 alt-screen,
+    //    下一帧重绘。enter_alt_screen 内部会 clear()，保证编辑器残留像素清除。
     let _ = crossterm::terminal::enable_raw_mode();
+    if was_alt {
+        let _ = guard.enter_alt_screen();
+    }
     frame_requester.schedule_frame();
 
     match result {
@@ -1538,11 +1627,16 @@ fn dispatch_slash_command(
             let context_window = state
                 .context_usage
                 .window_size
-                .map(|w| format!("{} tokens", w))
+                .map(|w| format!("{w} tokens"))
                 .unwrap_or_else(|| "N/A".to_string());
+            // v1.x 接线:OS 级沙箱状态(Seatbelt / Landlock / 未启用)。
+            // 此前 TUI 只在 bootstrap 期设 `REFLECT_SANDBOX_OS_LEVEL` 环境变量,
+            // 用户无从知道命令到底跑没跑在沙箱里 —— `reflect_sandbox::OsSandbox`
+            // 的 `status_line()` 正是为此准备的。
+            let sandbox = reflect_sandbox::OsSandbox::from_env().status_line();
 
             let status = format!(
-                "/status:\n  model: {}\n  cwd: {}\n  git: {}\n  mode: {}\n  vim: {}\n  cost: {}\n  tokens: {}\n  context window: {}\n  busy: {}",
+                "/status:\n  model: {}\n  cwd: {}\n  git: {}\n  mode: {}\n  vim: {}\n  cost: {}\n  tokens: {}\n  context window: {}\n  sandbox: {}\n  busy: {}",
                 model,
                 cwd,
                 branch,
@@ -1551,14 +1645,20 @@ fn dispatch_slash_command(
                 cost,
                 tokens,
                 context_window,
+                sandbox,
                 state.busy
             );
             state.history.push(UiHistoryItem::Notice(status));
         }
         SlashCommand::Goal => {
-            state.history.push(UiHistoryItem::Notice(
-                "/goal: usage: /goal <objective>  (e.g. /goal refactor auth module)".into(),
-            ));
+            // v1.5:无参 → 显示目标模式状态快照(权威读口 `goal_snapshot()`);
+            // 带参 → 进入目标模式(见 dispatch_slash_command_with_args)。
+            let text = match thread.goal_snapshot() {
+                Some(gs) => crate::goal_state_view::format_goal_state(&gs),
+                None => "/goal: 当前无活跃目标。用法:/goal <objective>".to_string(),
+            };
+            state.history.push(UiHistoryItem::Notice(text));
+            return false;
         }
         SlashCommand::Loop => {
             state.history.push(UiHistoryItem::Notice(
@@ -1605,6 +1705,20 @@ fn dispatch_slash_command(
             state
                 .history
                 .push(UiHistoryItem::Notice(format_configured_mcp_servers()));
+        }
+        SlashCommand::Todo => {
+            // /todo — agent 当前的待办清单(会话级槽,TodoWrite 写入)。
+            state
+                .history
+                .push(UiHistoryItem::Notice(format_todo_checklist(thread)));
+        }
+        SlashCommand::Lsp => {
+            // /lsp — 语言服务诊断状态(文档数 / 诊断条数)。
+            // 数据来自 bootstrap 期连上的 LSP server 推送的
+            // `publishDiagnostics` 缓存(`reflect_lsp::DiagnosticRegistry`)。
+            state
+                .history
+                .push(UiHistoryItem::Notice(format_lsp_diagnostics(state)));
         }
         SlashCommand::Plugins => {
             // /plugin — 打开插件 overlay(真实已装插件 + enabled 标志)。
@@ -1684,18 +1798,36 @@ fn dispatch_slash_command_with_args(
                     .push(UiHistoryItem::Notice("/goal: Goal mode cleared.".into()));
                 return;
             }
+            // v1.x:`--verify <cmd>` / `--budget <n>` 透传给引擎的
+            // GoalController(命令式校验 + token 预算上限)。
+            let cmd = crate::goal_state_view::parse_goal_command(&goal);
+            // 只给了选项、没给目标 —— 不进目标模式(否则 `--verify` 会被
+            // 静默吞进目标文本,选项也失效)。
+            let Some(cmd) = cmd else {
+                state.history.push(UiHistoryItem::Notice(
+                    crate::goal_state_view::GOAL_USAGE.to_string(),
+                ));
+                return;
+            };
+            let (objective, verify_command, token_budget) =
+                (cmd.objective, cmd.verify_command, cmd.token_budget);
+            let mut notice = String::from("/goal: Goal mode entered.");
             emit_op(
                 thread,
                 event_tx,
                 reflect_protocol::Op::EnterGoalMode {
-                    goal,
-                    verify_command: None,
-                    token_budget: None,
+                    goal: objective,
+                    verify_command: verify_command.clone(),
+                    token_budget,
                 },
             );
-            state
-                .history
-                .push(UiHistoryItem::Notice("/goal: Goal mode entered.".into()));
+            if let Some(cmd) = &verify_command {
+                notice.push_str(&format!(" (verify: {cmd})"));
+            }
+            if let Some(b) = token_budget {
+                notice.push_str(&format!(" (budget: {b} tokens)"));
+            }
+            state.history.push(UiHistoryItem::Notice(notice));
         }
         SlashCommand::Loop => {
             // `/loop <secs> <cmd>` 本地调度器(无 agent round-trip)。
@@ -1762,15 +1894,27 @@ fn dispatch_slash_command_with_args(
         SlashCommand::Model => {
             let model = args.trim().to_string();
             if model.is_empty() {
-                state.history.push(UiHistoryItem::Notice(
-                    "/model: Missing model name. Usage: /model <model-name>".into(),
-                ));
+                // v1.5:无参 → 列出 provider 的真实模型清单(此前只回一句
+                // 「Missing model name」,用户根本看不到 provider 支持什么)。
+                spawn_model_catalog_listing(state, event_tx);
                 return;
             }
-            state.history.push(UiHistoryItem::Notice(format!(
-                "/model: Model changed to '{}' (display only — full model switching pending).",
-                model
-            )));
+            // v1.5:带参 → 与 legacy 通道对齐成**真切换**(此前枚举通道只
+            // 回显一句「display only」,两条通道行为不一致)。
+            let outcome = match (state.model_registry.as_ref(), state.reflect_config.as_ref()) {
+                (Some(reg), Some(cfg)) => match resolve_model_switch(reg, cfg, &model) {
+                    Some(spec) => {
+                        thread.config().set_model(spec.clone());
+                        state.status_model = Some(spec.clone());
+                        format!("/model: switched to '{spec}' (effective next turn).")
+                    }
+                    None => {
+                        format!("/model: '{model}' 不可用(provider 无匹配客户端);保持当前模型。")
+                    }
+                },
+                _ => format!("/model: 未加载模型注册表 / 配置,无法切换到 '{model}'。"),
+            };
+            state.history.push(UiHistoryItem::Notice(outcome));
         }
         SlashCommand::Side | SlashCommand::Btw => {
             let msg = args.trim().to_string();
@@ -1828,6 +1972,7 @@ fn open_diff_overlay(state: &mut UiState) {
         if let adapter::UiHistoryItem::ToolCall {
             name: _,
             diff: Some(diff),
+            args: None,
             ..
         } = item
         {
@@ -2082,6 +2227,42 @@ fn delete_session_files(tid: &reflect_protocol::ThreadId) -> anyhow::Result<usiz
     Ok(removed)
 }
 
+/// `/todo` 命令的本地实现:展示 agent 当前的待办清单。
+///
+/// v1.x 接线:core 的 `tool_exec` 把 `TodoWrite` 的清单渲染成紧凑文本存进
+/// 会话级槽(`AgentConfig::todos_slot`),`pre_loop` 再把它注入模型上下文。
+/// TUI 此前看不到这份清单 —— 模型写完 todo,界面里一个字都没有。
+fn format_todo_checklist(thread: &Arc<AgentThread>) -> String {
+    let raw = thread.config().todos_slot.read().clone();
+    match raw.as_deref().and_then(crate::todo_view::format_checklist) {
+        Some(text) => text,
+        None => "/todo: 当前没有待办清单(agent 尚未调用 TodoWrite)。".to_string(),
+    }
+}
+
+/// `/lsp` 命令的本地实现:展示语言服务诊断状态。
+///
+/// v1.x 接线:`reflect_lsp::DiagnosticRegistry` 缓存 server 推来的
+/// `publishDiagnostics`。此前 TUI 把 LSP manager 直接丢弃,这份数据
+/// 永远读不到 —— 用户只能看到「有 LSP server 起来了」,看不到类型错误。
+fn format_lsp_diagnostics(state: &UiState) -> String {
+    let Some(reg) = state.lsp_diagnostics.as_ref() else {
+        return "/lsp: 未启动任何语言服务(LSP 未配置或未连接)。".to_string();
+    };
+    let docs = reg.document_count();
+    let diags = reg.diagnostic_count();
+    if docs == 0 {
+        return format!(
+            "/lsp: 语言服务已连接,但尚未收到诊断。\n  {}",
+            reg.status_line()
+        );
+    }
+    format!(
+        "/lsp: {}\n  诊断文档: {docs} · 诊断条数: {diags}",
+        reg.status_line()
+    )
+}
+
 /// M3:`/model` 输入 → 完整 `provider/model` spec 并经 registry 校验。
 /// 输入含 `/` 视为完整 spec;否则按 active provider 拼接。校验失败 → None
 /// (保持当前模型)。
@@ -2098,6 +2279,46 @@ fn resolve_model_switch(
     };
     // next_for 与引擎走同一 spec→credential 解析;拿得到客户端即视为可用。
     registry.next_for(&spec, &[]).map(|_| spec)
+}
+
+/// `/model`(无参)—— 后台拉取 provider 的真实模型清单,结果经事件回流。
+///
+/// v1.5 接线:submodule 的 `reflect_config::fetch_catalog` 打 provider 的
+/// `/models` 端点取清单,`reflect_llm::model_catalog::FreeModelRules` 负责
+/// 免费判定(显式标记 → 白名单 → id 模式三通道)。此前 TUI 没有任何真实
+/// 模型清单,用户看不到 provider 实际支持哪些模型、哪些是免费的。
+///
+/// 拉清单是网络 IO —— 必须放后台任务,否则会卡住事件循环(渲染线程)。
+fn spawn_model_catalog_listing(state: &UiState, event_tx: &mpsc::UnboundedSender<UiEvent>) {
+    let (Some(reg), Some(cfg)) = (state.model_registry.clone(), state.reflect_config.clone())
+    else {
+        let _ = event_tx.send(UiEvent {
+            kind: UiEventKind::Notice("/model: 未加载模型注册表 / 配置,无法列出模型清单。".into()),
+        });
+        return;
+    };
+    let provider = cfg.active_provider().unwrap_or_default();
+    let section = cfg.model_discovery.clone().unwrap_or_default();
+    let timeout_secs = section
+        .timeout_secs
+        .unwrap_or(reflect_config::DEFAULT_DISCOVERY_TIMEOUT_SECS);
+    let rules = section.rules();
+    let current = state.status_model.clone();
+    let tx = event_tx.clone();
+    tokio::spawn(async move {
+        let text = match reflect_config::fetch_catalog(reg.as_ref(), provider, timeout_secs).await {
+            Ok(catalog) => crate::model_list::format_catalog(
+                provider,
+                &catalog.models,
+                &rules,
+                current.as_deref(),
+            ),
+            Err(e) => format!("/model: 无法获取 provider '{provider}' 的模型清单:{e}"),
+        };
+        let _ = tx.send(UiEvent {
+            kind: UiEventKind::Notice(text),
+        });
+    });
 }
 
 /// v1.x:问题面板的按键处理结果。`None` = 仅更新面板内部状态(高亮/勾选);
@@ -2516,14 +2737,19 @@ fn handle_key(
         // (abort 候选 / 清空输入),行为不变。审批弹窗 / plan 审批的 Esc
         // 已在上方各自分支提前消费,不会落到这里。
         if state.busy {
-            emit_op(
-                thread,
-                event_tx,
-                reflect_protocol::Op::Interrupt { child_id: None },
-            );
-            state.history.push(adapter::UiHistoryItem::Notice(
-                "⏹ 已发送中断请求,正在停止当前回合…".into(),
-            ));
+            // 去抖:中断请求已在途时忽略后续 Esc(回合开始 / 收尾会复位标记),
+            // 避免连按刷屏 + 重复打断请求。
+            if !state.interrupt_requested {
+                emit_op(
+                    thread,
+                    event_tx,
+                    reflect_protocol::Op::Interrupt { child_id: None },
+                );
+                state.interrupt_requested = true;
+                state.history.push(adapter::UiHistoryItem::Notice(
+                    "⏹ 已发送中断请求,正在停止当前回合…".into(),
+                ));
+            }
             return Ok(false);
         }
         let _ = state.composer.input(key);
@@ -3014,6 +3240,12 @@ fn handle_key(
                     ));
                     return Ok(false);
                 }
+                SlashOutcome::ListModels => {
+                    // v1.5:`/model` 无参 → 列出 provider 的真实模型清单。
+                    // 拉清单是网络 IO,放后台任务,结果经事件回流成 Notice。
+                    spawn_model_catalog_listing(state, event_tx);
+                    return Ok(false);
+                }
                 SlashOutcome::ShowCost => {
                     // /cost 显示本次会话累计调用成本。
                     if let Some(cost) = state.context_usage.total_cost_usd {
@@ -3197,14 +3429,47 @@ fn handle_key(
                     )));
                     return Ok(false);
                 }
-                SlashOutcome::EnterGoal { goal } => {
+                SlashOutcome::ShowTodo => {
+                    // v1.x:`/todo` → agent 当前的待办清单。
+                    state
+                        .history
+                        .push(adapter::UiHistoryItem::Notice(format_todo_checklist(
+                            thread,
+                        )));
+                    return Ok(false);
+                }
+                SlashOutcome::ShowLsp => {
+                    // v1.x:`/lsp` → 语言服务诊断状态。
+                    state
+                        .history
+                        .push(adapter::UiHistoryItem::Notice(format_lsp_diagnostics(
+                            state,
+                        )));
+                    return Ok(false);
+                }
+                SlashOutcome::ShowGoal => {
+                    // v1.5:`/goal` 无参 → 目标状态快照(权威读口)。
+                    // 此前只回一句 usage,用户看不到「跑到第几轮 / 判定是什么 /
+                    // 累计多少 token / 被什么卡住」。
+                    let text = match thread.goal_snapshot() {
+                        Some(gs) => crate::goal_state_view::format_goal_state(&gs),
+                        None => "/goal: 当前无活跃目标。用法:/goal <objective>".to_string(),
+                    };
+                    state.history.push(adapter::UiHistoryItem::Notice(text));
+                    return Ok(false);
+                }
+                SlashOutcome::EnterGoal {
+                    goal,
+                    verify_command,
+                    token_budget,
+                } => {
                     emit_op(
                         thread,
                         event_tx,
                         reflect_protocol::Op::EnterGoalMode {
                             goal,
-                            verify_command: None,
-                            token_budget: None,
+                            verify_command,
+                            token_budget,
                         },
                     );
                     state.history.push(adapter::UiHistoryItem::Notice(
@@ -3669,6 +3934,29 @@ fn compute_live_region(state: &mut UiState, width: u16) -> (Vec<Line<'static>>, 
             }
             let h = lines_height(&live_text.lines.to_vec(), width);
             return (live_text.lines, h);
+        }
+    }
+
+    // v1.5:工具参数流式预览 —— 模型仍在生成 tool_use 参数时,live 区
+    // 渐进显示「正在对什么动手 / 正文写到哪」。此前这段是黑盒等待
+    // (`ToolCallBegin` 的 args 恒为 null),用户只能干等。
+    // 最多显示 3 个并行工具,首行带工具名标记,dim 样式(与工具输出 tail 同款)。
+    if !state.tool_args.is_empty() {
+        let dim = Style::default().fg(Color::DarkGray);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        for s in state.tool_args.iter().take(3) {
+            if let Some(primary) = crate::tool_args::format_primary(&s.tool, &s.preview.primary) {
+                lines.push(Line::from(Span::styled(primary, dim)));
+            }
+            if let Some(body) =
+                crate::tool_args::format_body(s.preview.body_len, &s.preview.body_tail)
+            {
+                lines.push(Line::from(Span::styled(body, dim)));
+            }
+        }
+        if !lines.is_empty() {
+            let h = lines_height(&lines, width);
+            return (lines, h);
         }
     }
 
@@ -4363,6 +4651,7 @@ mod draw_tests {
                 error: false,
                 elapsed_ms: 9,
                 diff: None,
+                args: None,
             },
             60,
             cwd,
@@ -4428,6 +4717,7 @@ mod draw_tests {
                 kind: UiEventKind::ToolStarted {
                     call_id: "call-a".into(),
                     name: "Bash".into(),
+                    args: None,
                 },
             },
         );
@@ -5134,6 +5424,7 @@ mod draw_tests {
             error: false,
             elapsed_ms: 1,
             diff: Some("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b".into()),
+            args: None,
         });
         state
             .history
@@ -5189,6 +5480,7 @@ mod draw_tests {
                 kind: UiEventKind::ToolStarted {
                     call_id: "c1".into(),
                     name: "Bash".into(),
+                    args: None,
                 },
             },
         );

@@ -51,6 +51,65 @@ enum Command {
         #[command(subcommand)]
         action: TracesAction,
     },
+    /// Git 克隆 / 工作区同步。
+    Workspace {
+        #[command(subcommand)]
+        action: WorkspaceAction,
+    },
+    /// 多 agent 讨论(读 discussion.toml 跑 orchestrator)。
+    Discussion {
+        #[command(subcommand)]
+        action: DiscussionAction,
+    },
+    /// cargo audit 安全扫描。
+    Security {
+        #[command(subcommand)]
+        action: SecurityAction,
+    },
+}
+
+/// `discussion` 二级子命令。
+#[derive(Debug, Subcommand)]
+enum DiscussionAction {
+    /// 按 discussion.toml 跑一轮多 agent 讨论。
+    Run {
+        /// discussion.toml 路径。
+        #[arg(long, short = 'c', value_name = "PATH")]
+        config: PathBuf,
+        /// transcript 落盘路径(缺省 → 打印到 stdout)。
+        #[arg(long, short = 'o', value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
+}
+
+/// `security` 二级子命令。
+#[derive(Debug, Subcommand)]
+enum SecurityAction {
+    /// 跑 `cargo audit` 并打印报告(cargo-audit 不可用时如实降级)。
+    Audit {
+        /// 扫描目录(缺省 → 当前目录)。
+        #[arg(long, value_name = "PATH")]
+        workspace: Option<PathBuf>,
+    },
+}
+
+/// `workspace` 二级子命令。
+#[derive(Debug, Subcommand)]
+enum WorkspaceAction {
+    /// 克隆远程仓库到本地目录。
+    Clone {
+        /// 远程仓库 URL。
+        url: String,
+        /// 目标目录(缺省 → 用仓库名)。
+        #[arg(long, value_name = "DIR")]
+        dest: Option<PathBuf>,
+        /// 分支 / tag。
+        #[arg(long, value_name = "NAME")]
+        branch: Option<String>,
+        /// 浅克隆深度(0 = 全量)。
+        #[arg(long, default_value_t = 0)]
+        depth: u32,
+    },
 }
 
 /// `session` 二级子命令。
@@ -90,6 +149,17 @@ enum SessionAction {
         /// 只统计该 workspace 下的会话(缺省 → 全部会话)。
         #[arg(long, value_name = "PATH")]
         workspace: Option<String>,
+    },
+    /// 跨会话全文搜索(v1.5:找回「上次那个报错 / 修法在哪个 session」)。
+    Search {
+        /// 搜索词(大小写不敏感子串)。
+        query: String,
+        /// 命中数上限(默认 50)。
+        #[arg(long, short = 'n', default_value_t = 50)]
+        limit: usize,
+        /// 以 JSON 行输出(便于脚本消费)。
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -137,6 +207,29 @@ fn main() -> anyhow::Result<()> {
             SessionAction::Stats { workspace } => {
                 reflect_tui::cli::session::stats(workspace.as_deref())
             }
+            SessionAction::Search { query, limit, json } => {
+                reflect_tui::cli::session::search(&query, limit, json)
+            }
+        },
+        Some(Command::Workspace { action }) => match action {
+            WorkspaceAction::Clone {
+                url,
+                dest,
+                branch,
+                depth,
+            } => reflect_tui::cli::workspace::clone(url, dest, branch, depth),
+        },
+        Some(Command::Discussion { action }) => match action {
+            DiscussionAction::Run { config, output } => {
+                // 用与 reflect-cli 同款的多线程 runtime(`Runtime::new()`):
+                // 讨论编排里有跨 task 的等待,current_thread 可能死锁。
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| anyhow::anyhow!("tokio runtime 初始化失败: {e}"))?;
+                rt.block_on(reflect_tui::cli::discussion::run(config, output))
+            }
+        },
+        Some(Command::Security { action }) => match action {
+            SecurityAction::Audit { workspace } => reflect_tui::cli::security::audit(workspace),
         },
         Some(Command::Traces { action }) => match action {
             TracesAction::Ls { limit } => reflect_tui::cli::traces::ls(limit),

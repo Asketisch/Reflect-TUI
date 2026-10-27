@@ -103,6 +103,39 @@ def test_ctrl_g_external_editor_roundtrip(tui, sandbox) -> None:
         assert not s.has_panic()
 
 
+def test_ctrl_g_external_editor_in_fullscreen_leaves_and_reenters_alt_screen(
+    tui, sandbox
+) -> None:
+    """K3b 全屏模式下 Ctrl+G:必须真正离开备用屏跑编辑器,退出后再重进。
+
+    全屏模式下 overlay 与主界面共享同一屏,`TerminalGuard::leave_alt_screen`
+    在 fullscreen 下会短路(不真正 LeaveAlternateScreen)——若外部编辑器沿用
+    它,编辑器就会跑在 alt-screen 上被 TUI 重绘覆盖。修复后走
+    `suspend_alt_screen` 变体(绕开短路),编辑器退出后再重进备用屏。
+
+    断言:原始字节流里出现「离开备用屏 ESC[?1049l」,且其后又有一次
+    「进入备用屏 ESC[?1049h」(启动时那一次之前)。
+    """
+    editor = sandbox.home / "fake-editor.sh"
+    editor.write_text(
+        '#!/bin/sh\n# 测试替身编辑器:把固定文本写进给定文件\nprintf "FS_TEXT_FROM_EDITOR" > "$1"\n'
+    )
+    editor.chmod(0o755)
+
+    with tui(args=["--fullscreen"], env={"EDITOR": str(editor), "VISUAL": str(editor)}) as s:
+        s.wait_text("/help for commands", timeout=30)
+        s.key("ctrl+g")
+        txt = s.wait_text("External editor closed", timeout=20)
+        assert "content loaded into composer" in txt, f"应提示回填:\n{txt[-300:]}"
+
+        raw = s.raw_output()
+        leave = raw.find("\x1b[?1049l")
+        assert leave != -1, "全屏下跑外部编辑器前应真正离开备用屏(ESC[?1049l)"
+        reenter = raw.find("\x1b[?1049h", leave)
+        assert reenter != -1, "编辑器退出后应重进备用屏(ESC[?1049h)"
+        assert not s.has_panic()
+
+
 def test_ctrl_r_searches_prompt_history(tui, sandbox) -> None:
     """K4 Ctrl+R 反向搜索历史:输入关键字回填命中条目。"""
     _seed_history(sandbox, ["alpha probe one", "beta probe two", "gamma probe three"])

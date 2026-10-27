@@ -58,6 +58,12 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
         ToolCallBegin(tb) => UiEventKind::ToolStarted {
             call_id: tb.call_id,
             name: tb.tool_name,
+            // v1.5:整包形态 provider 把完整参数放这里(分片形态是 null)。
+            args: if tb.args.is_null() {
+                None
+            } else {
+                Some(tb.args)
+            },
         },
         ToolCallEnd(te) => UiEventKind::ToolCompleted {
             call_id: te.call_id.clone(),
@@ -194,6 +200,19 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
                 return None;
             }
         }
+        // v1.5:工具调用参数流式增量 → live 区渐进预览。core 在模型仍在
+        // 生成 tool_use 参数时逐片转发,客户端据此渲染「正在写什么」,
+        // 不必面对 `ToolCallBegin(args 恒 null)` 的黑盒等待。
+        ToolCallArgsDelta(d) => {
+            if tool_stream_enabled() {
+                UiEventKind::ToolArgsDelta {
+                    call_id: d.call_id,
+                    delta: d.delta,
+                }
+            } else {
+                return None;
+            }
+        }
         // MCP / LSP 生命周期事件(bootstrap 接线连接管理器后真实到达):
         // 除 Notice 外,McpServerStarted/Failed 还 upsert `state.mcp_servers`
         // 连接态快照,供 /mcp overlay 展示真实状态(此前 overlay 硬编码假列表)。
@@ -233,12 +252,31 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
             0 => "Rewound: nothing to drop (already at the last turn boundary).".to_string(),
             n => format!("Rewound: dropped {n} conversation record(s). A .bak backup was kept."),
         }),
-        ToolExecutionRequest(_)
-        | ShutdownComplete
-        | PermissionBubble(_)
-        | ConfigReloaded(_)
-        | CollabMessage(_)
-        | Routing(_) => return None,
+        ToolExecutionRequest(_) | ShutdownComplete | PermissionBubble(_) | CollabMessage(_) => {
+            return None;
+        }
+        // v1.x:配置热重载 —— 协议侧事件带「触发的文件 + 变更的段」。
+        // 此前整条丢弃,用户改完配置不知道有没有生效。
+        ConfigReloaded(cr) => UiEventKind::Notice(format!(
+            "🔄 配置已重载({})· 变更段: {}",
+            cr.path.display(),
+            if cr.sections_changed.is_empty() {
+                "(无)".to_string()
+            } else {
+                cr.sections_changed.join(", ")
+            }
+        )),
+        // v1.0 多 Provider 路由 / v1.7 跨模型降级:换 credential、进冷却、
+        // 全部失败、切到 fallback spec。协议侧文档明写「TUI 收到后画一行
+        // status」—— 此前整条丢弃,用户配了 `[routing] fallbacks` 后自动
+        // 降级却零提示。恢复类信号(冷却解除)不单独打扰。
+        Routing(ev) => {
+            if crate::routing_status::is_noteworthy(&ev) {
+                UiEventKind::Notice(crate::routing_status::format_routing_event(&ev))
+            } else {
+                return None;
+            }
+        }
         // 自动压缩:必须让用户看见。此前整条丢弃,结果就是「上下文突然变短」
         // /「模型突然不记得前面说过什么」在界面上毫无解释,用户只能猜。
         // Claude Code 同样会显示 Compacting conversation…。

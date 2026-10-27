@@ -788,6 +788,7 @@ mod tests {
                 error: false,
                 elapsed_ms: 1,
                 diff: None,
+                args: None,
             },
             UiHistoryItem::ToolCall {
                 name: "Bash".into(),
@@ -795,6 +796,7 @@ mod tests {
                 error: false,
                 elapsed_ms: 2,
                 diff: None,
+                args: None,
             },
             UiHistoryItem::ToolCall {
                 name: "Glob".into(),
@@ -802,6 +804,7 @@ mod tests {
                 error: false,
                 elapsed_ms: 3,
                 diff: None,
+                args: None,
             },
         ];
         let line = render_metrics_line(&crate::theme::Palette::DARK, &history);
@@ -818,6 +821,7 @@ mod tests {
             error: true,
             elapsed_ms: 1,
             diff: None,
+            args: None,
         }];
         let line = render_metrics_line(&crate::theme::Palette::DARK, &history);
         let s: String = line.spans.iter().map(|s| s.content.clone()).collect();
@@ -834,6 +838,7 @@ mod tests {
                 error: false,
                 elapsed_ms: 1,
                 diff: None,
+                args: None,
             })
             .collect();
         let line = render_metrics_line(&crate::theme::Palette::DARK, &history);

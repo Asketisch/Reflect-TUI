@@ -65,6 +65,11 @@ pub enum UiEventKind {
     ToolStarted {
         call_id: String,
         name: String,
+        /// v1.5:整包形态 provider(Ollama 等)把**完整**参数放在
+        /// `ToolCallBeginEvent.args` 里 —— 这类 provider 不发
+        /// `ToolCallArgsDelta`,故用 begin 携带的 args 兜底参数预览。
+        /// 分片形态 provider 这里是 `null`。
+        args: Option<serde_json::Value>,
     },
     ToolCompleted {
         call_id: String,
@@ -126,6 +131,22 @@ pub enum UiEventKind {
     ToolOutputDelta {
         call_id: String,
         delta: String,
+    },
+    /// v1.5:工具调用参数的流式增量(`ToolCallArgsDelta`)。模型仍在生成
+    /// tool_use 参数时逐片到达 —— 用于在 live 区渐进展示「正在写什么」,
+    /// 消除 `ToolCallBegin(args 恒 null)` 造成的黑盒等待。
+    ToolArgsDelta {
+        call_id: String,
+        delta: String,
+    },
+    /// v1.x:配置文件热重载 —— 新的完整配置 + 本轮变更的段名。
+    /// 消费方据此刷新 `state.reflect_config`(否则 `/model` 之类的命令
+    /// 仍按旧配置解析)并向对话流推一条变更提示。
+    ConfigReloaded {
+        // Box:`ReflectConfig` 是个大结构,直接内联会让本枚举的各变体
+        // 大小差异悬殊(clippy::large_enum_variant)。
+        config: Box<reflect_config::ReflectConfig>,
+        sections_changed: Vec<String>,
     },
     /// 工具/Hook 审批请求。`kind` 保留原始 `ApprovalKind`，
     /// 回执时据此选 `Op::ToolApproval` / `Op::HookApproval`。
@@ -231,11 +252,17 @@ pub enum UiHistoryItem {
         elapsed_ms: u64,
         /// 工具产出里的 unified_diff 原文(若有,供 /diff 全屏视图)。
         diff: Option<String>,
+        /// v1.5:本次调用的参数摘要(path / command / 正文长度等),由
+        /// `ToolCallArgsDelta` 累积而来。此前参数在 `ToolCallBegin` 里恒为
+        /// `null`,工具执行完就彻底看不到「它到底动了哪个文件」。
+        args: Option<String>,
     },
     /// 回合分隔:`─ ─ ─`(有实际工作时附 `Worked for Nm`)。
     Separator {
         elapsed_secs: Option<u64>,
         had_work: bool,
+        /// 本回合成本(美元):回合结束时的总成本减去回合开始时的基线。
+        turn_cost: Option<f64>,
     },
     Plan(String),
     Error(String),
@@ -322,11 +349,17 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             state.busy = true;
             state.clear_stream();
             state.turn_started_at = Some(std::time::Instant::now());
+            // 回合成本基线:回合结束时取总成本差值,写入分隔符小结。
+            state.turn_cost_baseline = state.context_usage.total_cost_usd;
             state.had_tool_this_turn = false;
+            // 新回合开始:中断请求已失效,允许再次按 Esc 中断。
+            state.interrupt_requested = false;
             state.seen_tool_calls.clear();
             state.segment_start = 0;
             // M4:新回合开始,清掉上回合残留的工具输出流。
             state.tool_live = None;
+            // v1.5:同理清掉残留的工具参数流(跨回合不该有未完成的参数预览)。
+            state.tool_args.clear();
             // 新回合开始，清除上回合残留的审批 banner，避免跨回合 stale state。
             state.pending_approval = None;
             // 同理清理过期的问答状态(正常情况下 gate 阻塞期间回合不会结束,
@@ -365,13 +398,24 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
                     .turn_started_at
                     .map(|t| t.elapsed().as_secs())
                     .filter(|s| *s > 0);
+                // 回合小结成本 = 回合结束总成本 - 回合开始基线;无基线时退化为总成本。
+                let turn_cost = match (state.context_usage.total_cost_usd, state.turn_cost_baseline)
+                {
+                    (Some(total), Some(base)) if total >= base => Some(total - base),
+                    (Some(total), None) => Some(total),
+                    _ => None,
+                };
                 state.history.push(UiHistoryItem::Separator {
                     elapsed_secs,
                     had_work: true,
+                    turn_cost,
                 });
             }
             state.turn_started_at = None;
+            state.turn_cost_baseline = None;
             state.had_tool_this_turn = false;
+            // 回合收尾(TurnCompleted 兼收 TurnAborted):中断请求已落地,复位标记。
+            state.interrupt_requested = false;
             state.seen_tool_calls.clear();
             // 回合结束，清除残留的审批 banner，避免显示已过时的审批提示。
             state.pending_approval = None;
@@ -403,7 +447,11 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             state.history.push(UiHistoryItem::Agent(text));
         }
         UiEventKind::Thinking(text) => state.live_thinking.push_str(&text),
-        UiEventKind::ToolStarted { call_id, name } => {
+        UiEventKind::ToolStarted {
+            call_id,
+            name,
+            args,
+        } => {
             // ── 边界 flush：工具调用开始前，把已流式稳定的文字先落 scrollback。
             // 这样 text1 → toolA → text2 在滚屏里天然按序交错，不再割裂成两块。
             // reasoning 边界：若有累积思考，先 flush 成一条消息，再 flush agent 文字。
@@ -411,8 +459,22 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             extra.extend(flush_committed(state));
             state.had_tool_this_turn = true;
             // 记 call_id→name:end 事件只带 call_id，靠这里补名。
-            state.tool_names.insert(call_id.clone(), name);
-            state.seen_tool_calls.insert(call_id);
+            state.tool_names.insert(call_id.clone(), name.clone());
+            state.seen_tool_calls.insert(call_id.clone());
+            // v1.5:整包形态兜底 —— begin 带了完整参数就先种下预览,
+            // 后续若收到分片增量则以增量累积为准(分片形态的 begin 是 null)。
+            if let Some(preview) = args
+                .as_ref()
+                .and_then(crate::tool_args::preview_from_complete_args)
+                && !state.tool_args.iter().any(|s| s.call_id == call_id)
+            {
+                state.tool_args.push(crate::events::ToolArgsStream {
+                    call_id,
+                    tool: name,
+                    raw: String::new(),
+                    preview,
+                });
+            }
         }
         UiEventKind::ToolCompleted {
             call_id,
@@ -430,6 +492,14 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
             {
                 state.tool_live = None;
             }
+            // v1.5:该工具的参数流收尾 —— 但先把摘要取出来放进历史行
+            // (live 预览此后不再需要,完整参数已随本次工具调用落 scrollback)。
+            let args_summary = state
+                .tool_args
+                .iter()
+                .find(|s| s.call_id == call_id)
+                .and_then(|s| crate::tool_args::format_args_summary(&s.preview));
+            state.tool_args.retain(|s| s.call_id != call_id);
             // 优先用 begin 记下的 tool_name；取不到就退化为 call_id。
             let name = state
                 .tool_names
@@ -442,6 +512,9 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
                 error,
                 elapsed_ms,
                 diff,
+                // v1.5:参数摘要在工具完成瞬间取快照(此刻累积的片段最全),
+                // 之后 `state.tool_args` 清空,历史行仍留着这条摘要。
+                args: args_summary,
             });
         }
         UiEventKind::ToolOutputDelta { call_id, delta } => {
@@ -472,6 +545,63 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
                     tail: delta,
                 });
             }
+        }
+        UiEventKind::ToolArgsDelta { call_id, delta } => {
+            // v1.5:工具参数流式增量 —— 模型仍在生成 tool_use 参数时逐片到达。
+            // 累积原始 JSON 片段并提取人读预览,供 live 区渐进渲染。
+            if !delta.is_empty() {
+                // 工具名由先于参数增量到达的 ToolCallBegin 记录;
+                // 取不到(理论上不会)时退化用 call_id。
+                let tool = state
+                    .tool_names
+                    .get(&call_id)
+                    .cloned()
+                    .unwrap_or_else(|| call_id.clone());
+                // 线性查找(call_id 已在列表里就续写,否则按首次出现序追加)。
+                let idx = state
+                    .tool_args
+                    .iter()
+                    .position(|s| s.call_id == call_id)
+                    .unwrap_or_else(|| {
+                        state.tool_args.push(crate::events::ToolArgsStream {
+                            call_id: call_id.clone(),
+                            tool,
+                            raw: String::new(),
+                            preview: crate::tool_args::ToolArgsPreview::default(),
+                        });
+                        state.tool_args.len() - 1
+                    });
+                let entry = &mut state.tool_args[idx];
+                entry.raw.push_str(&delta);
+                // 原始片段上限 ~64KiB:超长参数(write 大文件)不再继续累积,
+                // 预览仍靠已累积部分渲染,不会把内存吃穿。
+                const MAX_RAW: usize = 64 * 1024;
+                if entry.raw.len() > MAX_RAW {
+                    let cut = entry.raw.len() - MAX_RAW;
+                    let boundary = (cut..entry.raw.len())
+                        .find(|i| entry.raw.is_char_boundary(*i))
+                        .unwrap_or(entry.raw.len());
+                    entry.raw.replace_range(..boundary, "");
+                }
+                let tool_name = entry.tool.clone();
+                entry.preview = crate::tool_args::preview_from_partial_json(&entry.raw, &tool_name);
+            }
+        }
+        UiEventKind::ConfigReloaded {
+            config,
+            sections_changed,
+        } => {
+            // 热重载后界面持有的 config 必须一起换掉 —— 否则 `/model` 等
+            // 依赖配置的路径仍按旧值解析(「已重载」只是提示,行为没变)。
+            state.reflect_config = Some(*config);
+            let changed = if sections_changed.is_empty() {
+                "(无)".to_string()
+            } else {
+                sections_changed.join(", ")
+            };
+            state.history.push(UiHistoryItem::Notice(format!(
+                "🔄 配置已重载· 变更段: {changed}"
+            )));
         }
         UiEventKind::Error(text) => state.history.push(UiHistoryItem::Error(text)),
         UiEventKind::PlanReady {
@@ -1229,6 +1359,7 @@ mod tests {
                 error: false,
                 elapsed_ms: 12,
                 diff: None,
+                args: None,
             },
             UiHistoryItem::StreamedAgent("after tool".into()),
             UiHistoryItem::User("q2".into()),
@@ -1483,6 +1614,7 @@ mod tests {
             ev(UiEventKind::ToolStarted {
                 call_id: "c1".into(),
                 name: "Bash".into(),
+                args: None,
             }),
         );
         // 第二段 reasoning
@@ -1632,6 +1764,32 @@ mod tests {
             }),
             Some("# Plan\n1. step one\n2. step two".to_string()),
             "Plan 内容应是最新草稿版"
+        );
+    }
+
+    #[test]
+    fn interrupt_requested_resets_on_turn_boundaries() {
+        let mut state = UiState::default();
+
+        // 回合开始:标记应复位(允许首次中断)。
+        state.interrupt_requested = true;
+        apply_event(
+            &mut state,
+            ev(UiEventKind::TurnStarted {
+                turn_id: reflect_protocol::TurnId::new(),
+            }),
+        );
+        assert!(
+            !state.interrupt_requested,
+            "回合开始应复位中断标记,允许再次按 Esc 中断"
+        );
+
+        // 发出中断请求(键位处理置位)后,回合收尾应复位。
+        state.interrupt_requested = true;
+        apply_event(&mut state, ev(UiEventKind::TurnCompleted));
+        assert!(
+            !state.interrupt_requested,
+            "回合收尾(TurnCompleted 兼收 TurnAborted)应复位中断标记"
         );
     }
 }

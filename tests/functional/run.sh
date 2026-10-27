@@ -13,6 +13,7 @@
 #      - test_render.py        渲染与视觉(宽字符 / 折行 / markdown / 主题 / resize)
 #      - test_flow.py          工作流与容错(审批 / AskUser / loop / 恢复边界 / 信号)
 #      - test_plugin.py        插件面
+#      - test_http_mock.py     真实 HTTP 链路(Anthropic SSE + 确定性 busy 窗口)
 #      - test_pty_helpers.py   测试设施自检
 #      - test_coverage_audit.py 覆盖自审门禁
 #   2. tests/rust/cli_core.sh + cli_modules.sh  CLI 参数矩阵

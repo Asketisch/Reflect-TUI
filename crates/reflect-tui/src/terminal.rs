@@ -98,6 +98,16 @@ impl TerminalGuard {
         Ok(())
     }
 
+    /// 挂起 TUI 运行外部程序（如 `$EDITOR`）：无论 inline/fullscreen 都真正
+    /// 离开备用屏。
+    ///
+    /// [`Self::leave_alt_screen`] 在 fullscreen 下会短路（overlay 与全屏主界面
+    /// 共享同一屏），而外部程序需要真实主屏，否则编辑器会跑在 alt-screen 上
+    /// 被 TUI 的重绘覆盖、输入也落错屏。
+    pub fn suspend_alt_screen(&mut self) -> io::Result<()> {
+        self.leave_alt_screen_inner()
+    }
+
     pub fn leave_alt_screen(&mut self) -> io::Result<()> {
         // 全屏模式下不退出备用屏：overlay 与之共享同一屏，关闭 overlay 只是清除
         // 状态并回到全屏主界面，不应真正 LeaveAlternateScreen。

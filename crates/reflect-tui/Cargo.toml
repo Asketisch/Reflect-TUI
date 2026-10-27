@@ -81,10 +81,24 @@ reflect-ast      = { workspace = true }
 # v1.1.0 Phase 6:任务面板 + 团队胶囊 —— 镜像 `reflect_task` 的 `TaskStatus`
 # 枚举与 `TodoRow`(避免 TUI 反向依赖整个 reflect_task store 层)。
 reflect-task     = { workspace = true }
+# v1.3 接线:`[analytics]` 段 → OTLP/HTTP exporter。`reflect_config::init_exporter`
+# 设全局 TracerProvider,`tracing_opentelemetry::layer()` 把业务 span 转成
+# OTLP span。此前 TUI 完全没有这层,`[analytics] enabled = true` 是死配置。
+opentelemetry       = { workspace = true }
+tracing-opentelemetry = { workspace = true }
 # v1.x:接入 SubAgentFactory —— 让 TUI agent 也能派发子 agent (call_<role>)。
 # 此前仅 headless (reflect-exec) 注册了 SubAgentFactory，TUI agent 工具表
 # 里没有 call_explorer，导致用户要求"派发 subagent"时模型反馈"无此工具"。
 reflect-subagent = { workspace = true }
+# v1.x:多 agent 讨论(`reflect_discussion::cli::run` 是库内可复用入口)与
+# cargo audit 安全扫描(`reflect_integration::security_scan`)。此前只有
+# `reflect-cli` 的 `reflect discussion` / `reflect security` 能触达。
+reflect-discussion  = { workspace = true }
+reflect-integration = { workspace = true }
+# v1.5:目标模式状态快照读口 —— `AgentThread::goal_snapshot()` 返回
+# `reflect_goal::GoalState`(跑到第几轮 / LM 判定 / 累计 token / 被什么卡住)。
+# 此前 TUI 只有「Goal mode entered.」一句,拿不到任何权威状态。
+reflect-goal = { workspace = true }
 # Inline visualization requires base64 encoding and random ID generation.
 base64     = "0.22"
 rand       = "0.8"

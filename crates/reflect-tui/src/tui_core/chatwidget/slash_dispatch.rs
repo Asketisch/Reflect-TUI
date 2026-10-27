@@ -512,6 +512,16 @@ impl ChatWidget {
             SlashCommand::Mcp => {
                 self.add_mcp_output(McpServerStatusDetail::ToolsAndAuthOnly);
             }
+            SlashCommand::Lsp => {
+                // v1.x:`/lsp` 的真实实现走稳定主循环(tui/mod.rs 的
+                // format_lsp_diagnostics);本 stub 子树只给出同款提示。
+                self.add_app_server_stub_message("Language server diagnostics");
+            }
+            SlashCommand::Todo => {
+                // v1.x:`/todo` 的真实实现走稳定主循环(tui/mod.rs 的
+                // format_todo_checklist);本 stub 子树只给出同款提示。
+                self.add_app_server_stub_message("Todo checklist");
+            }
             SlashCommand::Prompt => {
                 // v1.6:稳定主循环的文本路径(/prompt → SlashOutcome::Prompt)
                 // 已接 Op::PromptCommand;chatwidget 嵌入路径无引擎句柄,与
@@ -1111,6 +1121,8 @@ impl ChatWidget {
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate
             | SlashCommand::Mcp
+            | SlashCommand::Lsp
+            | SlashCommand::Todo
             | SlashCommand::Prompt
             | SlashCommand::Apps
             | SlashCommand::Plugins
