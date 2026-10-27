@@ -1,24 +1,32 @@
 #!/usr/bin/env python3
 """Mock Anthropic Messages API —— 供 reflect-tui 的**真实 HTTP 链路**测试使用。
 
-监听 127.0.0.1:18431,处理 `POST /v1/messages`(stream=true),按脚本回放
-SSE 事件流。零外部依赖(标准库 http.server)。
+监听 127.0.0.1(端口由内核分配),处理 `POST /v1/messages`(stream=true),
+按脚本回放 SSE 事件流。零外部依赖(标准库 http.server)。
 
 ## 为什么需要它
 
 仓库既有的能力覆盖层用 `REFLECT_MODEL=mock/mock-1` —— 那是 reflect-llm
-`ModelClient` 层的内置 provider,**完全绕过 HTTP 传输、SSE 解析与
-Anthropic 协议形态**。本 mock server 补上那一层:请求构造(URL / header /
+`ModelClient` 层的内置 provider,**完全绕过** HTTP 传输、SSE 解析与
+Anthropic 协议形态。本 mock server 补上那一层:请求构造(URL / header /
 body)、SSE 事件分帧(`content_block_start` / `content_block_delta` /
 `content_block_stop` / `message_stop`)、`tool_use` 块都要真的过一遍。
 
-它还提供 `MOCK_ANTHROPIC_DELAY`(秒):给「回合中断」这类需要**确定性
-busy 窗口**的用例留出时间 —— 内置 mock provider 瞬时完成,离线无法制造
-busy(见 `tests/COVERAGE.md` §6 的相关记录)。
+它还提供 `delay`(秒):给「回合中断」这类需要**确定性 busy 窗口**的用例
+留出时间 —— 内置 mock provider 瞬时完成,离线无法制造 busy(见
+`tests/COVERAGE.md` §6 的相关记录)。
+
+## 进程内运行
+
+服务以 `MockAnthropicServer` 类在**测试进程内的守护线程**里运行:
+构造即绑定监听(端口 0 = 内核分配,无占端口竞态),对被测 TUI 子进程
+而言与独立进程的 HTTP 服务完全等价。历史上这里起 python 子进程,在
+macos runner 上冷启动可卡过 30s 且无任何输出(CI #27/#28 实测),故改
+进程内。`__main__` 入口保留独立运行能力(读 MOCK_ANTHROPIC_PORT /
+MOCK_ANTHROPIC_DELAY / MOCK_ANTHROPIC_SCRIPT 环境变量)。
 
 脚本规则(按序消费):
-  - 环境变量 MOCK_ANTHROPIC_SCRIPT 指向一个 UTF-8 文本文件,每行一条回复
-    脚本;空行分隔多条。行语法:
+  - 脚本文件是 UTF-8 文本,每行一条回复脚本;空行分隔多条。行语法:
       `text: <回复文本>`            —— 普通文本回复(默认)
       `text_file: <路径>`           —— 用文件内容作为回复文本
       `tool: <name>|<json-args>`    —— 回复一个 tool_use 块
@@ -26,6 +34,8 @@ busy(见 `tests/COVERAGE.md` §6 的相关记录)。
     未配置脚本时的默认行为:回显最后一条 user 消息:
       `MOCK REPLY: <最后一条用户消息首行>`
 """
+from __future__ import annotations
+
 import json
 import os
 import sys
@@ -33,57 +43,12 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
-HOST = "127.0.0.1"
-PORT = int(os.environ.get("MOCK_ANTHROPIC_PORT", "18431"))
-SCRIPT_FILE = os.environ.get("MOCK_ANTHROPIC_SCRIPT", "")
-
 _print_lock = threading.Lock()
 
 
 def log(msg):
     with _print_lock:
         print(f"[mock] {msg}", flush=True)
-
-
-def load_script():
-    """解析脚本文件 → [事件列表, ...](每个元素是一次回复的 SSE 事件序列)。"""
-    replies = []
-    if SCRIPT_FILE and os.path.exists(SCRIPT_FILE):
-        with open(SCRIPT_FILE, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("text_file:"):
-                    path = line.split(":", 1)[1].strip()
-                    with open(path, encoding="utf-8") as tf:
-                        replies.append(_text_reply_events(tf.read()))
-                elif line.startswith("text:"):
-                    replies.append(_text_reply_events(line.split(":", 1)[1].lstrip()))
-                elif line.startswith("tool:"):
-                    body = line.split(":", 1)[1].lstrip()
-                    name, _, args = body.partition("|")
-                    replies.append(_tool_reply_events(name.strip(), args.strip()))
-                elif line.startswith("raw:"):
-                    replies.append([("data", line.split(":", 1)[1].lstrip())])
-                else:
-                    replies.append(_text_reply_events(line))
-    return replies
-
-
-class ScriptState:
-    def __init__(self, replies):
-        self.replies = replies
-        self.idx = 0
-        self.lock = threading.Lock()
-
-    def next(self, last_user_text):
-        with self.lock:
-            if self.idx < len(self.replies):
-                ev = self.replies[self.idx]
-                self.idx += 1
-                return ev
-        return _text_reply_events(f"MOCK REPLY: {last_user_text}")
 
 
 def _sse(event, data):
@@ -184,10 +149,50 @@ def _tool_reply_events(name, args_json):
     return events
 
 
-STATE = ScriptState(load_script())
+class ScriptState:
+    """按序消费脚本;耗尽后回退到回显模式(引擎的多轮调用会超额消费)。"""
+
+    def __init__(self, replies):
+        self.replies = replies
+        self.idx = 0
+        self.lock = threading.Lock()
+
+    def next(self, last_user_text):
+        with self.lock:
+            if self.idx < len(self.replies):
+                ev = self.replies[self.idx]
+                self.idx += 1
+                return ev
+        return _text_reply_events(f"MOCK REPLY: {last_user_text}")
 
 
-class Handler(BaseHTTPRequestHandler):
+def load_script(path):
+    """解析脚本文件 → [事件列表, ...](每个元素是一次回复的 SSE 事件序列)。"""
+    replies = []
+    if path and os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("text_file:"):
+                    fp = line.split(":", 1)[1].strip()
+                    with open(fp, encoding="utf-8") as tf:
+                        replies.append(_text_reply_events(tf.read()))
+                elif line.startswith("text:"):
+                    replies.append(_text_reply_events(line.split(":", 1)[1].lstrip()))
+                elif line.startswith("tool:"):
+                    body = line.split(":", 1)[1].lstrip()
+                    name, _, args = body.partition("|")
+                    replies.append(_tool_reply_events(name.strip(), args.strip()))
+                elif line.startswith("raw:"):
+                    replies.append([("data", line.split(":", 1)[1].lstrip())])
+                else:
+                    replies.append(_text_reply_events(line))
+    return replies
+
+
+class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):  # 安静模式
@@ -222,7 +227,7 @@ class Handler(BaseHTTPRequestHandler):
         last_user = last_user.strip().splitlines()[0][:120] if last_user.strip() else "(empty)"
         log(f"request: model={req.get('model')} last_user={last_user!r}")
 
-        events = STATE.next(last_user)
+        events = self.server.state.next(last_user)
         # 可选人工延迟(秒):给「回合中断」等时序敏感的测试留出窗口。
         # 客户端可能已中断(管道断开),写响应全程吞 BrokenPipe/ConnectionReset。
         try:
@@ -231,7 +236,7 @@ class Handler(BaseHTTPRequestHandler):
             log(f"client disconnected early: {last_user!r}")
 
     def _send_stream(self, events):
-        delay = float(os.environ.get("MOCK_ANTHROPIC_DELAY", "0") or 0)
+        delay = self.server.delay
         if delay > 0:
             import time as _t
 
@@ -262,14 +267,65 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def serve():
-    srv = ThreadingHTTPServer((HOST, PORT), Handler)
-    log(f"listening on http://{HOST}:{PORT} (script={SCRIPT_FILE or '(echo mode)'})")
-    srv.serve_forever()
+class _Server(ThreadingHTTPServer):
+    """携带业务状态的 httpd 实例:`_Handler` 经 `self.server` 读取。"""
+
+    daemon_threads = True
+
+    def __init__(self, addr, delay: float, state: ScriptState):
+        # _Handler 在响应阶段读 self.server.delay / self.server.state,
+        # 两者必须挂在 httpd 实例上(而非外层包装对象)。
+        self.delay = delay
+        self.state = state
+        super().__init__(addr, _Handler)
+
+
+class MockAnthropicServer:
+    """进程内 mock Anthropic 服务:构造即监听,`stop()` 收尾。
+
+    - `port=0`:内核分配空闲端口(替代「先占后放」的 _free_port,消除
+      端口被并发抢占的竞态);真实端口经 `port` 属性读取。
+    - `delay`:每个响应的人为延迟秒数(确定性 busy 窗口)。
+    - `script_file`:脚本文件路径;空串 = 回显模式。
+    - 服务线程是守护线程,进程退出自动回收;显式 `stop()` 立即收尾。
+    """
+
+    def __init__(self, port: int = 0, delay: float = 0.0, script_file: str = ""):
+        self.state = ScriptState(load_script(script_file))
+        self._httpd = _Server(("127.0.0.1", port), delay, self.state)
+        self._thread = threading.Thread(
+            target=self._httpd.serve_forever, name="mock-anthropic", daemon=True
+        )
+        self._thread.start()
+        log(f"listening on http://127.0.0.1:{self.port} (script={script_file or '(echo mode)'})")
+
+    @property
+    def port(self) -> int:
+        return self._httpd.server_address[1]
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    def stop(self) -> None:
+        self._httpd.shutdown()
+        self._httpd.server_close()
+
+
+def serve_standalone():
+    """独立运行入口:读环境变量,行为与历史上的子进程模式一致。"""
+    server = MockAnthropicServer(
+        port=int(os.environ.get("MOCK_ANTHROPIC_PORT", "18431")),
+        delay=float(os.environ.get("MOCK_ANTHROPIC_DELAY", "0") or 0),
+        script_file=os.environ.get("MOCK_ANTHROPIC_SCRIPT", ""),
+    )
+    try:
+        # 独立模式下阻塞到被 kill;serve_forever 已在守护线程,主线程挂起即可。
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        server.stop()
+        sys.exit(0)
 
 
 if __name__ == "__main__":
-    try:
-        serve()
-    except KeyboardInterrupt:
-        sys.exit(0)
+    serve_standalone()

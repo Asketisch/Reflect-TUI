@@ -5,120 +5,68 @@
 Anthropic 协议形态;内置 mock 还「瞬时完成」,离线无法确定性制造 busy
 窗口(见 `tests/COVERAGE.md` §6 的相关记录)。
 
-本模块起一个本地 `mock_anthropic_server.py`,让 TUI 真的走一遍:
+本模块在**测试进程内**起 `mock_anthropic_server.MockAnthropicServer`
+(守护线程 + 内核分配端口),让 TUI 真的走一遍:
 - 请求构造(URL / header / body);
 - SSE 事件分帧:`content_block_start` / `content_block_delta` /
   `content_block_stop` / `message_stop`;
 - `tool_use` 块与 `content_block_delta` 聚合。
 
-另外用 `MOCK_ANTHROPIC_DELAY` 人为拉长模型响应,制造**确定性 busy 窗口**,
-让「回合中断」这类需要时序的用例可复现。
+另外用 `delay` 人为拉长模型响应,制造**确定性 busy 窗口**,
+让「回合中断」这类需要时序的用例可复现。历史上这里是 python
+子进程 + 轮询探测,在 macos runner 上冷启动可卡死 30s 且无输出
+(CI #27/#28),故改为进程内:构造即监听,无启动等待。
 """
 
 from __future__ import annotations
 
 import json
-import os
-import socket
-import subprocess
-import sys
-import tempfile
 import time
 from pathlib import Path
 
 import pytest
 
+from mock_anthropic_server import MockAnthropicServer
 from tui_pty import Sandbox, TuiSession
 
 HERE = Path(__file__).resolve().parent
-MOCK_SERVER = HERE / "mock_anthropic_server.py"
 
 # busy 用例需要的模型响应延迟(秒)。留出足够窗口让用例按下 Esc,
 # 同时不至于让整条测试链路拖太久。
 BUSY_DELAY_SECS = 6.0
 
 
-def _free_port() -> int:
-    """取一个空闲端口(避免与并行跑的其他实例撞端口)。"""
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+def _start_server(delay_secs: float) -> tuple[MockAnthropicServer, str]:
+    """起一个 mock Anthropic server,返回 (server, base_url)。
+
+    构造即完成 bind + listen(端口 0 = 内核分配),无需启动探测。
+    """
+    server = MockAnthropicServer(port=0, delay=delay_secs)
+    return server, server.base_url
 
 
-def _start_server(delay_secs: float) -> tuple[subprocess.Popen, str]:
-    """起一个 mock Anthropic server,返回 (进程, base_url)。"""
-    port = _free_port()
-    env = dict(os.environ)
-    env["MOCK_ANTHROPIC_PORT"] = str(port)
-    env["MOCK_ANTHROPIC_DELAY"] = str(delay_secs)
-    # stderr 落临时文件而非 DEVNULL:启动失败时能带着报错文本抛出,
-    # 否则 CI 上只能看到「超时」二字,无从定位。
-    stderr_file = tempfile.TemporaryFile()
-    proc = subprocess.Popen(
-        [sys.executable, str(MOCK_SERVER)],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=stderr_file,
-    )
-    base_url = f"http://127.0.0.1:{port}"
-    # 30s:CI runner 偶发冷启动极慢(macos 上实测 15s 不够),慢不算错,
-    # 起不来才算错。
-    deadline = time.time() + 30.0
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError(
-                "mock Anthropic server 启动即退出,"
-                f"stderr 尾部:{_stderr_tail(stderr_file)}"
-            )
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                stderr_file.close()
-                return proc, base_url
-        except OSError:
-            time.sleep(0.1)
-    proc.terminate()
-    raise RuntimeError(
-        f"mock Anthropic server 启动超时(30s),stderr 尾部:{_stderr_tail(stderr_file)}"
-    )
-
-
-def _stderr_tail(stderr_file: "tempfile.TemporaryFile[str]") -> str:
-    """读出 stderr 临时文件的尾部文本,供失败信息携带。"""
-    try:
-        stderr_file.seek(0)
-        return stderr_file.read().decode(errors="replace")[-400:]
-    except Exception:
-        return "<stderr 不可读>"
-    finally:
-        stderr_file.close()
-
-
-def _stop_server(proc: subprocess.Popen) -> None:
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
+def _stop_server(server: MockAnthropicServer) -> None:
+    server.stop()
 
 
 @pytest.fixture(scope="session")
 def http_mock() -> str:
     """无延迟的 mock Anthropic server(会话级,全程复用)。"""
-    proc, base_url = _start_server(0.0)
+    server, base_url = _start_server(0.0)
     try:
         yield base_url
     finally:
-        _stop_server(proc)
+        _stop_server(server)
 
 
 @pytest.fixture(scope="session")
 def http_mock_slow() -> str:
     """带延迟的 mock Anthropic server:制造确定性 busy 窗口。"""
-    proc, base_url = _start_server(BUSY_DELAY_SECS)
+    server, base_url = _start_server(BUSY_DELAY_SECS)
     try:
         yield base_url
     finally:
-        _stop_server(proc)
+        _stop_server(server)
 
 
 def _write_http_config(sandbox: Sandbox, base_url: str) -> None:
@@ -200,6 +148,8 @@ def test_resume_across_date_buckets_over_http(http_tui, sandbox) -> None:
         s.type_text("OLD_SESSION_PROBE")
         s.key("enter")
         s.wait_text("MOCK REPLY", timeout=40)
+        # 会话落盘在回合提交时;收尾后再退出,确保文件完整。
+        s.wait_idle(timeout=30)
 
     # 会话文件应已落盘。
     files = sandbox.session_files()
@@ -232,7 +182,7 @@ def test_esc_interrupt_during_deterministic_busy_window(http_tui, sandbox) -> No
     - 连按 3 次 Esc,提示**只出现一次**(去抖生效,见 tui/mod.rs 的
       `interrupt_requested` 标记)。
     """
-    proc, base_url = _start_server(BUSY_DELAY_SECS)
+    server, base_url = _start_server(BUSY_DELAY_SECS)
     try:
         _write_http_config(sandbox, base_url)
         with http_tui() as s:
@@ -255,4 +205,4 @@ def test_esc_interrupt_during_deterministic_busy_window(http_tui, sandbox) -> No
             )
             assert not s.has_panic()
     finally:
-        _stop_server(proc)
+        _stop_server(server)
