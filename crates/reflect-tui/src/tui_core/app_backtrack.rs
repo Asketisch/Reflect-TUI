@@ -545,7 +545,9 @@ pub(crate) fn backtrack_fork_before_turn_id(
         }
     }
 
-    bail!("the selected prompt was not found in the persisted thread")
+    Err(color_eyre::eyre::eyre!(
+        "the selected prompt was not found in the persisted thread"
+    ))
 }
 
 /// 返回一个回合是否是带有重复 prompt 输入的重构内联 review 子回合。
