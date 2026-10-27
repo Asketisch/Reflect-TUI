@@ -60,7 +60,7 @@ regex-lite = "0.1"
 url = "2"
 urlencoding = "2"
 dirs = "5"
-derive_more = { version = "0.99", features = ["is_variant"] }
+derive_more = { version = "2.1", features = ["is_variant"] }
 two-face = "0.5"
 unicode-segmentation = "1"
 itertools = "0.13"
