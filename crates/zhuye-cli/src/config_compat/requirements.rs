@@ -131,6 +131,7 @@ pub struct ConfigRequirements {
     pub mcp_servers: Option<Sourced<std::collections::BTreeMap<String, McpServerRequirement>>>,
     pub hooks: Option<Sourced<ManagedHooksRequirementsToml>>,
     pub guardian_policy_config_source: String,
+    pub windows_sandbox_mode: WindowsSandboxModeRequirement,
     pub managed_hooks: Option<String>,
 }
 
@@ -305,4 +306,22 @@ pub struct McpServerIdentity {
 #[derive(Debug, Clone, Default)]
 pub struct McpServerRequirement {
     pub allowed: Option<bool>,
+}
+
+/// Windows 沙箱模式的受管约束(允许值 + 来源)。
+///
+/// 受管需求层移植期存根:`can_set` 恒允许,`source` 恒 `None`。
+#[derive(Debug, Clone, Default)]
+pub struct WindowsSandboxModeRequirement {
+    pub allowed: Option<crate::config_compat::types::WindowsSandboxModeToml>,
+    pub source: Option<RequirementSource>,
+}
+
+impl WindowsSandboxModeRequirement {
+    pub fn can_set(
+        &self,
+        _mode: &Option<crate::config_compat::types::WindowsSandboxModeToml>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 }

@@ -366,18 +366,23 @@ impl ChatWidget {
                         return;
                     };
 
-                    if let Err(err) = self
+                    if !self
                         .config
                         .permissions
                         .approval_policy
                         .can_set(&preset.approval)
                     {
-                        self.add_error_message(err.to_string());
+                        // 受管需求层为存根时恒允许;未来收紧后此处
+                        // 提示用户当前策略不可用。
+                        self.add_error_message(
+                            "The current approval policy is managed and cannot be changed."
+                                .to_string(),
+                        );
                         return;
                     }
 
                     self.session_telemetry.counter(
-                        "reflect.windows_sandbox.setup_elevated_sandbox_command",
+                        "zhuye.windows_sandbox.setup_elevated_sandbox_command",
                         /*inc*/ 1,
                         &[],
                     );

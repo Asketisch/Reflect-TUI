@@ -22,11 +22,11 @@ const MAX_IPC_FRAME_BYTES: usize = 256 * 1024 * 1024;
 #[cfg(any(unix, windows))]
 const TUI_SOURCE_CLIENT_ID: &str = "zhuye-cli";
 #[cfg(any(unix, windows))]
-const OPEN_IDE_HINT: &str = "Open this project in your IDE with the Reflect extension active.";
+const OPEN_IDE_HINT: &str = "Open this project in your IDE with the ZhuYe extension active.";
 #[cfg(any(unix, windows))]
 const IDE_DID_NOT_PROVIDE_CONTEXT_HINT: &str = "The IDE extension did not provide context.";
 #[cfg(any(unix, windows))]
-const KEEP_TRYING_HINT: &str = "Reflect will keep trying on future messages.";
+const KEEP_TRYING_HINT: &str = "ZhuYe-CLI will keep trying on future messages.";
 
 #[derive(Debug, Error)]
 pub(crate) enum IdeContextError {
@@ -250,9 +250,7 @@ fn fetch_ide_context_from_unix_socket_paths(
     fetch_ide_context_from_stream(&mut stream, workspace_root, deadline)
 }
 
-#[cfg(unix)]
 #[cfg(windows)]
-
 fn connect_stream(
     socket_path: PathBuf,
     deadline: Instant,

@@ -87,6 +87,8 @@ pub mod ui_consts;
 pub mod update_action;
 pub mod version;
 pub mod width;
+#[cfg(target_os = "windows")]
+pub mod windows_sandbox;
 pub mod workspace_command;
 pub mod workspace_messages;
 pub mod wrapping;

@@ -5519,6 +5519,7 @@ dependencies = [
  "uuid",
  "vt100",
  "webbrowser",
+ "windows-sys 0.61.2",
  "zhuye-agent-def",
  "zhuye-ast",
  "zhuye-compact",

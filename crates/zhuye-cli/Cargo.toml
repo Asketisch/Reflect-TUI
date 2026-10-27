@@ -167,3 +167,15 @@ pretty_assertions = "1"
 # Upstream `test_backend.rs` (VT100Backend) drives VT100 emulation for snapshot
 # tests of `custom_terminal` / `insert_history`. Required by the vendored tests.
 vt100 = "0.15"
+
+# IDE 上下文命名管道客户端(ide_context/windows_pipe.rs)专用。
+# 特征面与该文件头部的 use 一一对应,新增 import 时同步补特征。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }

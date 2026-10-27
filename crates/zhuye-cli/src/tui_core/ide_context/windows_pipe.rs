@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::ptr;
 use std::time::Instant;
 
-use windows_sys::Win32::Foundation::BOOL;
 use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::Foundation::ERROR_IO_PENDING;
 use windows_sys::Win32::Foundation::ERROR_NOT_FOUND;
@@ -42,10 +41,11 @@ use windows_sys::Win32::System::Threading::OpenProcess;
 use windows_sys::Win32::System::Threading::OpenProcessToken;
 use windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
 use windows_sys::Win32::System::Threading::WaitForSingleObject;
+use windows_sys::core::BOOL;
 
 const TRUE: BOOL = 1;
 const FALSE: BOOL = 0;
-const NULL_HANDLE: HANDLE = 0;
+const NULL_HANDLE: HANDLE = std::ptr::null_mut();
 
 pub(super) struct WindowsPipeStream {
     handle: OwnedHandle,
@@ -142,7 +142,7 @@ struct OverlappedOperation {
 impl OverlappedOperation {
     fn new() -> io::Result<Self> {
         let event = unsafe { CreateEventW(ptr::null(), TRUE, FALSE, ptr::null()) };
-        if event == 0 {
+        if event.is_null() {
             return Err(io::Error::last_os_error());
         }
 
@@ -230,7 +230,7 @@ impl OwnedHandle {
 
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
-        if self.0 != 0 && self.0 != INVALID_HANDLE_VALUE {
+        if !self.0.is_null() && self.0 != INVALID_HANDLE_VALUE {
             unsafe {
                 CloseHandle(self.0);
             }
@@ -243,7 +243,7 @@ struct TokenUserBuffer {
 }
 
 impl TokenUserBuffer {
-    fn sid(&self) -> io::Result<windows_sys::Win32::Foundation::PSID> {
+    fn sid(&self) -> io::Result<windows_sys::Win32::Security::PSID> {
         if self.buffer.len() < std::mem::size_of::<TOKEN_USER>() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -269,7 +269,7 @@ fn validate_pipe_server_owner(pipe_handle: HANDLE) -> io::Result<()> {
 
     let server_process =
         unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, server_process_id) };
-    if server_process == 0 {
+    if server_process.is_null() {
         return Err(io::Error::last_os_error());
     }
     let server_process = OwnedHandle(server_process);
@@ -289,7 +289,7 @@ fn validate_pipe_server_owner(pipe_handle: HANDLE) -> io::Result<()> {
 }
 
 fn open_process_token(process: HANDLE) -> io::Result<OwnedHandle> {
-    let mut token = 0;
+    let mut token: HANDLE = std::ptr::null_mut();
     let result = unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) };
     if result == 0 {
         return Err(io::Error::last_os_error());

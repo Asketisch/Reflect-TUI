@@ -134,6 +134,9 @@ use crate::tui_core::bottom_pane::TerminalTitleSetupView;
 use crate::tui_core::diff_model::FileChange;
 use crate::tui_core::git_action_directives::parse_assistant_markdown;
 use crate::tui_core::legacy_core::config::Config;
+// Windows 沙箱等级:仅 windows 门控代码消费,经 `use super::*` 传递给子模块。
+#[cfg(target_os = "windows")]
+pub(crate) use crate::protocol_compat::config_types::WindowsSandboxLevel;
 use crate::tui_core::legacy_core::config::PermissionProfileSnapshot;
 use crate::tui_core::mention_codec::LinkedMention;
 use crate::tui_core::mention_codec::encode_history_mentions;
@@ -870,7 +873,7 @@ impl ChatWidget {
         let snapshot = self.feedback.snapshot();
         #[cfg(target_os = "windows")]
         let include_windows_sandbox_log =
-            crate::tui_core::windows_sandbox::current_log_file_path_for_reflect_home(
+            crate::tui_core::windows_sandbox::current_log_file_path_for_zhuye_home(
                 &self.config.zhuye_home,
             )
             .is_file();

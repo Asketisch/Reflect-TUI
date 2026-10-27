@@ -157,7 +157,9 @@ impl ChatWidget {
             accept_actions.extend(Self::approval_preset_actions(
                 approval,
                 permission_profile,
-                active_permission_profile,
+                active_permission_profile
+                    .map(ActivePermissionProfile::new)
+                    .unwrap_or_default(),
                 mode_label.to_string(),
                 ApprovalsReviewer::User,
             ));
@@ -177,7 +179,9 @@ impl ChatWidget {
             accept_and_remember_actions.extend(Self::approval_preset_actions(
                 approval,
                 permission_profile,
-                active_permission_profile,
+                active_permission_profile
+                    .map(ActivePermissionProfile::new)
+                    .unwrap_or_default(),
                 mode_label.to_string(),
                 ApprovalsReviewer::User,
             ));
@@ -225,10 +229,8 @@ impl ChatWidget {
         preset: ApprovalPreset,
         profile_selection: Option<PermissionProfileSelection>,
     ) {
-        use ratatui_macros::line;
-
         self.session_telemetry.counter(
-            "reflect.windows_sandbox.elevated_prompt_shown",
+            "zhuye.windows_sandbox.elevated_prompt_shown",
             /*inc*/ 1,
             &[],
         );
@@ -241,11 +243,11 @@ impl ChatWidget {
         header.push(*Box::new(
             Paragraph::new(if allow_unelevated {
                 vec![
-                    line!["Set up the Reflect agent sandbox to protect your files and control network access."],
+                    Line::from("Set up the ZhuYe agent sandbox to protect your files and control network access."),
                 ]
             } else {
                 vec![
-                    line!["Your organization requires the default Reflect agent sandbox to continue. Set it up to protect your files and control network access."],
+                    Line::from("Your organization requires the default ZhuYe agent sandbox to continue. Set it up to protect your files and control network access."),
                 ]
             })
             .wrap(Wrap { trim: false }),
@@ -263,7 +265,7 @@ impl ChatWidget {
             description: None,
             actions: vec![Box::new(move |tx| {
                 accept_otel.counter(
-                    "reflect.windows_sandbox.elevated_prompt_accept",
+                    "zhuye.windows_sandbox.elevated_prompt_accept",
                     /*inc*/ 1,
                     &[],
                 );
@@ -281,7 +283,7 @@ impl ChatWidget {
                 description: None,
                 actions: vec![Box::new(move |tx| {
                     legacy_otel.counter(
-                        "reflect.windows_sandbox.elevated_prompt_use_legacy",
+                        "zhuye.windows_sandbox.elevated_prompt_use_legacy",
                         /*inc*/ 1,
                         &[],
                     );
@@ -299,7 +301,7 @@ impl ChatWidget {
             description: None,
             actions: vec![Box::new(move |tx| {
                 quit_otel.counter(
-                    "reflect.windows_sandbox.elevated_prompt_quit",
+                    "zhuye.windows_sandbox.elevated_prompt_quit",
                     /*inc*/ 1,
                     &[],
                 );
@@ -340,25 +342,23 @@ impl ChatWidget {
         preset: ApprovalPreset,
         profile_selection: Option<PermissionProfileSelection>,
     ) {
-        use ratatui_macros::line;
-
         let allow_unelevated =
             self.windows_sandbox_mode_allowed(WindowsSandboxModeToml::Unelevated);
         let setup_choice_is_required =
             !allow_unelevated || self.elevated_windows_sandbox_setup_required();
         let mut lines = Vec::new();
-        lines.push(line![
-            "Couldn't set up your sandbox with Administrator permissions".bold()
-        ]);
-        lines.push(line![""]);
+        lines.push(Line::from(
+            "Couldn't set up your sandbox with Administrator permissions".bold(),
+        ));
+        lines.push(Line::from(""));
         if allow_unelevated {
-            lines.push(line![
-                "You can still use Reflect in a non-admin sandbox. It carries greater risk if prompt injected."
-            ]);
+            lines.push(Line::from(
+                "You can still use ZhuYe-CLI in a non-admin sandbox. It carries greater risk if prompt injected.",
+            ));
         } else {
-            lines.push(line![
-                "Your organization requires the default sandbox before Reflect can continue."
-            ]);
+            lines.push(Line::from(
+                "Your organization requires the default sandbox before ZhuYe-CLI can continue.",
+            ));
         }
 
         let mut header = ColumnRenderable::new();
@@ -379,7 +379,7 @@ impl ChatWidget {
                 let preset = elevated_preset;
                 move |tx| {
                     otel.counter(
-                        "reflect.windows_sandbox.fallback_retry_elevated",
+                        "zhuye.windows_sandbox.fallback_retry_elevated",
                         /*inc*/ 1,
                         &[],
                     );
@@ -394,14 +394,14 @@ impl ChatWidget {
         }];
         if allow_unelevated {
             items.push(SelectionItem {
-                name: "Use Reflect with non-admin sandbox".to_string(),
+                name: "Use ZhuYe-CLI with non-admin sandbox".to_string(),
                 description: None,
                 actions: vec![Box::new({
                     let otel = self.session_telemetry.clone();
                     let preset = legacy_preset;
                     move |tx| {
                         otel.counter(
-                            "reflect.windows_sandbox.fallback_use_legacy",
+                            "zhuye.windows_sandbox.fallback_use_legacy",
                             /*inc*/ 1,
                             &[],
                         );
@@ -420,7 +420,7 @@ impl ChatWidget {
             description: None,
             actions: vec![Box::new(move |tx| {
                 quit_otel.counter(
-                    "reflect.windows_sandbox.fallback_prompt_quit",
+                    "zhuye.windows_sandbox.fallback_prompt_quit",
                     /*inc*/ 1,
                     &[],
                 );

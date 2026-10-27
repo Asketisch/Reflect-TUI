@@ -15,6 +15,8 @@ pub enum Feature {
     Reflect,
     Apps,
     RemotePlugin,
+    WindowsSandbox,
+    WindowsSandboxElevated,
     Collab,
 }
 #[derive(Debug, Clone, Default)]
@@ -56,6 +58,8 @@ impl Feature {
             Feature::Apps => "apps",
             Feature::RemotePlugin => "remote_plugin",
             Feature::Collab => "collab",
+            Feature::WindowsSandbox => "windows_sandbox",
+            Feature::WindowsSandboxElevated => "windows_sandbox_elevated",
         }
     }
 }
