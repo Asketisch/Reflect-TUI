@@ -25,6 +25,14 @@
 
 set -u
 
+# Windows 无 pty(pty 模块仅 Unix),能力覆盖层整体跳过,保持与
+# 「缺依赖自动 SKIP,不算失败」的套件哲学一致。移植到 Windows pty
+# 方案后再移除此守卫。
+if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]]; then
+    echo "  [SKIP] Windows 无 pty;能力覆盖层跳过(移植期)"
+    exit 0
+fi
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/../lib.sh"
 
