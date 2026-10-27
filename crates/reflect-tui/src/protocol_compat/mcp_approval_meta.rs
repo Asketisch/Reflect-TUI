@@ -1,10 +1,10 @@
 //! 审批请求与随 MCP 工具调用一起持久化的审批元数据映射
 //! 之间共享的字符串键与哨兵值。
 
-pub const APPROVAL_KIND_KEY: &str = "reflect_approval_kind";
+pub const APPROVAL_KIND_KEY: &str = "zhuye_approval_kind";
 pub const APPROVAL_KIND_MCP_TOOL_CALL: &str = "mcp_tool_call";
 pub const APPROVAL_KIND_TOOL_SUGGESTION: &str = "tool_suggestion";
-pub const REQUEST_TYPE_KEY: &str = "reflect_request_type";
+pub const REQUEST_TYPE_KEY: &str = "zhuye_request_type";
 pub const REQUEST_TYPE_APPROVAL_REQUEST: &str = "approval_request";
 pub const APPROVALS_REVIEWER_KEY: &str = "approvals_reviewer";
 pub const PERSIST_KEY: &str = "persist";

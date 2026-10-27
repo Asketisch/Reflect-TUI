@@ -2,8 +2,8 @@
 # tests/lib.sh —— 测试套件公共助手。
 #
 # 所有 tests/ 下的脚本 source 本文件,获得:
-#   - 隔离环境:mktemp HOME + 独立 cwd,不污染真实 ~/.reflect;
-#   - mock provider 环境(REFLECT_MODEL=mock/mock-1,离线、免 API key);
+#   - 隔离环境:mktemp HOME + 独立 cwd,不污染真实 ~/.zhuye;
+#   - mock provider 环境(ZHUYE_MODEL=mock/mock-1,离线、免 API key);
 #   - 断言助手(assert_contains / assert_not_contains / assert_matches);
 #   - 便携超时(macOS 无 timeout/gtimeout,用后台 pid + kill 模拟);
 #   - 用例统计与失败汇总(tcase / tfinish 汇总退出码)。
@@ -184,16 +184,16 @@ run_with_timeout() {
 # ── 隔离环境 ──────────────────────────────────────────────────────────────
 # make_isolated_env:创建并进入隔离环境,设置:
 #   ISO_HOME / ISO_CWD(导出 HOME、cd 进去)
-#   预写 ~/.reflect/config.toml —— 空的最小配置。
+#   预写 ~/.zhuye/config.toml —— 空的最小配置。
 #   说明:reflect_config::load_default() 对缺文件是「回落默认配置」而非报错,
 #   但显式写入可让「配置文件存在」这一前提在用例里显式成立,避免依赖
 #   宿主机残留配置(宿主机若有 provider 配置,会改变启动行为)。
 make_isolated_env() {
     ISO_HOME="$(mktemp -d "${TMPDIR:-/tmp}/reflect-tui-test-home.XXXXXX")"
     ISO_CWD="$(mktemp -d "${TMPDIR:-/tmp}/reflect-tui-test-cwd.XXXXXX")"
-    mkdir -p "$ISO_HOME/.reflect"
-    cat > "$ISO_HOME/.reflect/config.toml" <<'EOF'
-# 测试用最小配置:空配置(不指定 provider,靠 REFLECT_MODEL 环境变量)。
+    mkdir -p "$ISO_HOME/.zhuye"
+    cat > "$ISO_HOME/.zhuye/config.toml" <<'EOF'
+# 测试用最小配置:空配置(不指定 provider,靠 ZHUYE_MODEL 环境变量)。
 EOF
     export HOME="$ISO_HOME"
     cd "$ISO_CWD" || exit 1
@@ -214,9 +214,9 @@ cleanup_isolated_env() {
 mock_env() {
     local script="${1:-}"
     if [ -n "$script" ]; then
-        echo "env" "REFLECT_MODEL=mock/mock-1" "REFLECT_MOCK_SCRIPT=$script"
+        echo "env" "ZHUYE_MODEL=mock/mock-1" "ZHUYE_MOCK_SCRIPT=$script"
     else
-        echo "env" "REFLECT_MODEL=mock/mock-1"
+        echo "env" "ZHUYE_MODEL=mock/mock-1"
     fi
 }
 

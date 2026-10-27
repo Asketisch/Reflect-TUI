@@ -1,6 +1,6 @@
 //! `reflect-tui discussion run ...` —— 多 agent 讨论(离线/在线)。
 //!
-//! v1.x 接线:submodule 的 `reflect_discussion::cli::run` 是**可复用的库
+//! v1.x 接线:submodule 的 `zhuye_discussion::cli::run` 是**可复用的库
 //! 入口**(CLI 逻辑在库 crate 里,不在 `reflect-cli` 那个二进制里)——
 //! 读 discussion.toml、起 orchestrator、跑多 agent 讨论、落 transcript。
 //! 此前 TUI 完全够不着这条链路(只有 `reflect-cli` 的 `reflect discussion`
@@ -15,6 +15,6 @@ use std::path::PathBuf;
 /// 未配置 provider 时共享 API 降级跑 `run_noop`(状态机跑通、transcript
 /// 为空)—— 离线 / CI 友好,不报错。
 pub async fn run(config: PathBuf, output: Option<PathBuf>) -> anyhow::Result<()> {
-    reflect_discussion::cli::run(&config, output.as_deref()).await?;
+    zhuye_discussion::cli::run(&config, output.as_deref()).await?;
     Ok(())
 }

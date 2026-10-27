@@ -19,10 +19,10 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 async fn widget_forced_chatgpt() -> (AuthModeWidget, TempDir) {
-    let reflect_home = TempDir::new().unwrap();
-    let reflect_home_path = reflect_home.path().to_path_buf();
+    let zhuye_home = TempDir::new().unwrap();
+    let zhuye_home_path = zhuye_home.path().to_path_buf();
     let config = ConfigBuilder::default()
-        .reflect_home(reflect_home_path.clone())
+        .zhuye_home(zhuye_home_path.clone())
         .build()
         .await
         .unwrap();
@@ -33,7 +33,7 @@ async fn widget_forced_chatgpt() -> (AuthModeWidget, TempDir) {
         loader_overrides: Default::default(),
         strict_config: false,
         cloud_config_bundle: cloud_config_bundle_loader_for_storage(
-            reflect_home_path.clone(),
+            zhuye_home_path.clone(),
             /*enable_reflect_api_key_env*/ false,
             AuthCredentialsStoreMode::File,
             AuthKeyringBackendKind::default(),
@@ -71,7 +71,7 @@ async fn widget_forced_chatgpt() -> (AuthModeWidget, TempDir) {
         animations_enabled: true,
         animations_suppressed: std::cell::Cell::new(false),
     };
-    (widget, reflect_home)
+    (widget, zhuye_home)
 }
 
 #[tokio::test]

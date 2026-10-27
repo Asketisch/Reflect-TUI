@@ -71,7 +71,7 @@ impl ChatWidget {
 
         match crate::tui_core::ide_context::fetch_ide_context(
             self.config.cwd.as_path(),
-            &self.config.reflect_home,
+            &self.config.zhuye_home,
         ) {
             Ok(context) => {
                 self.ide_context.mark_available();
@@ -100,7 +100,7 @@ impl ChatWidget {
 
         match crate::tui_core::ide_context::fetch_ide_context(
             self.config.cwd.as_path(),
-            &self.config.reflect_home,
+            &self.config.zhuye_home,
         ) {
             Ok(context) => {
                 self.ide_context.mark_available();

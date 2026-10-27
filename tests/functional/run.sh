@@ -21,7 +21,7 @@
 # 前置:release 二进制(入口自动补建)、Python 3 + pytest + pyte。
 # 缺依赖的批次自动 SKIP,不算失败。
 #
-# 全程离线(REFLECT_MODEL=mock/mock-1)+ 隔离 HOME。退出码 0 = 全部通过。
+# 全程离线(ZHUYE_MODEL=mock/mock-1)+ 隔离 HOME。退出码 0 = 全部通过。
 
 set -u
 

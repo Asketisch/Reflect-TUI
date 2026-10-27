@@ -10,7 +10,7 @@ impl ChatWidget {
 
     pub(super) fn new_with_op_target(
         common: ChatWidgetInit,
-        reflect_op_target: ReflectOpTarget,
+        zhuye_op_target: ReflectOpTarget,
     ) -> Self {
         let ChatWidgetInit {
             config,
@@ -96,7 +96,7 @@ impl ChatWidget {
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
             frame_requester: frame_requester.clone(),
-            reflect_op_target,
+            zhuye_op_target,
             bottom_pane: BottomPane::new(BottomPaneParams {
                 frame_requester,
                 app_event_tx,
@@ -140,8 +140,8 @@ impl ChatWidget {
             available_rate_limit_reset_credits: None,
             next_rate_limit_reset_request_id: 0,
             plan_type: initial_plan_type,
-            reflect_rate_limit_reached_type: None,
-            reflect_spend_control_reached: None,
+            zhuye_rate_limit_reached_type: None,
+            zhuye_spend_control_reached: None,
             rate_limit_warnings: RateLimitWarningState::default(),
             warning_display_state: WarningDisplayState::default(),
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),

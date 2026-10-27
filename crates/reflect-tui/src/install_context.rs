@@ -102,9 +102,9 @@ fn install_method_from_exe(exe_path: &Path) -> InstallMethod {
 }
 
 fn standalone_install_method(exe_path: &Path) -> Option<InstallMethod> {
-    let reflect_home = find_reflect_home()?;
+    let zhuye_home = find_reflect_home()?;
     let release_dir = exe_path.parent()?;
-    let releases_root = reflect_home
+    let releases_root = zhuye_home
         .join("packages")
         .join(STANDALONE_PACKAGES_DIRNAME)
         .join(RELEASES_DIRNAME);

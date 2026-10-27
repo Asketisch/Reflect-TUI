@@ -1,6 +1,6 @@
 //! `/traces` overlay — 显示最近 trace span 事件（简化实现）。
 //!
-//! 简化为：扫描 `~/.reflect/traces/log/` 最新 JSONL 文件，提取 span 标题，
+//! 简化为：扫描 `~/.zhuye/traces/log/` 最新 JSONL 文件，提取 span 标题，
 //! 用 `TranscriptPager` 渲染。
 
 use ratatui::style::{Color, Style};
@@ -103,7 +103,7 @@ pub fn load_recent_traces() -> Vec<Line<'static>> {
 fn traces_dir() -> PathBuf {
     dirs::home_dir()
         .map(|h| h.join(".reflect").join("traces").join("log"))
-        .unwrap_or_else(|| PathBuf::from("/tmp/reflect_traces"))
+        .unwrap_or_else(|| PathBuf::from("/tmp/zhuye_traces"))
 }
 
 #[cfg(test)]

@@ -56,7 +56,7 @@ impl McpServerView {
 pub enum UiEventKind {
     /// 回合开始。携带 `turn_id`,供 fork overlay 建立 user prompt → turn 映射。
     TurnStarted {
-        turn_id: reflect_protocol::TurnId,
+        turn_id: zhuye_protocol::TurnId,
     },
     TurnCompleted,
     AgentDelta(String),
@@ -85,11 +85,11 @@ pub enum UiEventKind {
     PlanReady {
         plan_id: String,
         markdown: String,
-        /// plan markdown 落盘路径（`<workspace>/.reflect/plan/<plan_id>.md`）；
+        /// plan markdown 落盘路径（`<workspace>/.zhuye/plan/<plan_id>.md`）；
         /// core 写盘失败时为 `None`。
         path: Option<std::path::PathBuf>,
     },
-    /// v1.x Plan mode 草稿预览:agent 写盘到 `.reflect/plan/<draft_id>.md`
+    /// v1.x Plan mode 草稿预览:agent 写盘到 `.zhuye/plan/<draft_id>.md`
     /// 后即时推到对话流。**不**触发 approval modal —— 用户做 1/2/3 决策
     /// 仍走 `PlanReady`。多次写盘触发多次事件,可覆盖式刷新。
     PlanDraftUpdated {
@@ -116,8 +116,8 @@ pub enum UiEventKind {
     },
     /// v1.x：`PermissionMode` 切换通知（`/mode`、Shift+Tab、plan 批准后）。
     PermissionModeChanged {
-        from: reflect_protocol::PermissionMode,
-        to: reflect_protocol::PermissionMode,
+        from: zhuye_protocol::PermissionMode,
+        to: zhuye_protocol::PermissionMode,
     },
     Notice(String),
     /// v1.4 子代理可观测(查询通道):引擎子代理状态中心的快照投影,
@@ -140,12 +140,12 @@ pub enum UiEventKind {
         delta: String,
     },
     /// v1.x:配置文件热重载 —— 新的完整配置 + 本轮变更的段名。
-    /// 消费方据此刷新 `state.reflect_config`(否则 `/model` 之类的命令
+    /// 消费方据此刷新 `state.zhuye_config`(否则 `/model` 之类的命令
     /// 仍按旧配置解析)并向对话流推一条变更提示。
     ConfigReloaded {
         // Box:`ReflectConfig` 是个大结构,直接内联会让本枚举的各变体
         // 大小差异悬殊(clippy::large_enum_variant)。
-        config: Box<reflect_config::ReflectConfig>,
+        config: Box<zhuye_config::ReflectConfig>,
         sections_changed: Vec<String>,
     },
     /// 工具/Hook 审批请求。`kind` 保留原始 `ApprovalKind`，
@@ -153,14 +153,14 @@ pub enum UiEventKind {
     ApprovalNeeded {
         id: String,
         summary: String,
-        kind: reflect_protocol::ApprovalKind,
+        kind: zhuye_protocol::ApprovalKind,
     },
     /// v1.x:LLM 主动询问的结构化问题(`ask_user_question` 工具)。调用方
     /// 据此打开问题面板;用户作答/取消后回送
     /// `Op::AskUserQuestionResponse { id, answers }` 解锁阻塞中的 agent。
     QuestionAsked {
         request_id: String,
-        questions: Vec<reflect_protocol::Question>,
+        questions: Vec<zhuye_protocol::Question>,
     },
     /// v1.x:LLM 自由文本询问(`ask_user` 工具)。composer 的下一条提交被
     /// 捕获为回答(`Op::AskUserInputResponse { id, text }`);Esc 回送空文本。
@@ -593,7 +593,7 @@ pub fn apply_event(state: &mut UiState, event: UiEvent) -> Vec<Line<'static>> {
         } => {
             // 热重载后界面持有的 config 必须一起换掉 —— 否则 `/model` 等
             // 依赖配置的路径仍按旧值解析(「已重载」只是提示,行为没变)。
-            state.reflect_config = Some(*config);
+            state.zhuye_config = Some(*config);
             let changed = if sections_changed.is_empty() {
                 "(无)".to_string()
             } else {
@@ -973,7 +973,7 @@ pub fn flush_stream_lines<B: Backend + Write>(
 /// `args` 可能是任意 JSON,这里用 `truncate` 截断到 80 字符避免撑爆边框。
 fn approval_content_preview(pending: &PendingApproval) -> String {
     match &pending.kind {
-        reflect_protocol::ApprovalKind::Tool { tool_name, args } => {
+        zhuye_protocol::ApprovalKind::Tool { tool_name, args } => {
             let args_preview = truncate_json_preview(args, 80);
             if args_preview.is_empty() {
                 format!("Tool: {tool_name}")
@@ -981,11 +981,11 @@ fn approval_content_preview(pending: &PendingApproval) -> String {
                 format!("Tool: {tool_name}({args_preview})")
             }
         }
-        reflect_protocol::ApprovalKind::Hook {
+        zhuye_protocol::ApprovalKind::Hook {
             hook_name,
             decision_preview,
         } => format!("Hook: {hook_name}: {decision_preview}"),
-        reflect_protocol::ApprovalKind::Plan { summary, .. } => {
+        zhuye_protocol::ApprovalKind::Plan { summary, .. } => {
             format!("Plan: {summary}")
         }
     }
@@ -1050,7 +1050,7 @@ pub fn approval_block(pending: &PendingApproval) -> ratatui::widgets::Paragraph<
 /// 从工具参数里取 `old_string` / `new_string`(edit)或 `content`(write),
 /// 渲染成紧凑的 `+/-` 预览。取不到就返回空 —— 不编造内容。
 fn approval_diff_preview(pending: &PendingApproval) -> Vec<Line<'static>> {
-    let reflect_protocol::ApprovalKind::Tool { tool_name, args } = &pending.kind else {
+    let zhuye_protocol::ApprovalKind::Tool { tool_name, args } = &pending.kind else {
         return Vec::new();
     };
     let name = tool_name.to_ascii_lowercase();
@@ -1435,7 +1435,7 @@ mod tests {
         let pending = PendingApproval {
             id: "e1".into(),
             summary: "Edit: src/main.rs".into(),
-            kind: reflect_protocol::ApprovalKind::Tool {
+            kind: zhuye_protocol::ApprovalKind::Tool {
                 tool_name: "edit".into(),
                 args: serde_json::json!({
                     "path": "src/main.rs",
@@ -1466,7 +1466,7 @@ mod tests {
         let pending = PendingApproval {
             id: "e2".into(),
             summary: "Write: 说明.md".into(),
-            kind: reflect_protocol::ApprovalKind::Tool {
+            kind: zhuye_protocol::ApprovalKind::Tool {
                 tool_name: "write".into(),
                 args: serde_json::json!({
                     "path": "说明.md",
@@ -1494,7 +1494,7 @@ mod tests {
         let pending = PendingApproval {
             id: "r1".into(),
             summary: "Read: foo.txt".into(),
-            kind: reflect_protocol::ApprovalKind::Tool {
+            kind: zhuye_protocol::ApprovalKind::Tool {
                 tool_name: "read".into(),
                 args: serde_json::json!({ "path": "foo.txt" }),
             },
@@ -1508,7 +1508,7 @@ mod tests {
         let pending = PendingApproval {
             id: "test-456".to_string(),
             summary: "Read: file.txt".to_string(),
-            kind: reflect_protocol::ApprovalKind::Tool {
+            kind: zhuye_protocol::ApprovalKind::Tool {
                 tool_name: "read".to_string(),
                 args: serde_json::json!({ "path": "file.txt" }),
             },
@@ -1776,7 +1776,7 @@ mod tests {
         apply_event(
             &mut state,
             ev(UiEventKind::TurnStarted {
-                turn_id: reflect_protocol::TurnId::new(),
+                turn_id: zhuye_protocol::TurnId::new(),
             }),
         );
         assert!(

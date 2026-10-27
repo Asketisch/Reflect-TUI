@@ -10,7 +10,7 @@
 
 | | 能力覆盖层 `tests/functional/` | 实模型层 `tests/live/` |
 |---|---|---|
-| 模型 | mock(`REFLECT_MODEL=mock/mock-1`) | 真实模型(清单接口实时拉取) |
+| 模型 | mock(`ZHUYE_MODEL=mock/mock-1`) | 真实模型(清单接口实时拉取) |
 | 断言 | 字段级、可逐字 | **行为级**,不断言回答文本 |
 | 网络 | 全程离线 | 需要外网 + 免费额度 |
 | 门禁 | **CI 强制**(`run_all.sh functional`) | 可选(`run_all.sh live`),默认 SKIP |
@@ -99,7 +99,7 @@ dsh 车道 = 本仓用户自己的 `dsh-our-free-model` 实例(26 个模型,多�
 | L3 | 子代理派发 | 模型能派发 `call_explorer` 并拿到结果 |
 | L4 | Plan 模式 | 提 plan → `[3]` 修订 → **第二个 plan 浮层** → `[1]` 批准 → **真的写出文件**且含计划内容 |
 | L5 | 工具调用回合 | 模型调 `bash` → 审批条 → 批准 → 输出上屏 |
-| L6 | 会话落盘 | `~/.reflect/sessions/**.jsonl` 含 assistant 消息 + token 记录 |
+| L6 | 会话落盘 | `~/.zhuye/sessions/**.jsonl` 含 assistant 消息 + token 记录 |
 | L7 | 多轮上下文 | 第二轮能引用第一轮给的信息 |
 
 **不断言逐字回答文本** —— 真实模型的输出不确定,逐字断言只会制造假失败。
@@ -116,7 +116,7 @@ dsh 车道 = 本仓用户自己的 `dsh-our-free-model` 实例(26 个模型,多�
 | **弹层** | 可达 picker(Transcript / Diff / Tasks / Plugins / Rewind)+ 不可达 picker 的反向门禁 | 2 |
 | **真实轮次** | 流式上屏、真实 token 统计、工具调用 + 审批链、AskUser 面板(结构化)+ 自由文本条 | 4 |
 | **持久化 + headless CLI** | 真实会话落盘 → `session ls/show/export/stats` 读出真实模型与真实 token;`fork/rename/rm` 全链路 | 2 |
-| **Plan 落盘** | `.reflect/plan/*.md` 真有内容 | 1 |
+| **Plan 落盘** | `.zhuye/plan/*.md` 真有内容 | 1 |
 | **启动 / 生命周期 / model 解析** | HUD 显示真实模型 spec、终端标题、Ctrl+C / Ctrl+D、全屏 `--fullscreen`、resize、transcript 翻页、`model = "free"` 解析、`enabled=false` 启动即报错 | 9 |
 | **键盘交互** | 权限循环 / vim / Ctrl+R 反搜 / ↑ 召回 / Ctrl+G 编辑器 / Ctrl+O 复制 / Alt+Enter 多行 / 大文本与分段粘贴 / Ctrl+A 行首编辑 | 10 |
 | **渲染与视觉** | 中文 + emoji / markdown 代码块与列表 / 长回复折行 / NO_COLOR / 浅色主题 / 极小窗口 | 7 |
@@ -174,7 +174,7 @@ REFLECT_LIVE_MODEL_COUNT=2 PRACTICE_OUT=report.md ./tests/run_all.sh live-practi
 | **prompt 可能被上游记录** | Kilo 模型卡明示 | **只用合成数据**,不要喂真实仓库内容 / 凭据 |
 | **部分 provider 对 tool_results 更严** | 实测 Cohere 系模型报 `invalid request: all elements in tool_results must have the 'outputs' property specified`(400) | 工具回合偶发失败;不影响「工具被调用 / 结果上屏」的断言 |
 | **`/loop` 的触发频率由模型延迟决定** | 每次触发都是一次**完整 agent 回合**,回合未收尾时的再次触发会被丢弃 | 断言口径改为「触发过」+「stop 后不增长」 |
-| **宿主凭据泄漏** | 宿主的 `OPENAI_API_KEY` 会串进免费车道 | 子进程 env 清空 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `REFLECT_MODEL` / `REFLECT_PROVIDER` |
+| **宿主凭据泄漏** | 宿主的 `OPENAI_API_KEY` 会串进免费车道 | 子进程 env 清空 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `ZHUYE_MODEL` / `ZHUYE_PROVIDER` |
 
 ## 目录
 

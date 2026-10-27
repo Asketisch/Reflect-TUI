@@ -125,7 +125,7 @@ class Sandbox:
 
     @classmethod
     def create(cls, prefix: str = "reflect-tui-test-") -> "Sandbox":
-        """建隔离目录,并预写空的 `~/.reflect/config.toml`。
+        """建隔离目录,并预写空的 `~/.zhuye/config.toml`。
 
         `reflect_config::load_default()` 对缺文件是「回落默认配置」而非报错,
         但显式写入可让「配置文件存在」这一前提在用例里显式成立,避免依赖
@@ -134,10 +134,10 @@ class Sandbox:
         base = Path(tempfile.mkdtemp(prefix=prefix))
         home = base / "home"
         cwd = base / "cwd"
-        (home / ".reflect").mkdir(parents=True)
+        (home / ".zhuye").mkdir(parents=True)
         cwd.mkdir(parents=True)
-        (home / ".reflect" / "config.toml").write_text(
-            "# 测试用最小配置:空配置(不指定 provider,靠 REFLECT_MODEL 环境变量)。\n"
+        (home / ".zhuye" / "config.toml").write_text(
+            "# 测试用最小配置:空配置(不指定 provider,靠 ZHUYE_MODEL 环境变量)。\n"
         )
         return cls(home=home, cwd=cwd)
 
@@ -155,10 +155,10 @@ class Sandbox:
         return env
 
     def mock_env(self, script: Path | None = None, **extra: str) -> dict[str, str]:
-        """派生 mock provider 环境:`REFLECT_MODEL=mock/mock-1` + 可选脚本。"""
-        env: dict[str, str] = {"REFLECT_MODEL": "mock/mock-1"}
+        """派生 mock provider 环境:`ZHUYE_MODEL=mock/mock-1` + 可选脚本。"""
+        env: dict[str, str] = {"ZHUYE_MODEL": "mock/mock-1"}
         if script is not None:
-            env["REFLECT_MOCK_SCRIPT"] = str(script)
+            env["ZHUYE_MOCK_SCRIPT"] = str(script)
         env.update(extra)
         return env
 
@@ -170,17 +170,17 @@ class Sandbox:
     # ── 会话产物查询(断言落盘用)──────────────────────────────────────────
 
     def session_files(self) -> list[Path]:
-        """会话 JSONL 文件列表(`~/.reflect/sessions/YYYY/MM/DD/<thread>.jsonl`)。"""
-        base = self.home / ".reflect" / "sessions"
+        """会话 JSONL 文件列表(`~/.zhuye/sessions/YYYY/MM/DD/<thread>.jsonl`)。"""
+        base = self.home / ".zhuye" / "sessions"
         return sorted(base.glob("*/*/*/*.jsonl"))
 
     def trace_files(self) -> list[Path]:
-        """telemetry 产物(`~/.reflect/traces/` 下的 jsonl)。"""
-        base = self.home / ".reflect" / "traces"
+        """telemetry 产物(`~/.zhuye/traces/` 下的 jsonl)。"""
+        base = self.home / ".zhuye" / "traces"
         return sorted(base.rglob("*.jsonl"))
 
     def workspace_files(self, pattern: str = "**/*") -> list[Path]:
-        """工作区产物(`.reflect/plan/*.md` 等)。"""
+        """工作区产物(`.zhuye/plan/*.md` 等)。"""
         return sorted(p for p in self.cwd.glob(pattern) if p.is_file())
 
 

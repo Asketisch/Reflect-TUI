@@ -34,18 +34,18 @@ pub(crate) struct InlineVisualizationContext {
 }
 
 impl InlineVisualizationContext {
-    pub(crate) fn new(reflect_home: &Path, thread_id: ThreadId) -> Option<Self> {
-        Self::new_with_writable_roots(reflect_home, thread_id, std::iter::empty())
+    pub(crate) fn new(zhuye_home: &Path, thread_id: ThreadId) -> Option<Self> {
+        Self::new_with_writable_roots(zhuye_home, thread_id, std::iter::empty())
     }
 
     // 阶段 1 占位实现：`from_config` 需要 `crate::tui_core::legacy_core`，该模块尚未引入。
-    // 直接接受 `reflect_home` 而非完整的 Config 对象。
+    // 直接接受 `zhuye_home` 而非完整的 Config 对象。
     pub(crate) fn from_config(_reflect_home: &Path, _thread_id: ThreadId) -> Option<Self> {
         None
     }
 
     fn new_with_writable_roots<'a>(
-        reflect_home: &Path,
+        zhuye_home: &Path,
         thread_id: ThreadId,
         writable_roots: impl IntoIterator<Item = &'a Path>,
     ) -> Option<Self> {
@@ -54,7 +54,7 @@ impl InlineVisualizationContext {
         let timestamp = uuid.get_timestamp()?;
         let (seconds, nanos) = timestamp.to_unix();
         let created_at = DateTime::from_timestamp(i64::try_from(seconds).ok()?, nanos)?;
-        let visualizations_dir = reflect_home.join("visualizations");
+        let visualizations_dir = zhuye_home.join("visualizations");
         let granted_thread_dirs = writable_roots
             .into_iter()
             .filter(|root| is_visualization_thread_dir(&visualizations_dir, root))

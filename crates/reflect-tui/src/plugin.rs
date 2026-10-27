@@ -1,4 +1,4 @@
-//! reflect_plugin crate 的桩实现。
+//! zhuye_plugin crate 的桩实现。
 
 #[derive(Debug, Clone, Default)]
 pub struct AppConnectorId(pub String);

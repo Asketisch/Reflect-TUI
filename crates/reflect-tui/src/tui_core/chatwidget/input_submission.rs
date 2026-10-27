@@ -360,7 +360,7 @@ impl ChatWidget {
         // 先入队乐观提示，让用户的输入在此期间能够显示出来。
         // 直接提交不共享该队列，因此保留其原有的失败行为。
         let render_before_submit =
-            render_in_history && matches!(&self.reflect_op_target, ReflectOpTarget::AppEvent);
+            render_in_history && matches!(&self.zhuye_op_target, ReflectOpTarget::AppEvent);
         if render_before_submit {
             self.on_user_message_display(user_message_display_for_history(
                 submitted_message.clone(),

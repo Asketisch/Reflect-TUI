@@ -11,7 +11,7 @@ Reflect-TUI — Reflect Agent 的终端交互式客户端(ratatui + crossterm),�
 - 核心引擎(AgentThread / StateGraph / 工具 / 协议)由 `reflect-agent/` **git submodule** 提供,
   本 crate 只负责表现层:事件循环、布局、渲染、协议事件适配
 - Rust stable,edition 2024,MSRV 1.85(`rust-toolchain.toml` 锁定)
-- 用户数据目录:`~/.reflect/`(config.toml / sessions/ / traces/);Plan 草稿写 `<workspace>/.reflect/plan/`
+- 用户数据目录:`~/.zhuye/`(config.toml / sessions/ / traces/);Plan 草稿写 `<workspace>/.zhuye/plan/`
 
 ## ⚠️ 代码规范:注释必须为中文
 
@@ -64,7 +64,7 @@ make gc                         # 清 target/debug 中 cargo 不自动 GC 的中
 
 ### 核心引擎(submodule,只读消费,勿改)
 
-`reflect-agent/crates/{protocol,abilities,resources,orchestration,integrations,runtime}` 六层。
+`reflect-agent/crates/{protocol,abilities,resources,orchestration,integrations,runtime}(烛夜更名后 crate 名为 `zhuye-*`)` 六层。
 本 crate 直接依赖的关键 crate:reflect-core(AgentThread)、reflect-llm(ModelRegistry)、
 reflect-tools(内置工具)、reflect-config、reflect-rollout、reflect-telemetry、
 reflect-task/subagent、reflect-protocol。
@@ -72,7 +72,7 @@ reflect-task/subagent、reflect-protocol。
 ## 关键约束(改代码前必读)
 
 1. **Cargo 不支持嵌套 workspace**:核心 crate **不**列入本仓库 `workspace.members`,
-   只用 `path` 依赖(`reflect-core = { path = "reflect-agent/crates/runtime/reflect-core" }`)。
+   只用 `path` 依赖(`zhuye-core = { path = "reflect-agent/crates/runtime/zhuye-core" }`)。
    核心 crate 大量 `workspace = true` 继承依赖会解析到**本仓库**根 `[workspace.dependencies]`,
    因此该段必须**完整声明**核心引用的全部 reflect-* 与外部依赖 —— 升级 submodule 或新增
    核心 crate 依赖时,同步补声明,否则跨 workspace 解析失败。详见 [CONTRIBUTING.md](CONTRIBUTING.md) 的「submodule 工作流」小节。
@@ -86,7 +86,7 @@ reflect-task/subagent、reflect-protocol。
    许可证见 [NOTICE](NOTICE)。
 6. vendored 上游测试 fixtures 由 feature `tui-upstream-tests` gate,默认关闭
    (`cargo test -p reflect-tui --features tui-upstream-tests` 才跑)。
-7. Plan mode 写盘:PlanWrite 工具把 plan markdown 写到 `<workspace>/.reflect/plan/<name>.md`,
+7. Plan mode 写盘:PlanWrite 工具把 plan markdown 写到 `<workspace>/.zhuye/plan/<name>.md`,
    ExitPlanMode 读取;`PlanWriteTool` 必须与 Enter/ExitPlanMode 一起注册(见 `bootstrap.rs`)。
 8. **slash 命令有两条分发通道**,行为不一致,改命令时两条都要看:
    - `history_render::dispatch_slash`(legacy 通道)—— 命令名命中
@@ -164,8 +164,8 @@ reflect-task/subagent、reflect-protocol。
 | 仅文档 / 注释 | 无需跑测试,自查链接与命令是否仍有效 |
 | 发版前 | `make release-check` |
 
-> 全程离线:`REFLECT_MODEL=mock/mock-1` + 隔离 HOME(mktemp),
-> 不污染真实 `~/.reflect`;缺 pytest / pyte 的批次自动 SKIP,不算失败。
+> 全程离线:`ZHUYE_MODEL=mock/mock-1` + 隔离 HOME(mktemp),
+> 不污染真实 `~/.zhuye`;缺 pytest / pyte 的批次自动 SKIP,不算失败。
 > 首次运行需 `pip install pytest pyte`(Node 不需要)。
 
 ## Submodule 维护

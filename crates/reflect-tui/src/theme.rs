@@ -94,8 +94,8 @@ impl Palette {
     }
 
     /// 权限模式的 (标签, 样式)。
-    pub fn mode_style(&self, mode: reflect_protocol::PermissionMode) -> (&'static str, Style) {
-        use reflect_protocol::PermissionMode as Pm;
+    pub fn mode_style(&self, mode: zhuye_protocol::PermissionMode) -> (&'static str, Style) {
+        use zhuye_protocol::PermissionMode as Pm;
         match mode {
             Pm::Plan => ("[plan]", Style::default().fg(self.plan)),
             Pm::AcceptEdits => ("[accept_edits]", Style::default().fg(self.info)),
@@ -210,7 +210,7 @@ mod tests {
             p.warn(),
             p.danger(),
             p.ok(),
-            p.mode_style(reflect_protocol::PermissionMode::Plan).1,
+            p.mode_style(zhuye_protocol::PermissionMode::Plan).1,
         ] {
             assert_eq!(style.fg, Some(Color::Reset), "no-color 应落到 Reset");
         }
@@ -227,13 +227,13 @@ mod tests {
     fn mode_style_covers_all_modes() {
         let p = Palette::DARK;
         for m in [
-            reflect_protocol::PermissionMode::Auto,
-            reflect_protocol::PermissionMode::Plan,
-            reflect_protocol::PermissionMode::AcceptEdits,
-            reflect_protocol::PermissionMode::Bypass,
-            reflect_protocol::PermissionMode::Prompt,
-            reflect_protocol::PermissionMode::Deny,
-            reflect_protocol::PermissionMode::Bubble,
+            zhuye_protocol::PermissionMode::Auto,
+            zhuye_protocol::PermissionMode::Plan,
+            zhuye_protocol::PermissionMode::AcceptEdits,
+            zhuye_protocol::PermissionMode::Bypass,
+            zhuye_protocol::PermissionMode::Prompt,
+            zhuye_protocol::PermissionMode::Deny,
+            zhuye_protocol::PermissionMode::Bubble,
         ] {
             let (label, style) = p.mode_style(m);
             assert!(label.starts_with('['), "{label}");

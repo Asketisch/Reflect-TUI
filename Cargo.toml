@@ -16,52 +16,52 @@ homepage = "https://github.com/Asketisch/Reflect-TUI"
 # 核心 crate 仍属于 reflect-agent 自己的 workspace,通过 path 被本仓库消费。
 [workspace.dependencies]
 # protocol 层
-reflect-protocol = { path = "reflect-agent/crates/protocol/reflect-protocol" }
+zhuye-protocol = { path = "reflect-agent/crates/protocol/zhuye-protocol" }
 
 # abilities 层
-reflect-llm        = { path = "reflect-agent/crates/abilities/reflect-llm" }
-reflect-tools      = { path = "reflect-agent/crates/abilities/reflect-tools" }
-reflect-hooks      = { path = "reflect-agent/crates/abilities/reflect-hooks" }
-reflect-skills     = { path = "reflect-agent/crates/abilities/reflect-skills" }
-reflect-bm25       = { path = "reflect-agent/crates/abilities/reflect-bm25" }
-reflect-memory     = { path = "reflect-agent/crates/abilities/reflect-memory" }
-reflect-agent-def  = { path = "reflect-agent/crates/abilities/reflect-agent-def" }
-reflect-prompt     = { path = "reflect-agent/crates/abilities/reflect-prompt" }
-reflect-compact    = { path = "reflect-agent/crates/abilities/reflect-compact" }
-reflect-recovery   = { path = "reflect-agent/crates/abilities/reflect-recovery" }
-reflect-notes      = { path = "reflect-agent/crates/abilities/reflect-notes" }
-reflect-sanitize   = { path = "reflect-agent/crates/abilities/reflect-sanitize" }
+zhuye-llm        = { path = "reflect-agent/crates/abilities/zhuye-llm" }
+zhuye-tools      = { path = "reflect-agent/crates/abilities/zhuye-tools" }
+zhuye-hooks      = { path = "reflect-agent/crates/abilities/zhuye-hooks" }
+zhuye-skills     = { path = "reflect-agent/crates/abilities/zhuye-skills" }
+zhuye-bm25       = { path = "reflect-agent/crates/abilities/zhuye-bm25" }
+zhuye-memory     = { path = "reflect-agent/crates/abilities/zhuye-memory" }
+zhuye-agent-def  = { path = "reflect-agent/crates/abilities/zhuye-agent-def" }
+zhuye-prompt     = { path = "reflect-agent/crates/abilities/zhuye-prompt" }
+zhuye-compact    = { path = "reflect-agent/crates/abilities/zhuye-compact" }
+zhuye-recovery   = { path = "reflect-agent/crates/abilities/zhuye-recovery" }
+zhuye-notes      = { path = "reflect-agent/crates/abilities/zhuye-notes" }
+zhuye-sanitize   = { path = "reflect-agent/crates/abilities/zhuye-sanitize" }
 
 # resources 层
-reflect-config      = { path = "reflect-agent/crates/resources/reflect-config" }
-reflect-permissions = { path = "reflect-agent/crates/resources/reflect-permissions" }
-reflect-plugin      = { path = "reflect-agent/crates/resources/reflect-plugin" }
-reflect-rollout     = { path = "reflect-agent/crates/resources/reflect-rollout" }
-reflect-telemetry   = { path = "reflect-agent/crates/resources/reflect-telemetry" }
-reflect-sandbox     = { path = "reflect-agent/crates/resources/reflect-sandbox" }
-reflect-ast         = { path = "reflect-agent/crates/resources/reflect-ast" }
+zhuye-config      = { path = "reflect-agent/crates/resources/zhuye-config" }
+zhuye-permissions = { path = "reflect-agent/crates/resources/zhuye-permissions" }
+zhuye-plugin      = { path = "reflect-agent/crates/resources/zhuye-plugin" }
+zhuye-rollout     = { path = "reflect-agent/crates/resources/zhuye-rollout" }
+zhuye-telemetry   = { path = "reflect-agent/crates/resources/zhuye-telemetry" }
+zhuye-sandbox     = { path = "reflect-agent/crates/resources/zhuye-sandbox" }
+zhuye-ast         = { path = "reflect-agent/crates/resources/zhuye-ast" }
 
 # integrations 层
-reflect-mcp         = { path = "reflect-agent/crates/integrations/reflect-mcp" }
-reflect-lsp         = { path = "reflect-agent/crates/integrations/reflect-lsp" }
-reflect-stream      = { path = "reflect-agent/crates/integrations/reflect-stream" }
-reflect-integration = { path = "reflect-agent/crates/integrations/reflect-integration" }
+zhuye-mcp         = { path = "reflect-agent/crates/integrations/zhuye-mcp" }
+zhuye-lsp         = { path = "reflect-agent/crates/integrations/zhuye-lsp" }
+zhuye-stream      = { path = "reflect-agent/crates/integrations/zhuye-stream" }
+zhuye-integration = { path = "reflect-agent/crates/integrations/zhuye-integration" }
 
 # orchestration 层
-# 注:reflect-goal 是 reflect-core 的传递依赖(core Cargo.toml 引用),必须声明;
-# reflect-task/subagent 被 TUI 直接依赖。v1.x 起 submodule 的 facade/CLI crate
-# (reflect/reflect-exec)以 workspace 继承方式引用 discussion/pipeline,
+# 注:zhuye-goal 是 zhuye-core 的传递依赖(core Cargo.toml 引用),必须声明;
+# zhuye-task/subagent 被 TUI 直接依赖。v1.x 起 submodule 的 facade/CLI crate
+# (reflect/zhuye-exec)以 workspace 继承方式引用 discussion/pipeline,
 # 因此镜像必须列全,否则外层解析继承时缺表报错。
-reflect-task        = { path = "reflect-agent/crates/orchestration/reflect-task" }
-reflect-subagent    = { path = "reflect-agent/crates/orchestration/reflect-subagent" }
-reflect-goal        = { path = "reflect-agent/crates/orchestration/reflect-goal" }
-reflect-discussion  = { path = "reflect-agent/crates/orchestration/reflect-discussion" }
-reflect-pipeline    = { path = "reflect-agent/crates/orchestration/reflect-pipeline" }
+zhuye-task        = { path = "reflect-agent/crates/orchestration/zhuye-task" }
+zhuye-subagent    = { path = "reflect-agent/crates/orchestration/zhuye-subagent" }
+zhuye-goal        = { path = "reflect-agent/crates/orchestration/zhuye-goal" }
+zhuye-discussion  = { path = "reflect-agent/crates/orchestration/zhuye-discussion" }
+zhuye-pipeline    = { path = "reflect-agent/crates/orchestration/zhuye-pipeline" }
 
 # runtime 层(核心引擎)
-reflect-core = { path = "reflect-agent/crates/runtime/reflect-core" }
+zhuye-core = { path = "reflect-agent/crates/runtime/zhuye-core" }
 reflect      = { path = "reflect-agent/crates/runtime/reflect" }
-reflect-exec = { path = "reflect-agent/crates/runtime/reflect-exec" }
+zhuye-exec = { path = "reflect-agent/crates/runtime/zhuye-exec" }
 
 # ── 通用外部依赖(与核心 workspace 对齐版本)──
 tokio              = { version = "1", features = ["full"] }

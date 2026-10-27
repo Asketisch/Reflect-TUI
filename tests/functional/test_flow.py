@@ -15,7 +15,7 @@ COVERAGE §8 曾把审批链路与 AskUser 面板登记为「离线难稳定触�
   - `/loop` 触发 `▶ /status` 重复上屏;`/loop stop` → `⚠ /loop: stopped (was: /status every Ns)`
   - `-c` 空目录 → `Error: no sessions found … nothing to resume`(非 0 退出)
   - `--resume` 短前缀 → `Error: invalid thread id '…': invalid length`(只认完整 UUID)
-  - 非法 `REFLECT_MODEL` → `Error: 未配置任何 provider …`(非 0 退出)
+  - 非法 `ZHUYE_MODEL` → `Error: 未配置任何 provider …`(非 0 退出)
   - 坏 config.toml → **静默回落默认配置**,TUI 照常启动(锁定现状,见 §8 说明)
   - SIGTERM → 进程被信号终止(rc=-15),无 panic,会话文件已落盘
   - stdin 非 tty → `Error: Device not configured (os error 6)`,快速失败不挂死
@@ -52,7 +52,7 @@ def _seed_session(sandbox: Sandbox, sid: str, msg: str) -> Path:
     跳过 —— 回放时只剩 SessionMeta,消息正文丢失(此前夹具写的是
     `"t1"`,只有「不崩」的断言时看不出来)。
     """
-    base = sandbox.home / ".reflect" / "sessions" / "2026" / "01" / "01"
+    base = sandbox.home / ".zhuye" / "sessions" / "2026" / "01" / "01"
     base.mkdir(parents=True, exist_ok=True)
     p = base / f"{sid}.jsonl"
     p.write_text(
@@ -298,7 +298,7 @@ def test_large_transcript_resume_stays_interactive(tui, mock_script, sandbox) ->
     断言「恢复后仍可交互」而非「旧消息在视口内」。
     """
     sid = "bbb33333-2222-4333-8444-555555555555"
-    base = sandbox.home / ".reflect" / "sessions" / "2026" / "01" / "01"
+    base = sandbox.home / ".zhuye" / "sessions" / "2026" / "01" / "01"
     base.mkdir(parents=True, exist_ok=True)
     lines = [json.dumps({"type": "session_meta", "session_id": sid, "model": "mock/mock-1", "started_at": "2026-01-01T00:00:00Z"})]
     for i in range(100):
@@ -329,7 +329,7 @@ def test_malformed_config_warns_and_falls_back_to_defaults(tui, sandbox) -> None
     hooks 会**无声失效**。bootstrap 启动前显式体检一次,解析失败即在终端
     打印可见告警;同时坏配置不能导致启动崩溃/挂死。
     """
-    (sandbox.home / ".reflect" / "config.toml").write_text("this is [ not valid toml {{{\n")
+    (sandbox.home / ".zhuye" / "config.toml").write_text("this is [ not valid toml {{{\n")
     with tui() as s:
         s.wait_boot(timeout=30)
         txt = s.wait_text("/help for commands", timeout=15)
@@ -342,8 +342,8 @@ def test_malformed_config_warns_and_falls_back_to_defaults(tui, sandbox) -> None
 
 
 def test_invalid_model_env_fails_fast(tui) -> None:
-    """W10 `REFLECT_MODEL=nonexistent/x`:给出可行动的错误并退出。"""
-    with tui(env={"REFLECT_MODEL": "nonexistent/x"}) as s:
+    """W10 `ZHUYE_MODEL=nonexistent/x`:给出可行动的错误并退出。"""
+    with tui(env={"ZHUYE_MODEL": "nonexistent/x"}) as s:
         rc = _wait_exit(s, timeout=25)
         assert rc is not None, "未知 provider 应快速退出而不是挂死"
         assert rc != 0, "未知 provider 应非 0 退出"

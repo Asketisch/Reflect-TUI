@@ -432,7 +432,7 @@ impl AuthModeWidget {
             vec![line1, line2]
         };
 
-        let reflect_description = if !self.is_reflect_login_allowed() {
+        let zhuye_description = if !self.is_reflect_login_allowed() {
             "Reflect login is disabled"
         } else {
             "Usage included with Plus, Pro, Business, and Enterprise plans"
@@ -446,7 +446,7 @@ impl AuthModeWidget {
                         idx,
                         option,
                         "Sign in to Reflect",
-                        reflect_description,
+                        zhuye_description,
                     ));
                 }
                 SignInOption::DeviceCode => {
@@ -866,7 +866,7 @@ impl AuthModeWidget {
                     request_id: onboarding_request_id(),
                     params: LoginAccountParams::Chatgpt {
                         app_brand: None,
-                        reflect_streamlined_login: false,
+                        zhuye_streamlined_login: false,
                         use_hosted_login_success_page: false,
                     },
                 })

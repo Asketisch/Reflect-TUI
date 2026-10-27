@@ -15,7 +15,7 @@ fn suggestion_target() -> AppLinkElicitationTarget {
     AppLinkElicitationTarget {
         thread_id: ThreadId::try_from("00000000-0000-0000-0000-000000000001")
             .expect("valid thread id"),
-        server_name: "reflect_apps".to_string(),
+        server_name: "zhuye_apps".to_string(),
         request_id: AppServerRequestId::String("request-1".to_string()),
     }
 }
@@ -42,12 +42,12 @@ fn auth_url_request(url: &str) -> crate::app_server_protocol::McpServerElicitati
         })),
         message: "Reconnect Google Calendar on Reflect.".to_string(),
         url: url.to_string(),
-        elicitation_id: "reflect_apps_auth_call_123".to_string(),
+        elicitation_id: "zhuye_apps_auth_call_123".to_string(),
     }
 }
 
 #[test]
-fn reflect_apps_auth_url_elicitation_builds_auth_app_link_params() {
+fn zhuye_apps_auth_url_elicitation_builds_auth_app_link_params() {
     let target = suggestion_target();
     let request = auth_url_request("https://chatgpt.com/apps/google-calendar/connector_calendar");
 
@@ -106,7 +106,7 @@ fn non_reflect_apps_url_elicitation_builds_generic_app_link_params() {
 }
 
 #[test]
-fn reflect_apps_auth_url_elicitation_rejects_untrusted_urls() {
+fn zhuye_apps_auth_url_elicitation_rejects_untrusted_urls() {
     let target = suggestion_target();
     for url in [
         "http://chatgpt.com/apps/google-calendar/connector_calendar",
@@ -542,7 +542,7 @@ fn install_tool_suggestion_resolves_elicitation_after_confirmation() {
             assert_eq!(
                 op,
                 Op::ResolveElicitation {
-                    server_name: "reflect_apps".to_string(),
+                    server_name: "zhuye_apps".to_string(),
                     request_id: AppServerRequestId::String("request-1".to_string()),
                     decision: McpServerElicitationAction::Accept,
                     content: None,
@@ -584,7 +584,7 @@ fn declined_tool_suggestion_resolves_elicitation_decline() {
             assert_eq!(
                 op,
                 Op::ResolveElicitation {
-                    server_name: "reflect_apps".to_string(),
+                    server_name: "zhuye_apps".to_string(),
                     request_id: AppServerRequestId::String("request-1".to_string()),
                     decision: McpServerElicitationAction::Decline,
                     content: None,
@@ -634,7 +634,7 @@ fn enable_tool_suggestion_resolves_elicitation_after_enable() {
             assert_eq!(
                 op,
                 Op::ResolveElicitation {
-                    server_name: "reflect_apps".to_string(),
+                    server_name: "zhuye_apps".to_string(),
                     request_id: AppServerRequestId::String("request-1".to_string()),
                     decision: McpServerElicitationAction::Accept,
                     content: None,
@@ -670,7 +670,7 @@ fn resolved_tool_suggestion_dismisses_matching_view() {
 
     assert!(
         view.dismiss_app_server_request(&ResolvedAppServerRequest::McpElicitation {
-            server_name: "reflect_apps".to_string(),
+            server_name: "zhuye_apps".to_string(),
             request_id: AppServerRequestId::String("request-1".to_string()),
         })
     );

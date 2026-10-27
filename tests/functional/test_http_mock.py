@@ -1,6 +1,6 @@
 """真实 HTTP 链路的能力覆盖层:Anthropic Messages API 的 SSE 协议 + 确定性 busy 窗口。
 
-既有能力覆盖层用 `REFLECT_MODEL=mock/mock-1` —— 那是 reflect-llm
+既有能力覆盖层用 `ZHUYE_MODEL=mock/mock-1` —— 那是 reflect-llm
 `ModelClient` 层的内置 provider,**完全绕过** HTTP 传输、SSE 分帧与
 Anthropic 协议形态;内置 mock 还「瞬时完成」,离线无法确定性制造 busy
 窗口(见 `tests/COVERAGE.md` §6 的相关记录)。
@@ -71,7 +71,7 @@ def http_mock_slow() -> str:
 
 def _write_http_config(sandbox: Sandbox, base_url: str) -> None:
     """把 config.toml 指向本地 mock server(走真实 Anthropic provider)。"""
-    (sandbox.home / ".reflect" / "config.toml").write_text(
+    (sandbox.home / ".zhuye" / "config.toml").write_text(
         "[active]\n"
         'provider = "anthropic"\n'
         "\n"
@@ -85,9 +85,9 @@ def _write_http_config(sandbox: Sandbox, base_url: str) -> None:
 @pytest.fixture()
 def http_tui(sandbox: Sandbox, http_mock: str, monkeypatch: pytest.MonkeyPatch):
     """起一个走真实 HTTP(mock server)的 TUI 会话工厂。"""
-    # 宿主机若设了 REFLECT_MODEL=mock/... 会被子进程继承,把真实 provider
+    # 宿主机若设了 ZHUYE_MODEL=mock/... 会被子进程继承,把真实 provider
     # 顶掉 —— 去掉它,让 config.toml 的 anthropic 段生效。
-    monkeypatch.delenv("REFLECT_MODEL", raising=False)
+    monkeypatch.delenv("ZHUYE_MODEL", raising=False)
     _write_http_config(sandbox, http_mock)
     created: list[TuiSession] = []
 
@@ -158,7 +158,7 @@ def test_resume_across_date_buckets_over_http(http_tui, sandbox) -> None:
     sid = _session_id_of(src)
 
     # 搬到旧日期桶。
-    old_dir = sandbox.home / ".reflect" / "sessions" / "2026" / "01" / "01"
+    old_dir = sandbox.home / ".zhuye" / "sessions" / "2026" / "01" / "01"
     old_dir.mkdir(parents=True, exist_ok=True)
     dst = old_dir / src.name
     src.rename(dst)

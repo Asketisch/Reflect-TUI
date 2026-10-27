@@ -1,4 +1,4 @@
-//! reflect_feedback crate 的桩实现。
+//! zhuye_feedback crate 的桩实现。
 
 pub const REFLECT_APP_DIRECTORY_CACHE_ATTACHMENT_FILENAME: &str = "app_directory.json";
 pub const REFLECT_APPS_TOOLS_CACHE_ATTACHMENT_FILENAME: &str = "apps_tools.json";

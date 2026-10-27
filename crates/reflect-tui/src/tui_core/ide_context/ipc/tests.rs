@@ -92,11 +92,11 @@ fn assert_listener_unused(listener: &std::os::unix::net::UnixListener) {
 
 #[test]
 fn primary_ipc_socket_path_uses_reflect_home() {
-    let reflect_home = Path::new("/home/test/.reflect");
+    let zhuye_home = Path::new("/home/test/.reflect");
 
     assert_eq!(
-        primary_ipc_socket_path(reflect_home),
-        reflect_home.join("ipc").join("ipc.sock")
+        primary_ipc_socket_path(zhuye_home),
+        zhuye_home.join("ipc").join("ipc.sock")
     );
 }
 

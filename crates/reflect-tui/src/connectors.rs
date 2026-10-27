@@ -1,4 +1,4 @@
-//! reflect_connectors crate 的桩代码。
+//! zhuye_connectors crate 的桩代码。
 
 #[derive(Debug, Clone, Default)]
 pub struct AppInfo {

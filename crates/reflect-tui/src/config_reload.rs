@@ -1,7 +1,7 @@
 //! 配置热重载接线(v1.x `ConfigWatcher`)。
 //!
-//! 背景:submodule 的 `reflect_config::ConfigWatcher` 会监听
-//! `~/.reflect/config.toml` 的变更并把新配置推给订阅者;headless
+//! 背景:submodule 的 `zhuye_config::ConfigWatcher` 会监听
+//! `~/.zhuye/config.toml` 的变更并把新配置推给订阅者;headless
 //! (`reflect-exec`)据此重建 provider client、切换 model、推
 //! `EventMsg::ConfigReloaded`。TUI 此前**完全没有**这个 watcher ——
 //! 改配置后必须重启 TUI 才生效,`[routing] fallbacks`、`[model]` 之类
@@ -14,9 +14,9 @@
 
 use std::sync::Arc;
 
-use reflect_config::ReflectConfig;
-use reflect_core::AgentConfig;
-use reflect_llm::ModelRegistry;
+use zhuye_config::ReflectConfig;
+use zhuye_core::AgentConfig;
+use zhuye_llm::ModelRegistry;
 
 /// 算出两份配置之间变更了哪些段(段名列表)。
 ///
@@ -68,7 +68,7 @@ pub fn diff_sections(old: &ReflectConfig, new: &ReflectConfig) -> Vec<String> {
 /// `ui_tx` 是 TUI 的 `UiEvent` 通道 —— 直接推 `UiEventKind::Notice`,
 /// 免得绕协议事件再转一次。
 pub fn spawn_config_reload_task(
-    watcher: reflect_config::ConfigWatcher,
+    watcher: zhuye_config::ConfigWatcher,
     registry: Arc<ModelRegistry>,
     agent_cfg: AgentConfig,
     path: std::path::PathBuf,
@@ -115,7 +115,7 @@ fn handle_reload(
     }
     tracing::info!(path = %path.display(), "config reload applied");
     // 推给界面(通道关闭时忽略 —— TUI 已退出)。事件携带新配置,消费方
-    // 刷新 `state.reflect_config` 并渲染变更提示。
+    // 刷新 `state.zhuye_config` 并渲染变更提示。
     let _ = ui_tx.send(crate::adapter::UiEvent {
         kind: crate::adapter::UiEventKind::ConfigReloaded {
             config: Box::new(new_cfg.clone()),
@@ -131,11 +131,11 @@ mod tests {
 
     fn cfg_with_model(model: &str) -> ReflectConfig {
         ReflectConfig {
-            active: reflect_config::ActiveSection {
+            active: zhuye_config::ActiveSection {
                 provider: Some("openai".into()),
                 ..Default::default()
             },
-            openai: Some(reflect_config::OpenAISection {
+            openai: Some(zhuye_config::OpenAISection {
                 api_key: Some("k".into()),
                 model: Some(model.into()),
                 ..Default::default()
@@ -166,7 +166,7 @@ mod tests {
     fn routing_change_is_reported() {
         let a = ReflectConfig::default();
         let mut b = ReflectConfig::default();
-        b.routing = Some(reflect_config::RoutingSection::default());
+        b.routing = Some(zhuye_config::RoutingSection::default());
         let d = diff_sections(&a, &b);
         assert!(d.iter().any(|s| s == "routing"), "{d:?}");
     }
@@ -175,7 +175,7 @@ mod tests {
     fn model_discovery_change_is_reported() {
         let a = ReflectConfig::default();
         let mut b = ReflectConfig::default();
-        b.model_discovery = Some(reflect_config::ModelDiscoverySection::default());
+        b.model_discovery = Some(zhuye_config::ModelDiscoverySection::default());
         let d = diff_sections(&a, &b);
         assert!(d.iter().any(|s| s == "model_discovery"), "{d:?}");
     }

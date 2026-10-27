@@ -146,10 +146,10 @@ type IdeContextStream = super::windows_pipe::WindowsPipeStream;
 #[cfg(unix)]
 pub(crate) fn fetch_ide_context(
     workspace_root: &Path,
-    reflect_home: &Path,
+    zhuye_home: &Path,
 ) -> Result<IdeContext, IdeContextError> {
     let deadline = Instant::now() + IDE_CONTEXT_REQUEST_TIMEOUT;
-    let primary_socket_path = primary_ipc_socket_path(reflect_home);
+    let primary_socket_path = primary_ipc_socket_path(zhuye_home);
     let uid = unsafe { libc::getuid() };
     let legacy_socket_paths = legacy_ipc_socket_paths(&std::env::temp_dir(), uid);
     fetch_ide_context_from_unix_socket_paths(
@@ -181,8 +181,8 @@ pub(crate) fn fetch_ide_context(
 }
 
 #[cfg(unix)]
-fn primary_ipc_socket_path(reflect_home: &Path) -> PathBuf {
-    reflect_home.join("ipc").join("ipc.sock")
+fn primary_ipc_socket_path(zhuye_home: &Path) -> PathBuf {
+    zhuye_home.join("ipc").join("ipc.sock")
 }
 
 #[cfg(unix)]

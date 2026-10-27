@@ -14,7 +14,7 @@
 use crate::adapter::UiHistoryItem;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use reflect_protocol::PermissionMode;
+use zhuye_protocol::PermissionMode;
 
 /// Braille spinner 帧(对齐老 TUI `widgets/spinner.rs`)。
 pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

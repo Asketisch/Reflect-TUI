@@ -198,7 +198,7 @@ pub enum LoginAccountParams {
         api_key: String,
     },
     Chatgpt {
-        reflect_streamlined_login: bool,
+        zhuye_streamlined_login: bool,
         use_hosted_login_success_page: bool,
         app_brand: Option<LoginAppBrand>,
     },
@@ -217,7 +217,7 @@ pub enum LoginAccountParams {
 impl Default for LoginAccountParams {
     fn default() -> Self {
         LoginAccountParams::Chatgpt {
-            reflect_streamlined_login: false,
+            zhuye_streamlined_login: false,
             use_hosted_login_success_page: false,
             app_brand: None,
         }

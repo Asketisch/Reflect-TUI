@@ -123,7 +123,7 @@ def _run_scenario(
     sb = Sandbox.create(prefix="reflect-tui-practice-")
     lane = current_lane()
     write_lane_config(sb.home, model=model, lane=lane, fallbacks=fallbacks)
-    child_env = {var: "" for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "REFLECT_MODEL", "REFLECT_PROVIDER")}
+    child_env = {var: "" for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ZHUYE_MODEL", "ZHUYE_PROVIDER")}
     child_env["REFLECT_TUI_UPDATE_CHECK"] = "0"
     # 隔离 HOME 显式写死(`Sandbox.env()` 先设 HOME 再叠加 extra,
     # extra 带宿主 HOME 会把隔离目录覆盖掉)。
@@ -165,7 +165,7 @@ def _run_scenario(
                 result.status = "ok"
             result.tool_calls = _count_tool_calls(s.screen_text())
         # 会话统计必须在清理隔离 HOME **之前**读 —— 落盘数据在
-        # `~/.reflect/sessions/**.jsonl`,cleanup 会把整个目录删掉。
+        # `~/.zhuye/sessions/**.jsonl`,cleanup 会把整个目录删掉。
         stats = session_stats(sb.session_files())
         result.input_tokens = stats["usage"]["input_tokens"]
         result.output_tokens = stats["usage"]["output_tokens"]

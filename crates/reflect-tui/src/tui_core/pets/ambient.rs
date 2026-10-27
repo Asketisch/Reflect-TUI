@@ -139,22 +139,22 @@ impl AmbientPet {
     /// 加载活动的环境宠物并准备其帧缓存。
     ///
     /// 此方法解析所选宠物 id，将每帧 PNG 提取到
-    /// REFLECT_HOME 缓存，并记录稍后用于绘制请求的
+    /// ZHUYE_HOME 缓存，并记录稍后用于绘制请求的
     /// 终端协议支持快照。重复创建 `AmbientPet` 而不是
     /// 修改单个实例的调用方会失去动画时序的连续性，
     /// 并会比实际需要更频繁地支付帧缓存准备成本。
     pub(crate) fn load(
         selected_pet: Option<&str>,
-        reflect_home: &std::path::Path,
+        zhuye_home: &std::path::Path,
         frame_requester: FrameRequester,
         animations_enabled: bool,
     ) -> Result<Self> {
         let pet = Pet::load_with_reflect_home(
             selected_pet.unwrap_or(DEFAULT_PET_ID),
-            /*reflect_home*/ Some(reflect_home),
+            /*zhuye_home*/ Some(zhuye_home),
         )
         .with_context(|| "load ambient pet")?;
-        let cache_dir = reflect_home
+        let cache_dir = zhuye_home
             .join("cache")
             .join("tui-pets")
             .join("frame-cache")

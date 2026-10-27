@@ -13,9 +13,9 @@ cargo build --release          # 产物在 target/release/reflect-tui
 cargo test -p reflect-tui      # TUI 侧测试
 ```
 
-配置：`~/.reflect/config.toml`（provider / MCP / LSP / hooks / permissions），
+配置：`~/.zhuye/config.toml`（provider / MCP / LSP / hooks / permissions），
 或 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 环境变量。离线体验可用
-`REFLECT_MODEL=mock/mock-1`（内置 mock provider，零网络）。
+`ZHUYE_MODEL=mock/mock-1`（内置 mock provider，零网络）。
 
 ## 提交前检查
 
@@ -141,7 +141,7 @@ make release-check
 ## 报告问题
 
 - 开 issue 时附：操作系统、终端（iTerm/tmux/...）、复现步骤、
-  `~/.reflect/logs/tui-<日期>.log` 的相关片段（注意脱敏）。
+  `~/.zhuye/logs/tui-<日期>.log` 的相关片段（注意脱敏）。
 - 渲染类问题请附截图或屏幕文本 dump；崩溃类附 panic 全文。
 
 ## 行为准则

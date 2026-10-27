@@ -489,7 +489,7 @@ mod tests {
     async fn cwd_prompt_remembered_choices_select_and_persist_matching_directory() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let config = ConfigBuilder::default()
-            .reflect_home(temp_dir.path().to_path_buf())
+            .zhuye_home(temp_dir.path().to_path_buf())
             .build()
             .await?;
         let current_cwd = Path::new("/Users/example/current");
@@ -536,7 +536,7 @@ mod tests {
     async fn cwd_prompt_persistence_failure_snapshot() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let config = ConfigBuilder::default()
-            .reflect_home(temp_dir.path().to_path_buf())
+            .zhuye_home(temp_dir.path().to_path_buf())
             .build()
             .await?;
         let config_path = temp_dir.path().join("config.toml");

@@ -10,7 +10,7 @@
 #   - 子命令分派:`session` / `traces` 的存在性与二级子命令
 #   - 错误路径:未知子命令 / 未知参数 / 缺参数 → 非 0 退出码
 #
-# 全程离线(REFLECT_MODEL=mock/mock-1)+ 隔离 HOME,不污染真实 ~/.reflect。
+# 全程离线(ZHUYE_MODEL=mock/mock-1)+ 隔离 HOME,不污染真实 ~/.zhuye。
 # 退出码 0 = 全部通过。
 
 set -u
@@ -26,11 +26,11 @@ trap 'rm -rf "$TMP"' EXIT
 
 BIN="$REFLECT_TUI_BIN"
 HOME_DIR="$TMP/home"
-SESS_DIR="$HOME_DIR/.reflect/sessions"
+SESS_DIR="$HOME_DIR/.zhuye/sessions"
 SESSION_ID="11111111-2222-4333-8444-555555555555"
 
-mkdir -p "$HOME_DIR/.reflect" "$SESS_DIR/2026/01/01"
-printf '# 测试用最小配置:空配置。\n' > "$HOME_DIR/.reflect/config.toml"
+mkdir -p "$HOME_DIR/.zhuye" "$SESS_DIR/2026/01/01"
+printf '# 测试用最小配置:空配置。\n' > "$HOME_DIR/.zhuye/config.toml"
 # 预置一条会话 —— `session ls` 的表头断言需要有数据才有意义
 # (空目录时输出的是 "(no sessions found …)" 占位,没有表头)。
 cat > "$SESS_DIR/2026/01/01/$SESSION_ID.jsonl" <<EOF
@@ -42,7 +42,7 @@ EOF
 # 返回 CLI 自身的退出码;真实退出码同时记入 LAST_RC 供断言使用。
 run_cli() {
     local out="$1"; shift
-    HOME="$HOME_DIR" REFLECT_MODEL=mock/mock-1 "$BIN" "$@" > "$out" 2>&1
+    HOME="$HOME_DIR" ZHUYE_MODEL=mock/mock-1 "$BIN" "$@" > "$out" 2>&1
     LAST_RC=$?
 }
 

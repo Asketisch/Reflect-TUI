@@ -1,4 +1,4 @@
-//! `reflect-tui traces ...` —— 列 / 看本地 LLM 调用记录(`~/.reflect/traces/`)。
+//! `reflect-tui traces ...` —— 列 / 看本地 LLM 调用记录(`~/.zhuye/traces/`)。
 //!
 //! 与 `session` 子命令正交:数据来自 `reflect-telemetry` 的 model-io JSONL
 //! (每次 LLM 调用一条 `ModelIoRecord`)。`ls` 列 session 文件 + 调用次数 +
@@ -6,8 +6,8 @@
 //!
 //! 参照:`reflect-agent/crates/runtime/reflect-cli/src/traces.rs`。
 
-use reflect_rollout::index::list_sessions;
-use reflect_telemetry::{
+use zhuye_rollout::index::list_sessions;
+use zhuye_telemetry::{
     list_model_io_files, list_span_log_files, read_model_io_file, read_span_log_file,
     resolve_traces_dir,
 };
@@ -23,7 +23,7 @@ pub fn ls(limit: usize) -> anyhow::Result<()> {
     }
 
     // 读 rollout session 列表,用于把 session_id 映射成可读 title。
-    let sessions = list_sessions(&reflect_rollout::path::default_base()).unwrap_or_default();
+    let sessions = list_sessions(&zhuye_rollout::path::default_base()).unwrap_or_default();
 
     println!(
         "{:<36}  {:<20}  {:<5}  {:<12}  model",
@@ -114,7 +114,7 @@ pub fn show(id: &str) -> anyhow::Result<()> {
 }
 
 /// `reflect-tui traces spans [id] [--days N]` —— 展示 span 日志
-/// (`~/.reflect/traces/span-log/reflect-YYYY-MM-DD.jsonl`)。
+/// (`~/.zhuye/traces/span-log/reflect-YYYY-MM-DD.jsonl`)。
 ///
 /// - 不带 `id` → 展示最近 `--days` 天(默认 7)的全部 span 事件;
 /// - 带 `id`(完整 UUID 或前缀)→ 只看该 session 的事件。
@@ -275,12 +275,12 @@ mod tests {
         // v1.x:span 日志读取侧(`list_span_log_files` / `read_span_log_file`)。
         let tmp = tempdir().unwrap();
         let base = tmp.path();
-        let log_dir = base.join(reflect_telemetry::model::SPAN_LOG_SUBDIR);
+        let log_dir = base.join(zhuye_telemetry::model::SPAN_LOG_SUBDIR);
         fs::create_dir_all(&log_dir).unwrap();
         let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let path = log_dir.join(format!("reflect-{day}.jsonl"));
+        let path = log_dir.join(format!("zhuye-{day}.jsonl"));
         // `Level` / `SpanStatus` 的 serde 形态为小写。
-        let ev = r#"{"timestamp":"2026-07-31T00:00:00Z","level":"error","event":"model.request.failed","module":"reflect_core::graph::nodes::model_call","trace_id":"t1","span_id":"s1","session_id":"sess-1","turn_id":"turn-1","status":"failed","duration_ms":1200,"context":{"error":"ALL_CREDENTIALS_EXHAUSTED"}}"#;
+        let ev = r#"{"timestamp":"2026-07-31T00:00:00Z","level":"error","event":"model.request.failed","module":"zhuye_core::graph::nodes::model_call","trace_id":"t1","span_id":"s1","session_id":"sess-1","turn_id":"turn-1","status":"failed","duration_ms":1200,"context":{"error":"ALL_CREDENTIALS_EXHAUSTED"}}"#;
         fs::write(&path, format!("{ev}\n")).unwrap();
 
         let files = list_span_log_files(base, 7);
@@ -291,7 +291,7 @@ mod tests {
         assert_eq!(events[0].session_id.as_deref(), Some("sess-1"));
         assert_eq!(
             events[0].status,
-            Some(reflect_telemetry::SpanStatus::Failed),
+            Some(zhuye_telemetry::SpanStatus::Failed),
             "失败调用的 span 应带 failed 状态"
         );
     }
@@ -301,10 +301,10 @@ mod tests {
         // 带 id 时按 session 前缀过滤;命中不到的显示占位提示。
         let tmp = tempdir().unwrap();
         let base = tmp.path();
-        let log_dir = base.join(reflect_telemetry::model::SPAN_LOG_SUBDIR);
+        let log_dir = base.join(zhuye_telemetry::model::SPAN_LOG_SUBDIR);
         fs::create_dir_all(&log_dir).unwrap();
         let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let path = log_dir.join(format!("reflect-{day}.jsonl"));
+        let path = log_dir.join(format!("zhuye-{day}.jsonl"));
         let mk = |sid: &str, event: &str| {
             format!(
                 r#"{{"timestamp":"2026-07-31T00:00:00Z","level":"info","event":"{event}","module":"m","trace_id":"t1","span_id":"s1","session_id":"{sid}"}}"#

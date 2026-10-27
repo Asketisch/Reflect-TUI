@@ -1,9 +1,9 @@
 """P 组 —— 会话持久化:落盘、恢复、fork / rename / export、统计。
 
 锚点与路径规则来源(证据见 `tests/COVERAGE.md` §P 组):
-  - 会话文件:`~/.reflect/sessions/YYYY/MM/DD/<thread_id>.jsonl`
-  - 会话名:`~/.reflect/sessions/_names/<thread_id>.name`
-  - prompt 历史:`~/.reflect/prompt_history.jsonl`
+  - 会话文件:`~/.zhuye/sessions/YYYY/MM/DD/<thread_id>.jsonl`
+  - 会话名:`~/.zhuye/sessions/_names/<thread_id>.name`
+  - prompt 历史:`~/.zhuye/prompt_history.jsonl`
   - 恢复回填标记「已恢复历史会话」  tui/mod.rs(bootstrap 侧回填)
   - fork 提示「Resume with: reflect-tui --resume <child_id>」  cli/session.rs:383
 """
@@ -22,7 +22,7 @@ def _session_files(sandbox):
 
 
 def test_session_file_is_written(tui, sandbox, mock_script) -> None:
-    """P1 对话落盘到 `~/.reflect/sessions/YYYY/MM/DD/*.jsonl`。
+    """P1 对话落盘到 `~/.zhuye/sessions/YYYY/MM/DD/*.jsonl`。
 
     注意:引擎的 agent loop 会多次调用模型(mock 脚本被逐行消费,耗尽后
     回退默认回复),落盘的 assistant 消息是**最后一轮**的回复,不是脚本
@@ -41,7 +41,7 @@ def test_session_file_is_written(tui, sandbox, mock_script) -> None:
         s._pump(settle=1.5, max_wait=3.0)
 
     files = _session_files(sandbox)
-    assert files, f"应生成会话文件:{sandbox.home}/.reflect/sessions"
+    assert files, f"应生成会话文件:{sandbox.home}/.zhuye/sessions"
     records = [
         json.loads(line)
         for line in files[-1].read_text().splitlines()
@@ -69,14 +69,14 @@ def test_session_file_is_written(tui, sandbox, mock_script) -> None:
 
 
 def test_prompt_history_is_persisted(tui, sandbox) -> None:
-    """P2 prompt 历史落盘到 `~/.reflect/prompt_history.jsonl`。"""
+    """P2 prompt 历史落盘到 `~/.zhuye/prompt_history.jsonl`。"""
     with tui() as s:
         s.wait_boot(timeout=30)
         s.type_text("P2_PROMPT_MARKER")
         s.key("enter")
         time.sleep(1.5)
 
-    hist = sandbox.home / ".reflect" / "prompt_history.jsonl"
+    hist = sandbox.home / ".zhuye" / "prompt_history.jsonl"
     assert hist.is_file(), f"应生成 prompt 历史文件:{hist}"
     assert "P2_PROMPT_MARKER" in hist.read_text()
 
@@ -161,7 +161,7 @@ def test_resume_old_date_session_keeps_history_and_appends_to_original_file(
     session_id = src.stem
 
     # 挪到旧日期桶(2026/08/01),当天桶不再有该会话的文件。
-    old_dir = sandbox.home / ".reflect" / "sessions" / "2026" / "08" / "01"
+    old_dir = sandbox.home / ".zhuye" / "sessions" / "2026" / "08" / "01"
     old_dir.mkdir(parents=True, exist_ok=True)
     original = old_dir / src.name
     src.rename(original)
@@ -218,7 +218,7 @@ def test_resume_by_internal_session_id_of_externally_named_file(
 
 
 def test_session_name_is_written_by_rename(tui, sandbox, mock_script) -> None:
-    """P6 `/rename <name>` 写 `~/.reflect/sessions/_names/<id>.name`。"""
+    """P6 `/rename <name>` 写 `~/.zhuye/sessions/_names/<id>.name`。"""
     script = mock_script([text_reply("P6_REPLY")])
     with tui(script=script) as s:
         s.wait_boot(timeout=30)
@@ -244,18 +244,18 @@ def test_session_name_is_written_by_rename(tui, sandbox, mock_script) -> None:
         env=sandbox.env(),
     )
     assert r.returncode == 0, f"session rename 应成功: {r.stdout}{r.stderr}"
-    name_file = sandbox.home / ".reflect" / "sessions" / "_names" / f"{files[-1].stem}.name"
+    name_file = sandbox.home / ".zhuye" / "sessions" / "_names" / f"{files[-1].stem}.name"
     assert name_file.is_file(), f"应写会话名文件:{name_file}"
     assert "P6_RENAME" in name_file.read_text()
 
 
 def test_plan_mode_writes_plan_file(tui, sandbox, mock_script) -> None:
-    """P7 Plan 模式下 plan markdown 落盘到 `<workspace>/.reflect/plan/`。
+    """P7 Plan 模式下 plan markdown 落盘到 `<workspace>/.zhuye/plan/`。
 
     链路:`/plan <task>` → `Op::EnterPlanMode` → 引擎发 PlanRequest →
     TUI 弹「Enter Plan Mode」确认框(按 `1` 进入)→ **再发一条消息**才
     真正起轮次 → 模型调 `PlanWrite` 工具 → 写
-    `<ws>/.reflect/plan/<name>.md`。
+    `<ws>/.zhuye/plan/<name>.md`。
 
     注意:`/plan` 本身**不提交任务**(引擎只切模式并发 PlanRequest),
     所以必须再发一条消息,模型才会被调用。
@@ -288,11 +288,11 @@ def test_plan_mode_writes_plan_file(tui, sandbox, mock_script) -> None:
         deadline = time.monotonic() + 20
         plans: list = []
         while time.monotonic() < deadline:
-            plans = sandbox.workspace_files(".reflect/plan/*.md")
+            plans = sandbox.workspace_files(".zhuye/plan/*.md")
             if plans:
                 break
             time.sleep(0.5)
 
-    assert plans, f"应生成 plan 文件:{sandbox.cwd}/.reflect/plan/"
+    assert plans, f"应生成 plan 文件:{sandbox.cwd}/.zhuye/plan/"
     body = plans[-1].read_text()
     assert "P7_PLAN_BODY" in body, f"plan 正文应落盘:\n{body}"

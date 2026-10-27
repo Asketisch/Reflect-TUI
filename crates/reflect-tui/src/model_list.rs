@@ -1,14 +1,14 @@
 //! provider 模型清单的人读渲染(v1.5 模型发现接线)。
 //!
-//! 背景:submodule 的 `reflect_llm::model_catalog` 提供了 provider 的
+//! 背景:submodule 的 `zhuye_llm::model_catalog` 提供了 provider 的
 //! `/models` 清单端点解析 + 免费模型判定规则(`FreeModelRules`),而
-//! `reflect_config::fetch_catalog` 负责真正去拉清单。此前 TUI 的
+//! `zhuye_config::fetch_catalog` 负责真正去拉清单。此前 TUI 的
 //! `/model` 只回一句「display only」,**没有任何真实模型清单** —— 用户
 //! 看不到 provider 实际支持哪些模型、哪些是免费的。
 //!
 //! 本模块只做纯格式化(无 IO、无全局状态),便于单测覆盖。
 
-use reflect_llm::model_catalog::{FreeModelRules, ModelInfo};
+use zhuye_llm::model_catalog::{FreeModelRules, ModelInfo};
 
 /// 把 provider 模型清单格式化成给人看的多行文本。
 ///

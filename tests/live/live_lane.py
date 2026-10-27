@@ -31,9 +31,9 @@ OpenCode inference 车道:v2 客户端指纹门(UA / 会话头 / 逐字 read+she
 
 ## 隔离与安全
 
-- 每个用例一份独立 HOME + cwd(`~/.reflect/config.toml` 由本模块写入);
-- **清掉宿主环境里的 provider 凭据与 `REFLECT_MODEL`** —— 否则宿主的
-  付费 key 会串进免费车道,宿主的 `REFLECT_MODEL=mock/...` 会把真模型顶掉;
+- 每个用例一份独立 HOME + cwd(`~/.zhuye/config.toml` 由本模块写入);
+- **清掉宿主环境里的 provider 凭据与 `ZHUYE_MODEL`** —— 否则宿主的
+  付费 key 会串进免费车道,宿主的 `ZHUYE_MODEL=mock/...` 会把真模型顶掉;
 - 场景只喂**合成数据**,不把真实仓库内容 / 凭据喂给免费池(上游可能记录 prompt)。
 """
 
@@ -63,13 +63,13 @@ RETRIES = int(os.environ.get("REFLECT_LIVE_RETRIES", "2"))
 RETRY_DELAY = float(os.environ.get("REFLECT_LIVE_RETRY_DELAY", "5"))
 
 # 宿主环境里必须清掉的变量:宿主的付费 key 会串进免费车道,宿主的
-# `REFLECT_MODEL=mock/...` 会把真模型顶掉。置空即可 ——
+# `ZHUYE_MODEL=mock/...` 会把真模型顶掉。置空即可 ——
 # `reflect-config` 侧对空串按「未设置」处理。
 HOST_CRED_VARS = (
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
-    "REFLECT_MODEL",
-    "REFLECT_PROVIDER",
+    "ZHUYE_MODEL",
+    "ZHUYE_PROVIDER",
 )
 
 
@@ -155,7 +155,7 @@ def clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 
     ⚠️ **必须剔除 `HOME`**:`Sandbox.env()` 的顺序是「先设 `HOME=隔离目录`,
     再叠加 extra」—— extra 里若带宿主 `HOME`,会把隔离 HOME **覆盖掉**,
-    子进程就会读到用户真实的 `~/.reflect/config.toml`(provider / model
+    子进程就会读到用户真实的 `~/.zhuye/config.toml`(provider / model
     全部串味)。隔离 HOME 由调用方显式指定。
     """
     env = dict(os.environ)
@@ -183,7 +183,7 @@ def fetch_free_models(lane: Lane | None = None) -> list[str]:
     lane = lane or current_lane()
     with tempfile.TemporaryDirectory(prefix="reflect-live-models-") as tmp:
         home = Path(tmp) / "home"
-        (home / ".reflect").mkdir(parents=True)
+        (home / ".zhuye").mkdir(parents=True)
         # 清单命令只需要端点;model 写 "free" 让 `models pick` 语义一致。
         write_lane_config(home, model="free", lane=lane)
         env = clean_env({"HOME": str(home)})
@@ -313,7 +313,7 @@ def write_lane_config(
     lane: Lane | None = None,
     fallbacks: list[str] | None = None,
 ) -> Path:
-    """把车道配置写进隔离 HOME 的 `~/.reflect/config.toml`。
+    """把车道配置写进隔离 HOME 的 `~/.zhuye/config.toml`。
 
     - `model` 写具体 id(由矩阵选出)或 `"free"`(运行时从清单挑);
     - `fallbacks` 是**跨模型**降级链(429 / 全冷却时自动换模型继续本轮),
@@ -357,7 +357,7 @@ def write_lane_config(
             f'primary = "openai/{model}"',
             f"fallbacks = [{specs}]",
         ]
-    path = home / ".reflect" / "config.toml"
+    path = home / ".zhuye" / "config.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")
     return path
@@ -419,7 +419,7 @@ def rate_limited(screen: str) -> bool:
 
 def session_files(home: Path) -> list[Path]:
     """隔离 HOME 下的会话 JSONL 列表。"""
-    return sorted((home / ".reflect" / "sessions").glob("*/*/*/*.jsonl"))
+    return sorted((home / ".zhuye" / "sessions").glob("*/*/*/*.jsonl"))
 
 
 def assistant_message_count(home: Path) -> int:

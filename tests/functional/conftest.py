@@ -56,7 +56,7 @@ def mock_script(tmp_path: Path) -> Callable[[list[str]], Path]:
 def tui(sandbox: Sandbox) -> Iterator[Callable[..., TuiSession]]:
     """起 TUI 会话的工厂(自动收尾)。
 
-    默认注入 mock provider 环境(`REFLECT_MODEL=mock/mock-1`),零网络、
+    默认注入 mock provider 环境(`ZHUYE_MODEL=mock/mock-1`),零网络、
     免 API key;需要真实 provider 的用例显式传 `env=` 覆盖。
     """
     created: list[TuiSession] = []

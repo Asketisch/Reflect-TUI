@@ -464,7 +464,7 @@ pub(crate) enum ExternalEditorState {
 /// 先关停再退出的退出流程。
 pub(crate) struct ChatWidget {
     app_event_tx: AppEventSender,
-    reflect_op_target: ReflectOpTarget,
+    zhuye_op_target: ReflectOpTarget,
     bottom_pane: BottomPane,
     transcript: TranscriptState,
     config: Config,
@@ -502,8 +502,8 @@ pub(crate) struct ChatWidget {
     available_rate_limit_reset_credits: Option<i64>,
     next_rate_limit_reset_request_id: u64,
     plan_type: Option<PlanType>,
-    reflect_rate_limit_reached_type: Option<RateLimitReachedType>,
-    reflect_spend_control_reached: Option<bool>,
+    zhuye_rate_limit_reached_type: Option<RateLimitReachedType>,
+    zhuye_spend_control_reached: Option<bool>,
     rate_limit_warnings: RateLimitWarningState,
     warning_display_state: WarningDisplayState,
     rate_limit_switch_prompt: RateLimitSwitchPromptState,
@@ -871,7 +871,7 @@ impl ChatWidget {
         #[cfg(target_os = "windows")]
         let include_windows_sandbox_log =
             crate::tui_core::windows_sandbox::current_log_file_path_for_reflect_home(
-                &self.config.reflect_home,
+                &self.config.zhuye_home,
             )
             .is_file();
         #[cfg(not(target_os = "windows"))]
@@ -1594,10 +1594,10 @@ impl ChatWidget {
         if op.is_review() && !self.bottom_pane.is_task_running() {
             self.bottom_pane.set_task_running(/*running*/ true);
         }
-        match &self.reflect_op_target {
-            ReflectOpTarget::Direct(reflect_op_tx) => {
+        match &self.zhuye_op_target {
+            ReflectOpTarget::Direct(zhuye_op_tx) => {
                 crate::tui_core::session_log::log_outbound_op(&op);
-                if let Err(e) = reflect_op_tx.send(op) {
+                if let Err(e) = zhuye_op_tx.send(op) {
                     tracing::error!("failed to submit op: {e}");
                     return false;
                 }

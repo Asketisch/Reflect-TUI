@@ -306,10 +306,10 @@ impl ChatWidget {
 
     pub(super) fn handle_app_server_steer_rejected_error(
         &mut self,
-        reflect_error_info: &AppServerReflectErrorInfo,
+        zhuye_error_info: &AppServerReflectErrorInfo,
     ) -> bool {
         matches!(
-            reflect_error_info,
+            zhuye_error_info,
             AppServerReflectErrorInfo::ActiveTurnNotSteerable { .. }
         ) && self.enqueue_rejected_steer()
     }
@@ -390,7 +390,7 @@ impl ChatWidget {
 
     pub(super) fn on_rate_limit_error(&mut self, error_kind: RateLimitErrorKind, message: String) {
         let usage_limit_error = matches!(error_kind, RateLimitErrorKind::UsageLimit);
-        let rate_limit_reached_type = self.reflect_rate_limit_reached_type.clone().map(|kind| {
+        let rate_limit_reached_type = self.zhuye_rate_limit_reached_type.clone().map(|kind| {
             if usage_limit_error {
                 match kind {
                     RateLimitReachedType::WorkspaceOwnerCreditsDepleted => {
@@ -405,7 +405,7 @@ impl ChatWidget {
                 kind
             }
         });
-        self.reflect_rate_limit_reached_type = rate_limit_reached_type.clone();
+        self.zhuye_rate_limit_reached_type = rate_limit_reached_type.clone();
         match rate_limit_reached_type {
             Some(RateLimitReachedType::WorkspaceOwnerCreditsDepleted) => {
                 self.on_error(
@@ -436,13 +436,13 @@ impl ChatWidget {
     pub(super) fn handle_non_retry_error(
         &mut self,
         message: String,
-        reflect_error_info: Option<AppServerReflectErrorInfo>,
+        zhuye_error_info: Option<AppServerReflectErrorInfo>,
     ) {
-        if reflect_error_info
+        if zhuye_error_info
             .as_ref()
             .is_some_and(|info| self.handle_app_server_steer_rejected_error(info))
         {
-        } else if reflect_error_info
+        } else if zhuye_error_info
             .as_ref()
             .is_some_and(is_app_server_cyber_policy_error)
         {
@@ -460,7 +460,7 @@ impl ChatWidget {
             self.add_to_history(history_cell::new_safety_access_block_event());
             self.request_redraw();
             self.maybe_send_next_queued_input();
-        } else if let Some(info) = reflect_error_info
+        } else if let Some(info) = zhuye_error_info
             .as_ref()
             .and_then(app_server_rate_limit_error_kind)
         {

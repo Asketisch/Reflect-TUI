@@ -20,7 +20,7 @@ pub(crate) struct ServiceTierCommand {
 /// 插件 slash 命令弹窗条目(bootstrap 期从插件命令注册表快照)。
 ///
 /// `name` 是命令全名(如 `demo:hello`,不带前导 `/`),与
-/// `reflect_plugin::expand_user_input` 的查找键一致;`description`
+/// `zhuye_plugin::expand_user_input` 的查找键一致;`description`
 /// 来自命令 md frontmatter,可为空。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PluginCommandEntry {

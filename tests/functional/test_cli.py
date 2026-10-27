@@ -43,7 +43,7 @@ def seeded(sandbox):
     """
     sid = "33333333-4444-4555-8666-777777777777"
     day = Path("2026/01/01")
-    path = sandbox.home / ".reflect" / "sessions" / day / f"{sid}.jsonl"
+    path = sandbox.home / ".zhuye" / "sessions" / day / f"{sid}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "\n".join(
@@ -190,11 +190,11 @@ def test_traces_spans_filters_by_session(sandbox) -> None:
     """C9 `traces spans <id>` 按 session 前缀过滤。"""
     import datetime
 
-    span_dir = sandbox.home / ".reflect" / "traces" / "log"
+    span_dir = sandbox.home / ".zhuye" / "traces" / "log"
     span_dir.mkdir(parents=True, exist_ok=True)
     day = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
     sid = "88888888-9999-4aaa-8bbb-cccccccccccc"
-    (span_dir / f"reflect-{day}.jsonl").write_text(
+    (span_dir / f"zhuye-{day}.jsonl").write_text(
         json.dumps(
             {
                 "timestamp": "2026-01-01T00:00:00Z",

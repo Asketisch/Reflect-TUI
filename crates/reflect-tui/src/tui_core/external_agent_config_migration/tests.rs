@@ -69,7 +69,7 @@ fn sample_items() -> Vec<ExternalAgentConfigMigrationItem> {
         ExternalAgentConfigMigrationItem {
             item_type: ExternalAgentConfigMigrationItemType::Config,
             description:
-                "Migrate /Users/alex/.claude/settings.json into /Users/alex/.reflect/config.toml"
+                "Migrate /Users/alex/.claude/settings.json into /Users/alex/.zhuye/config.toml"
                     .to_string(),
             cwd: None,
             details: None,
@@ -115,7 +115,7 @@ fn sample_items_with_memory() -> Vec<ExternalAgentConfigMigrationItem> {
             1,
             ExternalAgentConfigMigrationItem {
                 item_type: ExternalAgentConfigMigrationItemType::Memory,
-                description: "Migrate memory files from /Users/alex/.claude/projects to /Users/alex/.reflect/memories/extensions/external_agent_import/resources".to_string(),
+                description: "Migrate memory files from /Users/alex/.claude/projects to /Users/alex/.zhuye/memories/extensions/external_agent_import/resources".to_string(),
                 cwd: None,
                 details: Some(crate::app_server_protocol::MigrationDetails {
                     memory: vec!["project".to_string()],
@@ -187,7 +187,7 @@ fn secondary_source_customize_snapshot() {
     let items = vec![ExternalAgentConfigMigrationItem {
         item_type: ExternalAgentConfigMigrationItemType::Config,
         description:
-            "Migrate /Users/alex/.cursor/cli-config.json into /Users/alex/.reflect/config.toml"
+            "Migrate /Users/alex/.cursor/cli-config.json into /Users/alex/.zhuye/config.toml"
                 .to_string(),
         cwd: None,
         details: None,

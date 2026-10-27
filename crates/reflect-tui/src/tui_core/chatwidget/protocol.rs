@@ -136,7 +136,7 @@ impl ChatWidget {
                     ));
                     self.handle_non_retry_error(
                         notification.error.message,
-                        notification.error.reflect_error_info,
+                        notification.error.zhuye_error_info,
                     );
                 }
             }
@@ -269,7 +269,7 @@ impl ChatWidget {
                     {
                         self.last_non_retry_error = None;
                     } else {
-                        self.handle_non_retry_error(error.message, error.reflect_error_info);
+                        self.handle_non_retry_error(error.message, error.zhuye_error_info);
                     }
                 } else {
                     self.last_non_retry_error = None;

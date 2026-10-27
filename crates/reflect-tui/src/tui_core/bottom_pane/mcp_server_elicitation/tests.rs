@@ -309,7 +309,7 @@ fn tool_suggestion_meta_is_parsed_into_request_payload() {
             "Suggest Google Calendar",
             empty_object_schema(),
             Some(serde_json::json!({
-                "reflect_approval_kind": "tool_suggestion",
+                "zhuye_approval_kind": "tool_suggestion",
                 "tool_type": "connector",
                 "suggest_type": "install",
                 "suggest_reason": "Plan and reference events from your calendar",
@@ -342,7 +342,7 @@ fn plugin_tool_suggestion_meta_without_install_url_is_parsed_into_request_payloa
             "Suggest Slack",
             empty_object_schema(),
             Some(serde_json::json!({
-                "reflect_approval_kind": "tool_suggestion",
+                "zhuye_approval_kind": "tool_suggestion",
                 "tool_type": "plugin",
                 "suggest_type": "install",
                 "suggest_reason": "Install the Slack plugin to search messages",

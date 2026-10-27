@@ -256,7 +256,7 @@ pub enum SlashOutcome {
     ExitPlan,
     /// v1.x：`/mode <name>` 直接设定权限模式(发 `Op::SetPermissionMode`)。
     SetMode {
-        mode: reflect_protocol::PermissionMode,
+        mode: zhuye_protocol::PermissionMode,
     },
     /// v1.x：`/mode`(空参)/`/mode cycle`/Shift+Tab/Tab(空输入) 循环权限模式
     /// (发 `Op::CyclePermissionMode`)。
@@ -266,7 +266,7 @@ pub enum SlashOutcome {
     /// v1.x `/goal <text>`：进入目标模式（发 `Op::EnterGoalMode`）。
     ///
     /// `verify_command` / `token_budget` 来自 `--verify <cmd>` / `--budget <n>`
-    /// 选项 —— `Op::EnterGoalMode` 把它们交给引擎的 `reflect_goal::GoalController`,
+    /// 选项 —— `Op::EnterGoalMode` 把它们交给引擎的 `zhuye_goal::GoalController`,
     /// 此前 TUI 硬编码 `None`,校验命令与预算上限从 TUI 侧无法设置。
     EnterGoal {
         goal: String,
@@ -276,10 +276,10 @@ pub enum SlashOutcome {
     /// v1.x `/goal clear`：退出目标模式（发 `Op::ExitGoalMode`）。
     ExitGoal,
     /// v1.5 `/goal`（无参）：显示目标模式状态快照（权威读口）。
-    /// 由调用方从 `AgentThread::goal_snapshot()` 取 `reflect_goal::GoalState`。
+    /// 由调用方从 `AgentThread::goal_snapshot()` 取 `zhuye_goal::GoalState`。
     ShowGoal,
     /// v1.x `/lsp`：显示语言服务诊断状态（文档数 / 诊断条数）。
-    /// 由调用方从 `reflect_lsp::DiagnosticRegistry` 取数。
+    /// 由调用方从 `zhuye_lsp::DiagnosticRegistry` 取数。
     ShowLsp,
     /// v1.x `/todo`：显示 agent 当前的待办清单。
     /// 由调用方从 `AgentConfig::todos_slot` 取数。
@@ -356,7 +356,7 @@ pub enum SlashOutcome {
     SubmitAsUser(String),
 }
 
-/// v1.6：`/prompt` 子命令动作（镜像 `reflect_protocol::PromptAction`；
+/// v1.6：`/prompt` 子命令动作（镜像 `zhuye_protocol::PromptAction`；
 /// 协议类型未派生 `PartialEq`/`Eq`，不能直接进 `SlashOutcome`）。
 ///
 /// 解析语义与 headless 的 `expand_prompt_slash` 一致：`list`（含空参）查询，
@@ -369,10 +369,10 @@ pub enum PromptSlashAction {
 
 impl PromptSlashAction {
     /// 映射到协议 `PromptAction`（构造 `Op::PromptCommand` 时消费）。
-    pub fn into_protocol(self) -> reflect_protocol::PromptAction {
+    pub fn into_protocol(self) -> zhuye_protocol::PromptAction {
         match self {
-            Self::List => reflect_protocol::PromptAction::List,
-            Self::Switch { layer } => reflect_protocol::PromptAction::Switch { layer },
+            Self::List => zhuye_protocol::PromptAction::List,
+            Self::Switch { layer } => zhuye_protocol::PromptAction::Switch { layer },
         }
     }
 }
@@ -402,9 +402,9 @@ impl ReasoningEffort {
             _ => None,
         }
     }
-    /// 映射到 `reflect_protocol::item::ReasoningEffortMirror`。
-    pub fn to_mirror(self) -> reflect_protocol::item::ReasoningEffortMirror {
-        use reflect_protocol::item::ReasoningEffortMirror as M;
+    /// 映射到 `zhuye_protocol::item::ReasoningEffortMirror`。
+    pub fn to_mirror(self) -> zhuye_protocol::item::ReasoningEffortMirror {
+        use zhuye_protocol::item::ReasoningEffortMirror as M;
         match self {
             Self::Low => M::Low,
             Self::Medium => M::Medium,
@@ -862,8 +862,8 @@ pub fn dispatch_slash(text: &str) -> SlashOutcome {
 ///
 /// 接受 `as_str()` 形式（`auto` / `prompt` / `plan` / `accept_edits` / `bubble` / `bypass`）
 /// 以及常见别名（`accept`、`accept-edits`、`yes`）。未知 → `None`（调用方提示用法）。
-pub fn parse_permission_mode(name: &str) -> Option<reflect_protocol::PermissionMode> {
-    use reflect_protocol::PermissionMode as P;
+pub fn parse_permission_mode(name: &str) -> Option<zhuye_protocol::PermissionMode> {
+    use zhuye_protocol::PermissionMode as P;
     match name.trim().to_ascii_lowercase().as_str() {
         "auto" => Some(P::Auto),
         "prompt" => Some(P::Prompt),
@@ -1093,10 +1093,10 @@ mod sanitize_tests {
     fn prompt_slash_action_maps_to_protocol() {
         assert!(matches!(
             PromptSlashAction::List.into_protocol(),
-            reflect_protocol::PromptAction::List
+            zhuye_protocol::PromptAction::List
         ));
         match (PromptSlashAction::Switch { layer: None }).into_protocol() {
-            reflect_protocol::PromptAction::Switch { layer } => {
+            zhuye_protocol::PromptAction::Switch { layer } => {
                 assert_eq!(layer, None);
             }
             other => panic!("Switch(None) 映射错误: {other:?}"),
@@ -1136,7 +1136,7 @@ mod sanitize_tests {
 
     #[test]
     fn dispatch_slash_mode_sets_named_mode() {
-        use reflect_protocol::PermissionMode;
+        use zhuye_protocol::PermissionMode;
         match dispatch_slash("/mode plan") {
             SlashOutcome::SetMode { mode } => assert_eq!(mode, PermissionMode::Plan),
             other => panic!("/mode plan 应产出 SetMode, 实为 {other:?}"),
@@ -1225,11 +1225,11 @@ mod sanitize_tests {
     fn reasoning_effort_to_mirror() {
         assert_eq!(
             ReasoningEffort::Low.to_mirror(),
-            reflect_protocol::item::ReasoningEffortMirror::Low
+            zhuye_protocol::item::ReasoningEffortMirror::Low
         );
         assert_eq!(
             ReasoningEffort::High.to_mirror(),
-            reflect_protocol::item::ReasoningEffortMirror::High
+            zhuye_protocol::item::ReasoningEffortMirror::High
         );
     }
 

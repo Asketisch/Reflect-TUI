@@ -159,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn reflect_live_wrap_preserves_cjk_width() {
+    fn zhuye_live_wrap_preserves_cjk_width() {
         let mut rb = RowBuilder::new(6);
         rb.push_fragment("😀😀 你好");
         assert_eq!(
@@ -172,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn reflect_take_prefix_respects_unicode_width() {
+    fn zhuye_take_prefix_respects_unicode_width() {
         let (prefix, suffix, width) = take_prefix_by_width("你好世界", 4);
         assert_eq!(prefix, "你好");
         assert_eq!(suffix, "世界");
@@ -180,14 +180,14 @@ mod tests {
     }
 
     #[test]
-    fn reflect_usable_content_width_exhausted_returns_none() {
+    fn zhuye_usable_content_width_exhausted_returns_none() {
         use crate::tui_core::width::usable_content_width;
         assert_eq!(usable_content_width(2, 2), None);
         assert_eq!(usable_content_width(5, 4), Some(1));
     }
 
     #[test]
-    fn reflect_adaptive_wrap_breaks_long_token() {
+    fn zhuye_adaptive_wrap_breaks_long_token() {
         use crate::tui_core::wrapping::adaptive_wrap_line;
         let line = ratatui::text::Line::from("aaaaaa");
         let lines = adaptive_wrap_line(&line, RtOptions::new(3));
@@ -200,13 +200,13 @@ mod tests {
     }
 
     #[test]
-    fn reflect_markdown_render_basic() {
+    fn zhuye_markdown_render_basic() {
         let text = render_markdown_text("hello world");
         assert!(!text.lines.is_empty());
     }
 
     #[test]
-    fn reflect_markdown_render_respects_width() {
+    fn zhuye_markdown_render_respects_width() {
         let text = render_markdown_text("a very long sentence without strong breaks");
         assert!(text.lines.iter().all(|l| l.width() <= 200));
     }

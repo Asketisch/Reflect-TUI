@@ -24,27 +24,26 @@ fn write_pet_manifest(manifest: &str) -> tempfile::TempDir {
 }
 
 fn load_pet_from_dir(dir: &tempfile::TempDir) -> Pet {
-    Pet::load_with_reflect_home(dir.path().to_str().unwrap(), /*reflect_home*/ None).unwrap()
+    Pet::load_with_reflect_home(dir.path().to_str().unwrap(), /*zhuye_home*/ None).unwrap()
 }
 
 fn load_pet_error_from_dir(dir: &tempfile::TempDir) -> anyhow::Error {
-    Pet::load_with_reflect_home(dir.path().to_str().unwrap(), /*reflect_home*/ None).unwrap_err()
+    Pet::load_with_reflect_home(dir.path().to_str().unwrap(), /*zhuye_home*/ None).unwrap_err()
 }
 
 #[test]
 fn load_builtin_pet_uses_app_catalog_storage() {
-    let reflect_home = tempfile::tempdir().unwrap();
-    super::super::asset_pack::write_test_pack(reflect_home.path());
+    let zhuye_home = tempfile::tempdir().unwrap();
+    super::super::asset_pack::write_test_pack(zhuye_home.path());
 
-    let pet =
-        Pet::load_with_reflect_home("dewey", /*reflect_home*/ Some(reflect_home.path())).unwrap();
+    let pet = Pet::load_with_reflect_home("dewey", /*zhuye_home*/ Some(zhuye_home.path())).unwrap();
 
     assert_eq!(pet.id, "dewey");
     assert_eq!(pet.display_name, "Dewey");
     assert_eq!(pet.description, "A tidy duck for calm workspace days");
     assert_eq!(
         pet.spritesheet_path,
-        super::super::builtin_spritesheet_path(reflect_home.path(), "dewey-spritesheet-v4.webp")
+        super::super::builtin_spritesheet_path(zhuye_home.path(), "dewey-spritesheet-v4.webp")
     );
     assert_eq!(pet.frame_width, 192);
     assert_eq!(pet.frame_height, 208);
@@ -182,7 +181,7 @@ fn load_pet_json_path_uses_containing_directory() {
 
     let pet = Pet::load_with_reflect_home(
         dir.path().join("pet.json").to_str().unwrap(),
-        /*reflect_home*/ None,
+        /*zhuye_home*/ None,
     )
     .unwrap();
     let expected = dir.path().join("spritesheet.webp").canonicalize().unwrap();
@@ -193,8 +192,8 @@ fn load_pet_json_path_uses_containing_directory() {
 #[test]
 fn custom_pet_selector_loads_reflect_home_pet_manifest() {
     let dir = write_minimal_pet();
-    let reflect_home = tempfile::tempdir().unwrap();
-    let pet_dir = reflect_home.path().join("pets").join("chefito");
+    let zhuye_home = tempfile::tempdir().unwrap();
+    let pet_dir = zhuye_home.path().join("pets").join("chefito");
     fs::create_dir_all(&pet_dir).unwrap();
     fs::copy(dir.path().join("pet.json"), pet_dir.join("pet.json")).unwrap();
     fs::copy(
@@ -205,7 +204,7 @@ fn custom_pet_selector_loads_reflect_home_pet_manifest() {
 
     let pet = Pet::load_with_reflect_home(
         &custom_pet_selector("chefito"),
-        /*reflect_home*/ Some(reflect_home.path()),
+        /*zhuye_home*/ Some(zhuye_home.path()),
     )
     .unwrap();
 
@@ -216,8 +215,8 @@ fn custom_pet_selector_loads_reflect_home_pet_manifest() {
 #[test]
 fn custom_pet_selector_falls_back_to_legacy_avatar_manifest() {
     let dir = write_minimal_pet();
-    let reflect_home = tempfile::tempdir().unwrap();
-    let avatar_dir = reflect_home.path().join("avatars").join("legacy");
+    let zhuye_home = tempfile::tempdir().unwrap();
+    let avatar_dir = zhuye_home.path().join("avatars").join("legacy");
     fs::create_dir_all(&avatar_dir).unwrap();
     fs::copy(dir.path().join("pet.json"), avatar_dir.join("avatar.json")).unwrap();
     fs::copy(
@@ -228,7 +227,7 @@ fn custom_pet_selector_falls_back_to_legacy_avatar_manifest() {
 
     let pet = Pet::load_with_reflect_home(
         &custom_pet_selector("legacy"),
-        /*reflect_home*/ Some(reflect_home.path()),
+        /*zhuye_home*/ Some(zhuye_home.path()),
     )
     .unwrap();
 
@@ -238,8 +237,8 @@ fn custom_pet_selector_falls_back_to_legacy_avatar_manifest() {
 
 #[test]
 fn custom_pet_rejects_spritesheet_path_escape() {
-    let reflect_home = tempfile::tempdir().unwrap();
-    let pet_dir = reflect_home.path().join("pets").join("escape");
+    let zhuye_home = tempfile::tempdir().unwrap();
+    let pet_dir = zhuye_home.path().join("pets").join("escape");
     fs::create_dir_all(&pet_dir).unwrap();
     fs::write(
         pet_dir.join("pet.json"),
@@ -252,7 +251,7 @@ fn custom_pet_rejects_spritesheet_path_escape() {
 
     let err = Pet::load_with_reflect_home(
         &custom_pet_selector("escape"),
-        /*reflect_home*/ Some(reflect_home.path()),
+        /*zhuye_home*/ Some(zhuye_home.path()),
     )
     .unwrap_err();
 

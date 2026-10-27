@@ -8,7 +8,7 @@
     (实测循环为 Auto(无标记) → AcceptEdits → Plan → Auto,三态)
   - 复制通知 `⚠ Copied last reply (N chars) to clipboard.`
   - 编辑器通知 `⚠ External editor closed; content loaded into composer.`
-  - 历史文件 `~/.reflect/prompt_history.jsonl` 每行一个**裸 JSON 字符串**
+  - 历史文件 `~/.zhuye/prompt_history.jsonl` 每行一个**裸 JSON 字符串**
     (`prompt_history.rs:149 parse_entries`,不是对象)
   - vim 提示 `⚠ Vim mode enabled — composer now in NORMAL. Press i to enter INSERT.`
     + HUD identity 行 `[NORMAL]` 段
@@ -35,7 +35,7 @@ def _identity_line(s) -> str:
 
 def _seed_history(sandbox: Sandbox, entries: list[str]) -> Path:
     """预置 prompt 历史:每行一个裸 JSON 字符串(与引擎落盘形态一致)。"""
-    hist = sandbox.home / ".reflect" / "prompt_history.jsonl"
+    hist = sandbox.home / ".zhuye" / "prompt_history.jsonl"
     hist.parent.mkdir(parents=True, exist_ok=True)
     hist.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
     return hist

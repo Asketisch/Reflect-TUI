@@ -219,16 +219,16 @@ impl ChatWidget {
                 && (matches!(source, RateLimitSnapshotSource::AccountUsage)
                     || snapshot.spend_control_reached.is_some())
             {
-                self.reflect_spend_control_reached = snapshot.spend_control_reached;
+                self.zhuye_spend_control_reached = snapshot.spend_control_reached;
             }
             if (is_reflect_limit && matches!(source, RateLimitSnapshotSource::AccountUsage))
                 || snapshot.rate_limit_reached_type.is_some()
             {
-                self.reflect_rate_limit_reached_type = snapshot.rate_limit_reached_type.clone();
+                self.zhuye_rate_limit_reached_type = snapshot.rate_limit_reached_type.clone();
             }
-            let workspace_limit_reached = self.reflect_spend_control_reached == Some(true)
+            let workspace_limit_reached = self.zhuye_spend_control_reached == Some(true)
                 || matches!(
-                    self.reflect_rate_limit_reached_type,
+                    self.zhuye_rate_limit_reached_type,
                     Some(
                         RateLimitReachedType::WorkspaceOwnerCreditsDepleted
                             | RateLimitReachedType::WorkspaceMemberCreditsDepleted
@@ -317,8 +317,8 @@ impl ChatWidget {
             }
         } else {
             self.rate_limit_snapshots_by_limit_id.clear();
-            self.reflect_rate_limit_reached_type = None;
-            self.reflect_spend_control_reached = None;
+            self.zhuye_rate_limit_reached_type = None;
+            self.zhuye_spend_control_reached = None;
         }
         self.refresh_status_line();
     }

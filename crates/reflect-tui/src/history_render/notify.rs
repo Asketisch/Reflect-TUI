@@ -66,7 +66,7 @@ impl NotifyTriggers {
 
     /// 同 [`Self::message`],但受 `[notifications.tui]` 段的开关约束。
     ///
-    /// v1.x 接线:submodule 的 `reflect_config::TuiNotificationsSection` 定义了
+    /// v1.x 接线:submodule 的 `zhuye_config::TuiNotificationsSection` 定义了
     /// `enabled` / `on_turn_complete` / `on_approval` / `on_error` 四个开关,
     /// 此前 TUI 完全没读 —— 用户在配置里写了 `on_turn_complete = false`
     /// 也不会有任何效果(死配置)。
@@ -74,7 +74,7 @@ impl NotifyTriggers {
     /// `section = None`(配置段缺省)→ 全开(与内置默认一致)。
     pub fn message_with(
         &self,
-        section: Option<&reflect_config::TuiNotificationsSection>,
+        section: Option<&zhuye_config::TuiNotificationsSection>,
     ) -> Option<String> {
         if let Some(e) = &self.error {
             if !allows(section, NotifyTrigger::Error) {
@@ -117,7 +117,7 @@ pub enum NotifyTrigger {
 ///
 /// 段缺省 → 全开(与内置默认一致);`enabled = false` → 全关。
 pub fn allows(
-    section: Option<&reflect_config::TuiNotificationsSection>,
+    section: Option<&zhuye_config::TuiNotificationsSection>,
     trigger: NotifyTrigger,
 ) -> bool {
     let Some(s) = section else {
@@ -138,7 +138,7 @@ pub fn allows(
 /// v1.x 接线:`[notifications.tui].channels` 此前同样是死配置 —— 通道永远
 /// 由终端探测自动决定,用户指定的后端不生效。
 pub fn channel_method(
-    section: Option<&reflect_config::TuiNotificationsSection>,
+    section: Option<&zhuye_config::TuiNotificationsSection>,
 ) -> crate::config_compat::types::NotificationMethod {
     use crate::config_compat::types::NotificationMethod;
     let Some(s) = section else {
@@ -167,8 +167,8 @@ mod tests {
         on_turn_complete: bool,
         on_approval: bool,
         on_error: bool,
-    ) -> reflect_config::TuiNotificationsSection {
-        reflect_config::TuiNotificationsSection {
+    ) -> zhuye_config::TuiNotificationsSection {
+        zhuye_config::TuiNotificationsSection {
             enabled,
             on_turn_complete,
             on_approval,
@@ -294,7 +294,7 @@ mod tests {
         t2.observe(&UiEventKind::ApprovalNeeded {
             id: "a".into(),
             summary: "Bash: rm -rf /".into(),
-            kind: reflect_protocol::ApprovalKind::Tool {
+            kind: zhuye_protocol::ApprovalKind::Tool {
                 tool_name: "bash".into(),
                 args: serde_json::json!({"cmd": "rm -rf /"}),
             },
@@ -335,7 +335,7 @@ mod tests {
         t.observe(&UiEventKind::ApprovalNeeded {
             id: "r1".into(),
             summary: "run Bash".into(),
-            kind: reflect_protocol::ApprovalKind::Tool {
+            kind: zhuye_protocol::ApprovalKind::Tool {
                 tool_name: "bash".into(),
                 args: serde_json::Value::Null,
             },
@@ -360,7 +360,7 @@ mod tests {
         t.observe(&UiEventKind::ApprovalNeeded {
             id: "r2".into(),
             summary: "x".into(),
-            kind: reflect_protocol::ApprovalKind::Tool {
+            kind: zhuye_protocol::ApprovalKind::Tool {
                 tool_name: "x".into(),
                 args: serde_json::Value::Null,
             },
@@ -376,7 +376,7 @@ mod tests {
         t.observe(&UiEventKind::ApprovalNeeded {
             id: "r3".into(),
             summary: "y".into(),
-            kind: reflect_protocol::ApprovalKind::Tool {
+            kind: zhuye_protocol::ApprovalKind::Tool {
                 tool_name: "y".into(),
                 args: serde_json::Value::Null,
             },

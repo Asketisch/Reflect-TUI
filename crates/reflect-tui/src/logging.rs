@@ -12,7 +12,7 @@
 //! # 策略(对标业界最佳实践)
 //!
 //! - stderr **是 tty**(用户没重定向)→ 日志写文件
-//!   `~/.reflect/logs/tui-<YYYY-MM-DD>.log`,终端保持干净。
+//!   `~/.zhuye/logs/tui-<YYYY-MM-DD>.log`,终端保持干净。
 //! - stderr **不是 tty**(用户 `2>debug.log`)→ 仍写 stderr,保留
 //!   `RUST_LOG=debug reflect tui 2>debug.log` 调试工作流(见 USER_GUIDE)。
 //!
@@ -72,21 +72,21 @@ impl<'a> std::io::Write for LogFileWriter<'a> {
     }
 }
 
-/// 解析默认日志文件路径:`$HOME/.reflect/logs/tui-<YYYY-MM-DD>.log`。
-/// HOME 缺失时回退 `./.reflect/logs/...`。
+/// 解析默认日志文件路径:`$HOME/.zhuye/logs/tui-<YYYY-MM-DD>.log`。
+/// HOME 缺失时回退 `./.zhuye/logs/...`。
 fn default_log_path() -> std::path::PathBuf {
     let date = chrono::Local::now().format("%Y-%m-%d");
     let base = std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    base.join(".reflect")
+    base.join(".zhuye")
         .join("logs")
         .join(format!("tui-{date}.log"))
 }
 
 /// 持有 OTLP exporter 的 guard —— 必须活到进程退出,否则 provider 被
 /// shutdown,in-flight span 全部丢失。泄漏到进程全局(`OnceLock`)。
-static OTEL_GUARD: std::sync::OnceLock<reflect_config::ExporterGuard> = std::sync::OnceLock::new();
+static OTEL_GUARD: std::sync::OnceLock<zhuye_config::ExporterGuard> = std::sync::OnceLock::new();
 
 /// 安装 tracing subscriber。仅生效一次(`Once` 守护)。
 ///
@@ -100,12 +100,12 @@ static OTEL_GUARD: std::sync::OnceLock<reflect_config::ExporterGuard> = std::syn
 /// 此前 TUI 完全没有这层,`[analytics] enabled = true` 是死配置
 /// (headless `reflect-exec` 有)。exporter 启动失败只降级 + warn,
 /// 不阻塞启动(与 reflect-exec 同款 fail-closed 语义)。
-pub fn init(analytics: Option<&reflect_config::AnalyticsSection>) {
+pub fn init(analytics: Option<&zhuye_config::AnalyticsSection>) {
     static TRACING_INIT: Once = Once::new();
     TRACING_INIT.call_once(|| {
         // v1.3 接线:先起 OTLP exporter(设全局 TracerProvider),再把
         // OpenTelemetryLayer 加进 registry。失败 → None,不阻塞。
-        let otel_guard = analytics.and_then(reflect_config::init_exporter);
+        let otel_guard = analytics.and_then(zhuye_config::init_exporter);
 
         // stderr 是 tty → 用户没重定向,写文件避免污染 TUI。
         // 否则(stderr 已被 `2>file` 重定向)→ 仍写 stderr,保留文档工作流。
@@ -143,7 +143,7 @@ pub fn init(analytics: Option<&reflect_config::AnalyticsSection>) {
 
 /// 装 subscriber(fmt + 可选 OTLP layer)。OTLP layer 仅在 exporter 起来时
 /// 挂载,避免空 subscriber 增加开销。
-fn install_subscriber<W>(writer: W, otel_guard: Option<&reflect_config::ExporterGuard>)
+fn install_subscriber<W>(writer: W, otel_guard: Option<&zhuye_config::ExporterGuard>)
 where
     // `Send + Sync` 是必需的:subscriber 最终要装进全局 `Dispatch`,后者要求
     // `Subscriber + Send + Sync + 'static`。泛型 writer 若不带这两个 bound,

@@ -1,4 +1,4 @@
-//! `reflect_utils_string` 的 vendored 替代实现。
+//! `zhuye_utils_string` 的 vendored 替代实现。
 //!
 //! 提供 `normalize_markdown_hash_location_suffix`,同时处理
 //! 标题标签规范化(location hash normalization)与位置引用转换。

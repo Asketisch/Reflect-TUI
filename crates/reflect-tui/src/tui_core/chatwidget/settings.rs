@@ -216,8 +216,8 @@ impl ChatWidget {
         // 账户更新通知是身份边界。不同账户之间可见的账户字段可能完全相同，因此始终使账户作用域的请求和数据失效。
         self.clear_pending_token_activity_refreshes();
         self.clear_pending_rate_limit_reset_requests();
-        self.reflect_rate_limit_reached_type = None;
-        self.reflect_spend_control_reached = None;
+        self.zhuye_rate_limit_reached_type = None;
+        self.zhuye_spend_control_reached = None;
         self.rate_limit_warnings = RateLimitWarningState::default();
         self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Idle;
         self.bottom_pane

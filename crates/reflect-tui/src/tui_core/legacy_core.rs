@@ -44,7 +44,7 @@ pub mod config {
     #[derive(Debug, Clone, Default)]
     pub struct Config {
         pub cwd: crate::utils_absolute_path::AbsolutePathBuf,
-        pub reflect_home: PathBuf,
+        pub zhuye_home: PathBuf,
         pub model: Option<String>,
         pub approvals: ApprovalsConfig,
         pub permissions: Permissions,
@@ -152,7 +152,7 @@ pub mod config {
             self
         }
         pub fn with_reflect_home(mut self, home: PathBuf) -> Self {
-            self.config.reflect_home = home;
+            self.config.zhuye_home = home;
             self
         }
         pub fn with_model(mut self, model: String) -> Self {

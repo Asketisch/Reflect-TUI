@@ -15,8 +15,8 @@ fn tool_stream_enabled() -> bool {
 }
 
 /// 压缩策略的人读标签。协议枚举没有 `Display`,集中在这里避免散落 match。
-fn compact_strategy_label(s: &reflect_protocol::ContextCompactedStrategy) -> &'static str {
-    use reflect_protocol::ContextCompactedStrategy as S;
+fn compact_strategy_label(s: &zhuye_protocol::ContextCompactedStrategy) -> &'static str {
+    use zhuye_protocol::ContextCompactedStrategy as S;
     match s {
         S::Noop => "no-op",
         S::Microcompact => "microcompact",
@@ -44,8 +44,8 @@ fn format_window_secs(secs: u64) -> String {
     out
 }
 
-pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
-    use reflect_protocol::event_msg::EventMsg::*;
+pub(super) fn convert_event(event: zhuye_protocol::Event) -> Option<UiEvent> {
+    use zhuye_protocol::event_msg::EventMsg::*;
     let kind = match event.msg {
         TurnStarted(ts) => UiEventKind::TurnStarted {
             turn_id: ts.turn_id,
@@ -92,7 +92,7 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
             plan_id: pr.plan_id.to_string(),
             reason: pr.reason,
         },
-        // v1.x Plan mode 草稿预览:agent 写盘到 .reflect/plan/ 后即时推到
+        // v1.x Plan mode 草稿预览:agent 写盘到 .zhuye/plan/ 后即时推到
         // TUI 对话流,**不**触发 approval modal。多次写盘即多次刷新,
         // 让用户实时看到 plan 演化。
         PlanDraftUpdated(pdu) => UiEventKind::PlanDraftUpdated {
@@ -106,9 +106,9 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
         },
         ApprovalRequest(ar) => {
             let name = match &ar.kind {
-                reflect_protocol::ApprovalKind::Tool { tool_name, .. } => tool_name.clone(),
-                reflect_protocol::ApprovalKind::Hook { hook_name, .. } => hook_name.clone(),
-                reflect_protocol::ApprovalKind::Plan { summary, .. } => summary.clone(),
+                zhuye_protocol::ApprovalKind::Tool { tool_name, .. } => tool_name.clone(),
+                zhuye_protocol::ApprovalKind::Hook { hook_name, .. } => hook_name.clone(),
+                zhuye_protocol::ApprovalKind::Plan { summary, .. } => summary.clone(),
             };
             UiEventKind::ApprovalNeeded {
                 id: ar.request_id,
@@ -161,11 +161,11 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
         // 补省略号/完成标记区分方向。
         SubagentProgress(sp) => {
             let text = match sp.kind {
-                reflect_protocol::event_msg::SubagentProgressKind::Message => sp.text,
-                reflect_protocol::event_msg::SubagentProgressKind::ToolBegin => {
+                zhuye_protocol::event_msg::SubagentProgressKind::Message => sp.text,
+                zhuye_protocol::event_msg::SubagentProgressKind::ToolBegin => {
                     format!("{} …", sp.text)
                 }
-                reflect_protocol::event_msg::SubagentProgressKind::ToolEnd => {
+                zhuye_protocol::event_msg::SubagentProgressKind::ToolEnd => {
                     format!("{} ✓", sp.text)
                 }
             };
@@ -180,7 +180,7 @@ pub(super) fn convert_event(event: reflect_protocol::Event) -> Option<UiEvent> {
                 .map(|c| crate::adapter::SubagentView {
                     id: c.child_id,
                     role: c.role,
-                    running: matches!(c.state, reflect_protocol::SubagentRunStateMirror::Running),
+                    running: matches!(c.state, zhuye_protocol::SubagentRunStateMirror::Running),
                     current_tool: c.current_tool,
                     iteration: c.iteration,
                     total_tokens: c.total_tokens,
@@ -391,9 +391,9 @@ pub(super) fn extract_diff(blocks: &[ContentBlock]) -> Option<String> {
 
 /// 协议 PlanStepStatus → 本地 PlanStepStatus(供 /tasks overlay)。
 pub(super) fn map_plan_step_status(
-    s: reflect_protocol::PlanStepStatus,
+    s: zhuye_protocol::PlanStepStatus,
 ) -> crate::events::PlanStepStatus {
-    use reflect_protocol::PlanStepStatus as P;
+    use zhuye_protocol::PlanStepStatus as P;
     match s {
         P::Pending => crate::events::PlanStepStatus::Pending,
         P::InProgress => crate::events::PlanStepStatus::InProgress,
@@ -405,7 +405,7 @@ pub(super) fn map_plan_step_status(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reflect_protocol::{ContentBlock, ToolOutput};
+    use zhuye_protocol::{ContentBlock, ToolOutput};
 
     #[test]
     fn format_window_secs_is_human_readable() {
@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn compact_strategy_label_covers_all_variants() {
-        use reflect_protocol::ContextCompactedStrategy as S;
+        use zhuye_protocol::ContextCompactedStrategy as S;
         assert_eq!(compact_strategy_label(&S::Noop), "no-op");
         assert_eq!(compact_strategy_label(&S::Microcompact), "microcompact");
         assert_eq!(compact_strategy_label(&S::SmartPrune), "smart prune");
@@ -428,11 +428,11 @@ mod tests {
     fn context_compacted_becomes_visible_notice() {
         // 回归:ContextCompacted 曾被整条丢弃 —— 用户看到的是「上下文突然变短」
         // /「模型突然不记得前面的话」,界面上没有任何解释。
-        let ev = reflect_protocol::Event::new(
+        let ev = zhuye_protocol::Event::new(
             "t",
-            reflect_protocol::event_msg::EventMsg::ContextCompacted(
-                reflect_protocol::ContextCompactedEvent {
-                    strategy: reflect_protocol::ContextCompactedStrategy::SmartPrune,
+            zhuye_protocol::event_msg::EventMsg::ContextCompacted(
+                zhuye_protocol::ContextCompactedEvent {
+                    strategy: zhuye_protocol::ContextCompactedStrategy::SmartPrune,
                     removed_messages: 7,
                     before_tokens: 90_000,
                     after_tokens: 20_000,
@@ -453,10 +453,10 @@ mod tests {
     #[test]
     fn quota_exhausted_becomes_visible_notice() {
         // 同上:配额耗尽被丢弃时,回合只会莫名停住,用户拿不到任何可决策信息。
-        let ev = reflect_protocol::Event::new(
+        let ev = zhuye_protocol::Event::new(
             "t",
-            reflect_protocol::event_msg::EventMsg::QuotaExhausted(
-                reflect_protocol::QuotaExhaustedEvent {
+            zhuye_protocol::event_msg::EventMsg::QuotaExhausted(
+                zhuye_protocol::QuotaExhaustedEvent {
                     provider: "anthropic".into(),
                     label: "plan-a".into(),
                     used_tokens: 1_000_000,
@@ -478,10 +478,10 @@ mod tests {
     #[test]
     fn prompt_list_becomes_visible_notice() {
         // v1.6.1:`/prompt list` 的应答必须可见 —— 可用层 + 生效层是用户
-        // 编辑 `.reflect/prompts/*.md` 时唯一的事实来源。
-        let ev = reflect_protocol::Event::new(
+        // 编辑 `.zhuye/prompts/*.md` 时唯一的事实来源。
+        let ev = zhuye_protocol::Event::new(
             "t",
-            reflect_protocol::event_msg::EventMsg::PromptList(reflect_protocol::PromptListEvent {
+            zhuye_protocol::event_msg::EventMsg::PromptList(zhuye_protocol::PromptListEvent {
                 available: vec!["default".into(), "claude".into()],
                 current_spec: "anthropic/claude-sonnet-5-5".into(),
                 active_layers: vec!["claude".into()],
@@ -499,9 +499,9 @@ mod tests {
 
     #[test]
     fn prompt_list_empty_active_layers_means_embedded_default() {
-        let ev = reflect_protocol::Event::new(
+        let ev = zhuye_protocol::Event::new(
             "t",
-            reflect_protocol::event_msg::EventMsg::PromptList(reflect_protocol::PromptListEvent {
+            zhuye_protocol::event_msg::EventMsg::PromptList(zhuye_protocol::PromptListEvent {
                 available: vec!["default".into()],
                 current_spec: "openai/gpt-5.6".into(),
                 active_layers: vec![],
@@ -518,10 +518,10 @@ mod tests {
     #[test]
     fn prompt_switched_becomes_visible_notice() {
         // v1.6.1:`/prompt reload` 的应答 —— 用户需要确认重扫已生效。
-        let ev = reflect_protocol::Event::new(
+        let ev = zhuye_protocol::Event::new(
             "t",
-            reflect_protocol::event_msg::EventMsg::PromptSwitched(
-                reflect_protocol::PromptSwitchedEvent {
+            zhuye_protocol::event_msg::EventMsg::PromptSwitched(
+                zhuye_protocol::PromptSwitchedEvent {
                     action: "reload".into(),
                     active_layers: vec!["claude".into()],
                 },
@@ -619,7 +619,7 @@ mod tests {
     #[test]
     fn toolcallend_diff_preserved_through_convert() {
         // 端到端:ToolCallEnd 带 Diff 块 → UiEventKind::ToolCompleted.diff 有值。
-        let te = reflect_protocol::ToolCallEndEvent {
+        let te = zhuye_protocol::ToolCallEndEvent {
             call_id: "c1".into(),
             output: ToolOutput {
                 content: vec![diff_block("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b")],
@@ -631,10 +631,8 @@ mod tests {
             elapsed_ms: 5,
             child_id: None,
         };
-        let ev = reflect_protocol::Event::new(
-            "id",
-            reflect_protocol::event_msg::EventMsg::ToolCallEnd(te),
-        );
+        let ev =
+            zhuye_protocol::Event::new("id", zhuye_protocol::event_msg::EventMsg::ToolCallEnd(te));
         let ui = convert_event(ev).unwrap();
         match ui.kind {
             UiEventKind::ToolCompleted { diff, .. } => {
@@ -649,9 +647,9 @@ mod tests {
 
     #[test]
     fn convert_plan_ready_carries_plan_id_and_markdown() {
-        use reflect_protocol::event_msg::EventMsg;
-        use reflect_protocol::{event_msg::PlanReadyEvent, item::PlanId};
-        let ev = reflect_protocol::Event::new(
+        use zhuye_protocol::event_msg::EventMsg;
+        use zhuye_protocol::{event_msg::PlanReadyEvent, item::PlanId};
+        let ev = zhuye_protocol::Event::new(
             "id-pr",
             EventMsg::PlanReady(PlanReadyEvent {
                 plan_id: PlanId::default(),
@@ -676,10 +674,10 @@ mod tests {
     #[test]
     fn convert_permission_mode_changed_not_dropped() {
         // 回归:此前 PermissionModeChanged 在 conversion 里 return None(丢弃)。
-        use reflect_protocol::PermissionMode;
-        use reflect_protocol::event_msg::EventMsg;
-        use reflect_protocol::event_msg::PermissionModeChangedEvent;
-        let ev = reflect_protocol::Event::new(
+        use zhuye_protocol::PermissionMode;
+        use zhuye_protocol::event_msg::EventMsg;
+        use zhuye_protocol::event_msg::PermissionModeChangedEvent;
+        let ev = zhuye_protocol::Event::new(
             "id-pmc",
             EventMsg::PermissionModeChanged(PermissionModeChangedEvent {
                 from: PermissionMode::Auto,
@@ -698,11 +696,11 @@ mod tests {
 
     #[test]
     fn convert_plan_approved_and_rejected_not_dropped() {
-        use reflect_protocol::event_msg::EventMsg;
-        use reflect_protocol::event_msg::{PlanApprovedEvent, PlanRejectedEvent};
-        use reflect_protocol::item::PlanId;
+        use zhuye_protocol::event_msg::EventMsg;
+        use zhuye_protocol::event_msg::{PlanApprovedEvent, PlanRejectedEvent};
+        use zhuye_protocol::item::PlanId;
 
-        let ev_a = reflect_protocol::Event::new(
+        let ev_a = zhuye_protocol::Event::new(
             "id-pa",
             EventMsg::PlanApproved(PlanApprovedEvent {
                 plan_id: PlanId::default(),
@@ -711,7 +709,7 @@ mod tests {
         let ui_a = convert_event(ev_a).expect("PlanApproved 不应被丢弃");
         assert!(matches!(ui_a.kind, UiEventKind::PlanApproved { .. }));
 
-        let ev_r = reflect_protocol::Event::new(
+        let ev_r = zhuye_protocol::Event::new(
             "id-pr",
             EventMsg::PlanRejected(PlanRejectedEvent {
                 plan_id: PlanId::default(),
@@ -727,17 +725,17 @@ mod tests {
 
     // ── v1.x 问答事件转换(agent 阻塞等待,必须转交互事件而非 Notice) ──
 
-    fn sample_question(multi: bool) -> reflect_protocol::Question {
-        reflect_protocol::Question::new(
+    fn sample_question(multi: bool) -> zhuye_protocol::Question {
+        zhuye_protocol::Question::new(
             "Approach",
             "Use which approach?",
             vec![
-                reflect_protocol::QuestionOption {
+                zhuye_protocol::QuestionOption {
                     label: "Fast".into(),
                     description: "quick but rough".into(),
                     preview: None,
                 },
-                reflect_protocol::QuestionOption {
+                zhuye_protocol::QuestionOption {
                     label: "Thorough".into(),
                     description: "slow but solid".into(),
                     preview: None,
@@ -750,8 +748,8 @@ mod tests {
 
     #[test]
     fn convert_ask_user_question_routes_to_panel_event() {
-        use reflect_protocol::event_msg::{AskUserQuestionEvent, EventMsg};
-        let ev = reflect_protocol::Event::new(
+        use zhuye_protocol::event_msg::{AskUserQuestionEvent, EventMsg};
+        let ev = zhuye_protocol::Event::new(
             "id-q",
             EventMsg::AskUserQuestion(AskUserQuestionEvent::new(
                 "req-1",
@@ -774,9 +772,9 @@ mod tests {
 
     #[test]
     fn convert_ask_user_input_routes_to_composer_capture_event() {
-        use reflect_protocol::event_msg::AskUserInputEvent;
-        use reflect_protocol::event_msg::EventMsg;
-        let ev = reflect_protocol::Event::new(
+        use zhuye_protocol::event_msg::AskUserInputEvent;
+        use zhuye_protocol::event_msg::EventMsg;
+        let ev = zhuye_protocol::Event::new(
             "id-ai",
             EventMsg::AskUserInput(AskUserInputEvent {
                 request_id: "req-2".into(),

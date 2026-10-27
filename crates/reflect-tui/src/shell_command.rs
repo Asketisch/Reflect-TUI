@@ -1,4 +1,4 @@
-//! `reflect_shell_command` 的最小化移植版本。
+//! `zhuye_shell_command` 的最小化移植版本。
 //!
 //! 为常见的 `bash -lc "script"` / `zsh -lc "script"` / `sh -c "script"`
 //! 形态实现 `extract_shell_command`(TUI 在 exec-command 显示时

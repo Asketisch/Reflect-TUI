@@ -1,8 +1,8 @@
 //! 通过 /pets 斜杠命令配置的环境终端宠物。
 //!
 //! TUI 有意区分对待内置和自定义宠物：
-//! 内置宠物是按需获取到受管理 REFLECT_HOME 缓存的版本化应用资产，
-//! 而自定义宠物是完全归用户所有的数据，位于 `$REFLECT_HOME/pets/<pet-id>/pet.json`
+//! 内置宠物是按需获取到受管理 ZHUYE_HOME 缓存的版本化应用资产，
+//! 而自定义宠物是完全归用户所有的数据，位于 `$ZHUYE_HOME/pets/<pet-id>/pet.json`
 //! 或遗留头像目录下。
 //!
 //! 本模块持有该区分所涉及的 TUI 侧契约：
@@ -55,10 +55,10 @@ pub(crate) const DISABLED_PET_ID: &str = "disabled";
 /// 资产获取边界。
 pub(crate) fn ensure_builtin_pack_for_pet(
     pet_id: &str,
-    reflect_home: &std::path::Path,
+    zhuye_home: &std::path::Path,
 ) -> Result<()> {
     if let Some(pet) = catalog::builtin_pet(pet_id) {
-        asset_pack::ensure_builtin_pet(reflect_home, pet)?;
+        asset_pack::ensure_builtin_pet(zhuye_home, pet)?;
     }
     Ok(())
 }

@@ -1,7 +1,7 @@
 //! Pet 清单加载与归一化。
 //!
 //! 本模块将多种用户可见的选择器转换为一种归一化的内存 `Pet`：内置目录 id、
-//! REFLECT_HOME 下的自定义 pet id、遗留头像目录，以及供测试或
+//! ZHUYE_HOME 下的自定义 pet id、遗留头像目录，以及供测试或
 //! 本地迭代使用的显式文件系统路径。
 //!
 //! 关键不变量是：每个返回的 `Pet` 都指向一个已经存在且尺寸兼容
@@ -73,22 +73,22 @@ impl Pet {
     ///
     /// 选择器可以是内置目录 pet、自定义 pet id、遗留
     /// 头像 id 或显式路径。本方法假定任何内置资产
-    /// 已物化到 REFLECT_HOME；若调用方跳过了
+    /// 已物化到 ZHUYE_HOME；若调用方跳过了
     /// 资产获取步骤，则首次使用时会在缺失 sprite 表处报错。
-    pub(super) fn load_with_reflect_home(value: &str, reflect_home: Option<&Path>) -> Result<Self> {
+    pub(super) fn load_with_reflect_home(value: &str, zhuye_home: Option<&Path>) -> Result<Self> {
         if path_like(value) {
             return load_pet_path(value);
         }
 
         if let Some(custom_id) = value.strip_prefix(CUSTOM_PET_PREFIX) {
-            return load_custom_pet(custom_id, reflect_home);
+            return load_custom_pet(custom_id, zhuye_home);
         }
 
         if let Some(builtin) = catalog::builtin_pet(value) {
-            return load_builtin_pet(builtin, reflect_home);
+            return load_builtin_pet(builtin, zhuye_home);
         }
 
-        load_custom_pet(value, reflect_home)
+        load_custom_pet(value, zhuye_home)
     }
 
     pub fn frame_count(&self) -> usize {
@@ -157,9 +157,9 @@ struct AnimationSpec {
     fallback: String,
 }
 
-fn load_builtin_pet(pet: catalog::BuiltinPet, reflect_home: Option<&Path>) -> Result<Pet> {
-    let reflect_home = reflect_home.context("REFLECT_HOME is not available")?;
-    let spritesheet_path = super::builtin_spritesheet_path(reflect_home, pet.spritesheet_file);
+fn load_builtin_pet(pet: catalog::BuiltinPet, zhuye_home: Option<&Path>) -> Result<Pet> {
+    let zhuye_home = zhuye_home.context("ZHUYE_HOME is not available")?;
+    let spritesheet_path = super::builtin_spritesheet_path(zhuye_home, pet.spritesheet_file);
     if !spritesheet_path.exists() {
         bail!("missing spritesheet {}", spritesheet_path.display());
     }
@@ -178,14 +178,14 @@ fn load_builtin_pet(pet: catalog::BuiltinPet, reflect_home: Option<&Path>) -> Re
     })
 }
 
-fn load_custom_pet(value: &str, reflect_home: Option<&Path>) -> Result<Pet> {
-    let reflect_home = reflect_home.context("REFLECT_HOME is not available")?;
-    let pet_dir = reflect_home.join("pets").join(value);
+fn load_custom_pet(value: &str, zhuye_home: Option<&Path>) -> Result<Pet> {
+    let zhuye_home = zhuye_home.context("ZHUYE_HOME is not available")?;
+    let pet_dir = zhuye_home.join("pets").join(value);
     if pet_dir.join("pet.json").is_file() {
         return load_pet_manifest(&pet_dir, "pet.json", value, &custom_pet_cache_id(value));
     }
 
-    let avatar_dir = reflect_home.join("avatars").join(value);
+    let avatar_dir = zhuye_home.join("avatars").join(value);
     if avatar_dir.join("avatar.json").is_file() {
         return load_pet_manifest(
             &avatar_dir,

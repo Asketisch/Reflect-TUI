@@ -14,19 +14,19 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 fn context_with_fragment(fragment: &str) -> (TempDir, InlineVisualizationContext) {
-    let reflect_home = tempfile::tempdir().expect("temp reflect home");
+    let zhuye_home = tempfile::tempdir().expect("temp reflect home");
     let thread_id = ThreadId::new();
-    let context = InlineVisualizationContext::new(reflect_home.path(), thread_id)
+    let context = InlineVisualizationContext::new(zhuye_home.path(), thread_id)
         .expect("UUIDv7 thread id should provide a timestamp");
     fs::create_dir_all(&context.thread_dir).expect("create visualization directory");
     fs::write(context.thread_dir.join("chart.html"), fragment).expect("write fragment");
-    (reflect_home, context)
+    (zhuye_home, context)
 }
 
 #[test]
 fn granted_visualization_root_overrides_thread_id_derived_root() {
-    let reflect_home = tempfile::tempdir().expect("temp reflect home");
-    let granted_context = InlineVisualizationContext::new(reflect_home.path(), ThreadId::new())
+    let zhuye_home = tempfile::tempdir().expect("temp reflect home");
+    let granted_context = InlineVisualizationContext::new(zhuye_home.path(), ThreadId::new())
         .expect("granted context");
     fs::create_dir_all(&granted_context.thread_dir).expect("create granted directory");
     fs::write(
@@ -36,7 +36,7 @@ fn granted_visualization_root_overrides_thread_id_derived_root() {
     .expect("write fragment");
 
     let context = InlineVisualizationContext::new_with_writable_roots(
-        reflect_home.path(),
+        zhuye_home.path(),
         ThreadId::new(),
         [granted_context.thread_dir.as_path()],
     )
@@ -126,8 +126,8 @@ fn hides_incomplete_streaming_directive() {
 
 #[test]
 fn unavailable_artifact_has_explicit_fallback() {
-    let reflect_home = tempfile::tempdir().expect("temp reflect home");
-    let context = InlineVisualizationContext::new(reflect_home.path(), ThreadId::new())
+    let zhuye_home = tempfile::tempdir().expect("temp reflect home");
+    let context = InlineVisualizationContext::new(zhuye_home.path(), ThreadId::new())
         .expect("UUIDv7 thread id should provide a timestamp");
 
     assert_eq!(
@@ -279,8 +279,8 @@ fn finalized_agent_cell_replays_visualization_link() {
 
 #[test]
 fn transcript_overlay_remeasures_visualization_when_artifact_becomes_available() {
-    let reflect_home = tempfile::tempdir().expect("temp reflect home");
-    let context = InlineVisualizationContext::new(reflect_home.path(), ThreadId::new())
+    let zhuye_home = tempfile::tempdir().expect("temp reflect home");
+    let context = InlineVisualizationContext::new(zhuye_home.path(), ThreadId::new())
         .expect("UUIDv7 thread id should provide a timestamp");
     fs::create_dir_all(&context.thread_dir).expect("create visualization directory");
 

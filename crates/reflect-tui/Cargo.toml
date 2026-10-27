@@ -65,22 +65,22 @@ two-face = "0.5"
 unicode-segmentation = "1"
 itertools = "0.13"
 supports-color = "3"
-reflect-core     = { workspace = true }
-reflect-protocol = { workspace = true }
-reflect-llm      = { workspace = true }
-reflect-tools    = { workspace = true }
-reflect-config   = { workspace = true }
-reflect-stream      = { workspace = true }
-reflect-sandbox     = { workspace = true }
-reflect-mcp         = { workspace = true }
-reflect-rollout  = { workspace = true }
-reflect-telemetry = { workspace = true }
-reflect-agent-def = { workspace = true }
-reflect-plugin   = { workspace = true }
-reflect-ast      = { workspace = true }
+zhuye-core     = { workspace = true }
+zhuye-protocol = { workspace = true }
+zhuye-llm      = { workspace = true }
+zhuye-tools    = { workspace = true }
+zhuye-config   = { workspace = true }
+zhuye-stream      = { workspace = true }
+zhuye-sandbox     = { workspace = true }
+zhuye-mcp         = { workspace = true }
+zhuye-rollout  = { workspace = true }
+zhuye-telemetry = { workspace = true }
+zhuye-agent-def = { workspace = true }
+zhuye-plugin   = { workspace = true }
+zhuye-ast      = { workspace = true }
 # v1.1.0 Phase 6:任务面板 + 团队胶囊 —— 镜像 `reflect_task` 的 `TaskStatus`
 # 枚举与 `TodoRow`(避免 TUI 反向依赖整个 reflect_task store 层)。
-reflect-task     = { workspace = true }
+zhuye-task     = { workspace = true }
 # v1.3 接线:`[analytics]` 段 → OTLP/HTTP exporter。`reflect_config::init_exporter`
 # 设全局 TracerProvider,`tracing_opentelemetry::layer()` 把业务 span 转成
 # OTLP span。此前 TUI 完全没有这层,`[analytics] enabled = true` 是死配置。
@@ -89,16 +89,16 @@ tracing-opentelemetry = { workspace = true }
 # v1.x:接入 SubAgentFactory —— 让 TUI agent 也能派发子 agent (call_<role>)。
 # 此前仅 headless (reflect-exec) 注册了 SubAgentFactory，TUI agent 工具表
 # 里没有 call_explorer，导致用户要求"派发 subagent"时模型反馈"无此工具"。
-reflect-subagent = { workspace = true }
+zhuye-subagent = { workspace = true }
 # v1.x:多 agent 讨论(`reflect_discussion::cli::run` 是库内可复用入口)与
 # cargo audit 安全扫描(`reflect_integration::security_scan`)。此前只有
 # `reflect-cli` 的 `reflect discussion` / `reflect security` 能触达。
-reflect-discussion  = { workspace = true }
-reflect-integration = { workspace = true }
+zhuye-discussion  = { workspace = true }
+zhuye-integration = { workspace = true }
 # v1.5:目标模式状态快照读口 —— `AgentThread::goal_snapshot()` 返回
 # `reflect_goal::GoalState`(跑到第几轮 / LM 判定 / 累计 token / 被什么卡住)。
 # 此前 TUI 只有「Goal mode entered.」一句,拿不到任何权威状态。
-reflect-goal = { workspace = true }
+zhuye-goal = { workspace = true }
 # Inline visualization requires base64 encoding and random ID generation.
 base64     = "0.22"
 rand       = "0.8"
@@ -121,26 +121,26 @@ sha2          = "0.10"
 async-trait   = { workspace = true }
 # Slash 命令 v1.x:`/skills` 反射 `SkillsCatalog::names()`,由 reflect-exec bootstrap
 # 期通过 `App::install_services` 注入(见 `slash.rs` 与 `app.rs`)。
-reflect-skills   = { workspace = true }
+zhuye-skills   = { workspace = true }
 # S2:`/memory ls/show/edit/add/remove` 反射 `MemoryStore::list_agent_types`。
 # 用 trait object,因为 `InMemoryStore` / `FileMemoryStore` / `CompositeMemoryStore`
 # 三个 impl 都要塞进同一个字段。
-reflect-memory   = { workspace = true }
+zhuye-memory   = { workspace = true }
 # S2:`/tasks ls/show/clear` 反射 `TaskManager::list_tasks`(async),通过
 # `pollster::block_on` 在 sync App 方法里 block 调用。
 pollster         = { workspace = true }
 # S5a:`/permissions ls/allow/deny` 反射 `PermissionResolver` + `PermissionStore`。
-reflect-permissions = { workspace = true }
-reflect-hooks       = { workspace = true }
+zhuye-permissions = { workspace = true }
+zhuye-hooks       = { workspace = true }
 # v1.x 能力接线:对齐 headless(reflect-exec)的 M4/M5/M6/LSP 装配 ——
 # LLM 摘要压缩、session notes、post-compact 恢复、LSP 语言服务、prompt 构建。
 # tokenizer feature:v1.4 D1 真实分词器 —— 压缩触发阈值与上下文估算用
 # tiktoken,替代默认 len/3.5 启发式(bootstrap 期 set_global_estimator)。
-reflect-compact  = { workspace = true, features = ["tokenizer"] }
-reflect-notes    = { workspace = true }
-reflect-recovery = { workspace = true }
-reflect-lsp      = { workspace = true }
-reflect-prompt   = { workspace = true }
+zhuye-compact  = { workspace = true, features = ["tokenizer"] }
+zhuye-notes    = { workspace = true }
+zhuye-recovery = { workspace = true }
+zhuye-lsp      = { workspace = true }
+zhuye-prompt   = { workspace = true }
 syntect             = "5"
 # v0.4.x markdown 渲染:把 Agent/User 文本的 CommonMark 结构(标题/强调/
 # 列表/引用/表格/代码块)渲染成带样式的 ratatui `Line`。代码块仍走 syntect。

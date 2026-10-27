@@ -33,9 +33,9 @@ use rmcp::model::Content;
 
 const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 async fn test_config() -> Config {
-    let reflect_home = std::env::temp_dir();
+    let zhuye_home = std::env::temp_dir();
     ConfigBuilder::default()
-        .reflect_home(reflect_home.clone())
+        .zhuye_home(zhuye_home.clone())
         .build()
         .await
         .expect("config")

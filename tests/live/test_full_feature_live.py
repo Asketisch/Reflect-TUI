@@ -432,7 +432,7 @@ def session_id_of(cli_output: str) -> str:
 
 
 def test_live_plan_markdown_is_written(live_tui, live_sandbox: Sandbox) -> None:
-    """F8 Plan 模式:plan markdown 真落盘到 `.reflect/plan/`。"""
+    """F8 Plan 模式:plan markdown 真落盘到 `.zhuye/plan/`。"""
     with live_tui(cols=130, rows=44) as s:
         s.wait_boot(timeout=30)
         _submit(s, "mode", "plan")
@@ -448,15 +448,15 @@ def test_live_plan_markdown_is_written(live_tui, live_sandbox: Sandbox) -> None:
         deadline = time.monotonic() + DRAIN_TIMEOUT
         while time.monotonic() < deadline:
             _skip_if_rate_limited(s)
-            if (live_sandbox.cwd / ".reflect" / "plan").is_dir() and any(
-                (live_sandbox.cwd / ".reflect" / "plan").glob("*.md")
+            if (live_sandbox.cwd / ".zhuye" / "plan").is_dir() and any(
+                (live_sandbox.cwd / ".zhuye" / "plan").glob("*.md")
             ):
                 break
             if "PLAN APPROVAL" in safe_text(s).upper():
                 break
             s._pump(settle=0.6, max_wait=1.2)
 
-    plan_dir = live_sandbox.cwd / ".reflect" / "plan"
+    plan_dir = live_sandbox.cwd / ".zhuye" / "plan"
     if not plan_dir.is_dir():
         pytest.skip("模型本轮没走 plan 流程(自由裁量),跳过")
     plans = list(plan_dir.glob("*.md"))
@@ -575,7 +575,7 @@ def test_live_model_free_resolves_from_catalog(live_tui, live_sandbox: Sandbox) 
     这是「免费模型发现」在真模型侧的闭环:配置只写 `free`,启动时从
     provider 清单接口挑一个免费模型,HUD 显示的是**真实 id**(不是占位串)。
     """
-    cfg = live_sandbox.home / ".reflect" / "config.toml"
+    cfg = live_sandbox.home / ".zhuye" / "config.toml"
     text = cfg.read_text()
     cfg.write_text(text.replace(f'model = "{_pinned_model(live_sandbox)}"', 'model = "free"'))
 
@@ -589,7 +589,7 @@ def test_live_model_free_resolves_from_catalog(live_tui, live_sandbox: Sandbox) 
 
 def test_live_model_free_disabled_fails(live_tui, live_sandbox: Sandbox) -> None:
     """F17 `model = "free"` + `[model_discovery] enabled = false` → 启动即报错。"""
-    cfg = live_sandbox.home / ".reflect" / "config.toml"
+    cfg = live_sandbox.home / ".zhuye" / "config.toml"
     text = cfg.read_text()
     cfg.write_text(
         text.replace(f'model = "{_pinned_model(live_sandbox)}"', 'model = "free"').replace(
@@ -613,7 +613,7 @@ def test_live_model_free_disabled_fails(live_tui, live_sandbox: Sandbox) -> None
 
 def _pinned_model(sandbox: Sandbox) -> str:
     """从车道配置里读出当前钉住的 model id。"""
-    cfg = sandbox.home / ".reflect" / "config.toml"
+    cfg = sandbox.home / ".zhuye" / "config.toml"
     for line in cfg.read_text().splitlines():
         if line.startswith("model = "):
             return line.split("=", 1)[1].strip().strip('"')
@@ -700,7 +700,7 @@ def test_live_vim_normal_mode(live_tui) -> None:
 
 def test_live_ctrl_r_history_search(live_tui, live_sandbox: Sandbox) -> None:
     """F23 Ctrl+R 反向搜索 prompt 历史并回填命中条目。"""
-    hist = live_sandbox.home / ".reflect" / "prompt_history.jsonl"
+    hist = live_sandbox.home / ".zhuye" / "prompt_history.jsonl"
     hist.parent.mkdir(parents=True, exist_ok=True)
     hist.write_text(
         "\n".join(json.dumps(e) for e in ["alpha live one", "beta live two"]) + "\n"
@@ -716,7 +716,7 @@ def test_live_ctrl_r_history_search(live_tui, live_sandbox: Sandbox) -> None:
 
 def test_live_up_recalls_history(live_tui, live_sandbox: Sandbox) -> None:
     """F24 ↑ 召回最近一条 prompt 历史。"""
-    hist = live_sandbox.home / ".reflect" / "prompt_history.jsonl"
+    hist = live_sandbox.home / ".zhuye" / "prompt_history.jsonl"
     hist.parent.mkdir(parents=True, exist_ok=True)
     hist.write_text(json.dumps("LIVE_HIST_LAST_ENTRY") + "\n")
     with live_tui() as s:
@@ -903,10 +903,10 @@ def _extract_plugins_section(toml_text: str) -> str:
 def _write_lane_config_keeping_plugins(home: Path, model: str) -> None:
     """写车道配置,但**保留**已有的 `[plugins]` 段。
 
-    `reflect plugin enable` 是把 `enabled_plugins` 写进 `~/.reflect/config.toml`
+    `reflect plugin enable` 是把 `enabled_plugins` 写进 `~/.zhuye/config.toml`
     的 —— 直接覆盖配置会把插件启用记录抹掉。
     """
-    cfg = home / ".reflect" / "config.toml"
+    cfg = home / ".zhuye" / "config.toml"
     original = cfg.read_text() if cfg.exists() else ""
     write_lane_config(home, model=model, lane=current_lane())
     plugins = _extract_plugins_section(original)
@@ -929,8 +929,8 @@ def test_live_plugin_surface(live_tui, plugin_home: str, live_model) -> None:
         "HOME": str(cfg_home),
         "OPENAI_API_KEY": "",
         "ANTHROPIC_API_KEY": "",
-        "REFLECT_MODEL": "",
-        "REFLECT_PROVIDER": "",
+        "ZHUYE_MODEL": "",
+        "ZHUYE_PROVIDER": "",
         "REFLECT_TUI_UPDATE_CHECK": "0",
     }
     with live_tui(env=env) as s:
@@ -963,8 +963,8 @@ def test_live_plugin_overlay(live_tui, plugin_home: str, live_model) -> None:
         "HOME": str(cfg_home),
         "OPENAI_API_KEY": "",
         "ANTHROPIC_API_KEY": "",
-        "REFLECT_MODEL": "",
-        "REFLECT_PROVIDER": "",
+        "ZHUYE_MODEL": "",
+        "ZHUYE_PROVIDER": "",
         "REFLECT_TUI_UPDATE_CHECK": "0",
     }
     with live_tui(env=env) as s:
@@ -1198,14 +1198,14 @@ def test_live_resume_with_invalid_id_fails_fast(live_tui) -> None:
 
 
 def test_live_prompt_history_persisted(live_tui, live_sandbox: Sandbox) -> None:
-    """F46 真实回合后 prompt 历史落盘(`~/.reflect/prompt_history.jsonl`)。"""
+    """F46 真实回合后 prompt 历史落盘(`~/.zhuye/prompt_history.jsonl`)。"""
     with live_tui() as s:
         s.wait_boot(timeout=30)
         s.type_text("HISTORY_PROBE_LINE 请只回复上面这段文字,不要做任何别的事")
         s.key("enter")
         _wait_turn_end(s, live_sandbox)
 
-    hist = live_sandbox.home / ".reflect" / "prompt_history.jsonl"
+    hist = live_sandbox.home / ".zhuye" / "prompt_history.jsonl"
     assert hist.exists(), "应有 prompt 历史文件"
     assert "HISTORY_PROBE_LINE" in hist.read_text(errors="replace"), "历史应含本轮输入"
 
@@ -1221,8 +1221,8 @@ def test_live_plugin_slash_command_submits(live_tui, plugin_home: str, live_mode
         "HOME": str(cfg_home),
         "OPENAI_API_KEY": "",
         "ANTHROPIC_API_KEY": "",
-        "REFLECT_MODEL": "",
-        "REFLECT_PROVIDER": "",
+        "ZHUYE_MODEL": "",
+        "ZHUYE_PROVIDER": "",
         "REFLECT_TUI_UPDATE_CHECK": "0",
     }
     with live_tui(env=env) as s:
@@ -1240,7 +1240,7 @@ def test_live_plugin_slash_command_submits(live_tui, plugin_home: str, live_mode
 
 def _first_user_text(home: Path, prefix: str) -> str | None:
     """从会话 JSONL 里找第一条以 `prefix` 开头的 user 消息正文。"""
-    for path in sorted((home / ".reflect" / "sessions").glob("*/*/*/*.jsonl")):
+    for path in sorted((home / ".zhuye" / "sessions").glob("*/*/*/*.jsonl")):
         try:
             lines = path.read_text(errors="replace").splitlines()
         except OSError:

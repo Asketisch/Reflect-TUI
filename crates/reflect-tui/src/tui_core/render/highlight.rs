@@ -9,7 +9,7 @@
 //! | `THEME` | `OnceLock<RwLock<Theme>>` | 活跃颜色主题，运行时可切换 |
 //! | `THEME_REVISION` | `AtomicU64` | 主题切换时使已渲染缓存失效 |
 //! | `THEME_OVERRIDE` | `OnceLock<Option<String>>` | 持久化用户偏好（仅写入一次） |
-//! | `REFLECT_HOME` | `OnceLock<Option<PathBuf>>` | 自定义 `.tmTheme` 文件发现根目录 |
+//! | `ZHUYE_HOME` | `OnceLock<Option<PathBuf>>` | 自定义 `.tmTheme` 文件发现根目录 |
 //!
 //! **生命周期：**在启动时调用一次 [`set_theme_override`]（在最终配置解析之后）以持久化用户偏好
 //! 并初始化 `THEME` 锁。此后，[`set_syntax_theme`] 和 [`current_syntax_theme`] 可用于
@@ -48,7 +48,7 @@ static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 static THEME: OnceLock<RwLock<Theme>> = OnceLock::new();
 static THEME_REVISION: AtomicU64 = AtomicU64::new(0);
 static THEME_OVERRIDE: OnceLock<Option<String>> = OnceLock::new();
-static REFLECT_HOME: OnceLock<Option<PathBuf>> = OnceLock::new();
+static ZHUYE_HOME: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 // Syntect/bat 在 alpha 通道编码 ANSI 调色板语义：
 // `a=0` => 通过 RGB 载荷索引 ANSI 调色板，`a=1` => 终端默认。
@@ -68,25 +68,25 @@ fn syntax_set() -> &'static SyntaxSet {
 /// 设置用户配置的高亮主题覆盖和 Reflect 主路径。
 ///
 /// 使用**最终解析的配置**调用此函数（在引导、恢复和 fork 重新加载完成后）。
-/// 首次调用将 `name` 和 `reflect_home` 持久化到 `OnceLock` 中，用于启动/默认主题解析。
+/// 首次调用将 `name` 和 `zhuye_home` 持久化到 `OnceLock` 中，用于启动/默认主题解析。
 ///
 /// 后续调用无法更改已持久化的 `OnceLock` 值，但仍会立即更新运行时主题以进行实时预览。
 ///
 /// 对于可操作的配置问题返回用户可见的警告，如未知/无效主题名称或重复覆盖持久化。
 pub(crate) fn set_theme_override(
     name: Option<String>,
-    reflect_home: Option<PathBuf>,
+    zhuye_home: Option<PathBuf>,
 ) -> Option<String> {
-    let warning = validate_theme_name(name.as_deref(), reflect_home.as_deref());
+    let warning = validate_theme_name(name.as_deref(), zhuye_home.as_deref());
     let override_set_ok = THEME_OVERRIDE.set(name.clone()).is_ok();
-    let reflect_home_set_ok = REFLECT_HOME.set(reflect_home.clone()).is_ok();
+    let zhuye_home_set_ok = ZHUYE_HOME.set(zhuye_home.clone()).is_ok();
     if THEME.get().is_some() {
         set_syntax_theme(resolve_theme_with_override(
             name.as_deref(),
-            reflect_home.as_deref(),
+            zhuye_home.as_deref(),
         ));
     }
-    if !override_set_ok || !reflect_home_set_ok {
+    if !override_set_ok || !zhuye_home_set_ok {
         // 实践中这不应该发生——set_theme_override 仅在启动时调用一次。
         // 保留此调试面包屑，以防将来添加第二个调用点。
         tracing::debug!("set_theme_override called more than once; OnceLock values unchanged");
@@ -96,20 +96,17 @@ pub(crate) fn set_theme_override(
 
 /// 检查主题名称是否解析为内置主题或自定义 `.tmTheme` 文件。
 /// 无法解析时返回用户可见的警告。
-pub(crate) fn validate_theme_name(
-    name: Option<&str>,
-    reflect_home: Option<&Path>,
-) -> Option<String> {
+pub(crate) fn validate_theme_name(name: Option<&str>, zhuye_home: Option<&Path>) -> Option<String> {
     let name = name?;
-    let custom_theme_path_display = reflect_home
+    let custom_theme_path_display = zhuye_home
         .map(|home| custom_theme_path(name, home).display().to_string())
-        .unwrap_or_else(|| format!("$REFLECT_HOME/themes/{name}.tmTheme"));
+        .unwrap_or_else(|| format!("$ZHUYE_HOME/themes/{name}.tmTheme"));
     // 内置主题始终可解析。
     if parse_theme_name(name).is_some() {
         return None;
     }
     // 自定义主题必须解析成功；不可读/无效文件仍应在启动时发出警告，以便用户诊断配置问题。
-    if let Some(home) = reflect_home {
+    if let Some(home) = zhuye_home {
         let custom_path = custom_theme_path(name, home);
         if custom_path.is_file() {
             if load_custom_theme(name, home).is_some() {
@@ -168,13 +165,13 @@ fn parse_theme_name(name: &str) -> Option<EmbeddedThemeName> {
 }
 
 /// 构建自定义主题文件的预期路径。
-fn custom_theme_path(name: &str, reflect_home: &Path) -> PathBuf {
-    reflect_home.join("themes").join(format!("{name}.tmTheme"))
+fn custom_theme_path(name: &str, zhuye_home: &Path) -> PathBuf {
+    zhuye_home.join("themes").join(format!("{name}.tmTheme"))
 }
 
-/// 尝试从 `{reflect_home}/themes/{name}.tmTheme` 加载自定义 `.tmTheme` 文件。
-fn load_custom_theme(name: &str, reflect_home: &Path) -> Option<Theme> {
-    ThemeSet::get_theme(custom_theme_path(name, reflect_home)).ok()
+/// 尝试从 `{zhuye_home}/themes/{name}.tmTheme` 加载自定义 `.tmTheme` 文件。
+fn load_custom_theme(name: &str, zhuye_home: &Path) -> Option<Theme> {
+    ThemeSet::get_theme(custom_theme_path(name, zhuye_home)).ok()
 }
 
 fn adaptive_default_theme_selection() -> (EmbeddedThemeName, &'static str) {
@@ -197,7 +194,7 @@ pub(crate) fn adaptive_default_theme_name() -> &'static str {
 
 /// 从当前覆盖/默认主题设置构建主题。
 /// 从旧的 `theme()` 初始化闭包中提取以便复用。
-fn resolve_theme_with_override(name: Option<&str>, reflect_home: Option<&Path>) -> Theme {
+fn resolve_theme_with_override(name: Option<&str>, zhuye_home: Option<&Path>) -> Theme {
     let ts = two_face::theme::extra();
 
     // 优先使用用户配置的主题（如果有效）。
@@ -206,8 +203,8 @@ fn resolve_theme_with_override(name: Option<&str>, reflect_home: Option<&Path>) 
         if let Some(theme_name) = parse_theme_name(name) {
             return ts.get(theme_name).clone();
         }
-        // 2. 尝试从磁盘加载 {REFLECT_HOME}/themes/{name}.tmTheme。
-        if let Some(home) = reflect_home
+        // 2. 尝试从磁盘加载 {ZHUYE_HOME}/themes/{name}.tmTheme。
+        if let Some(home) = zhuye_home
             && let Some(theme) = load_custom_theme(name, home)
         {
             return theme;
@@ -222,10 +219,10 @@ fn resolve_theme_with_override(name: Option<&str>, reflect_home: Option<&Path>) 
 /// 从旧的 `theme()` 初始化闭包中提取，以便可以重用。
 fn build_default_theme() -> Theme {
     let name = THEME_OVERRIDE.get().and_then(|name| name.as_deref());
-    let reflect_home = REFLECT_HOME
+    let zhuye_home = ZHUYE_HOME
         .get()
-        .and_then(|reflect_home| reflect_home.as_deref());
-    resolve_theme_with_override(name, reflect_home)
+        .and_then(|zhuye_home| zhuye_home.as_deref());
+    resolve_theme_with_override(name, zhuye_home)
 }
 
 fn theme_lock() -> &'static RwLock<Theme> {
@@ -324,7 +321,7 @@ pub(crate) fn configured_theme_name() -> String {
         if parse_theme_name(name).is_some() {
             return name.clone();
         }
-        if let Some(Some(home)) = REFLECT_HOME.get()
+        if let Some(Some(home)) = ZHUYE_HOME.get()
             && load_custom_theme(name, home).is_some()
         {
             return name.clone();
@@ -334,14 +331,14 @@ pub(crate) fn configured_theme_name() -> String {
 }
 
 /// 将主题名称解析为 `Theme`（内置或自定义）。当名称未知且没有匹配的 `.tmTheme` 文件时返回 `None`。
-pub(crate) fn resolve_theme_by_name(name: &str, reflect_home: Option<&Path>) -> Option<Theme> {
+pub(crate) fn resolve_theme_by_name(name: &str, zhuye_home: Option<&Path>) -> Option<Theme> {
     let ts = two_face::theme::extra();
     // 内置主题？
     if let Some(embedded) = parse_theme_name(name) {
         return Some(ts.get(embedded).clone());
     }
     // 自定义 .tmTheme 文件？
-    if let Some(home) = reflect_home
+    if let Some(home) = zhuye_home
         && let Some(theme) = load_custom_theme(name, home)
     {
         return Some(theme);
@@ -349,7 +346,7 @@ pub(crate) fn resolve_theme_by_name(name: &str, reflect_home: Option<&Path>) -> 
     None
 }
 
-/// 选择器中可用的主题，内置或从 `{REFLECT_HOME}/themes/` 下的自定义
+/// 选择器中可用的主题，内置或从 `{ZHUYE_HOME}/themes/` 下的自定义
 /// `.tmTheme` 文件加载。
 pub(crate) struct ThemeEntry {
     /// 用于配置持久化和主题解析的 kebab-case 标识符。
@@ -358,8 +355,8 @@ pub(crate) struct ThemeEntry {
     pub is_custom: bool,
 }
 
-/// 列出所有可用的主题名称：内置主题 + 在 `{reflect_home}/themes/` 中找到的自定义 `.tmTheme` 文件。
-pub(crate) fn list_available_themes(reflect_home: Option<&Path>) -> Vec<ThemeEntry> {
+/// 列出所有可用的主题名称：内置主题 + 在 `{zhuye_home}/themes/` 中找到的自定义 `.tmTheme` 文件。
+pub(crate) fn list_available_themes(zhuye_home: Option<&Path>) -> Vec<ThemeEntry> {
     let mut entries: Vec<ThemeEntry> = BUILTIN_THEME_NAMES
         .iter()
         .map(|name| ThemeEntry {
@@ -369,7 +366,7 @@ pub(crate) fn list_available_themes(reflect_home: Option<&Path>) -> Vec<ThemeEnt
         .collect();
 
     // 发现磁盘上的自定义主题，并与内置主题去重。
-    if let Some(home) = reflect_home {
+    if let Some(home) = zhuye_home {
         let themes_dir = home.join("themes");
         if let Ok(read_dir) = std::fs::read_dir(&themes_dir) {
             for entry in read_dir.flatten() {

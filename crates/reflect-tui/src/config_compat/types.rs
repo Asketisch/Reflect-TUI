@@ -293,10 +293,10 @@ pub enum ResumeCwdMode {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthCredentialsStoreMode {
-    /// 优先使用系统密钥串（keyring），失败时回退到 `$REFLECT_HOME` 中的文件（默认）。
+    /// 优先使用系统密钥串（keyring），失败时回退到 `$ZHUYE_HOME` 中的文件（默认）。
     #[default]
     Auto,
-    /// 将凭据持久化到 `$REFLECT_HOME/auth.json`。
+    /// 将凭据持久化到 `$ZHUYE_HOME/auth.json`。
     File,
     /// 将凭据持久化到操作系统密钥串；不可用时报错。
     Keyring,

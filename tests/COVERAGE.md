@@ -3,8 +3,8 @@
 本矩阵回答一个问题:**当前测试是否完整覆盖了全部对外功能**(而非冒烟)。
 
 覆盖口径:每条功能面至少有一个**字段级 / 行为级断言**(非「退出码 0」)
-的用例;断言失败即失败。全程离线(`REFLECT_MODEL=mock/mock-1`,零网络、
-零 API key)+ 隔离 HOME(mktemp,不污染真实 `~/.reflect`)。
+的用例;断言失败即失败。全程离线(`ZHUYE_MODEL=mock/mock-1`,零网络、
+零 API key)+ 隔离 HOME(mktemp,不污染真实 `~/.zhuye`)。
 
 > 本文件的结构与判据对齐 submodule `reflect-agent/tests/COVERAGE.md`,
 > 但**覆盖对象不同**:submodule 是 agent 基座(测 headless `reflect serve`
@@ -154,7 +154,7 @@
 | T11 | 工具参数分片下发 | 调用行带参数摘要(`✓ glob (…) · *.rs`) |
 
 > **mock provider 的语义(测试必须知道)**:
-> `REFLECT_MOCK_SCRIPT` 是 JSONL,**每次模型调用消费一行**
+> `ZHUYE_MOCK_SCRIPT` 是 JSONL,**每次模型调用消费一行**
 > (mock.rs:163 `script.pop_front()`);脚本耗尽回退
 > `Hello from mock LLM!`。一次用户提交会让引擎**多次**调用模型
 > (实测 4 次),所以:
@@ -170,13 +170,13 @@
 
 | # | 用例 | 断言 |
 |---|---|---|
-| P1 | 会话落盘 | `~/.reflect/sessions/YYYY/MM/DD/*.jsonl`;首行 `session_meta`;user/assistant 消息;`token_count` 带嵌套 `usage` |
-| P2 | prompt 历史落盘 | `~/.reflect/prompt_history.jsonl` |
+| P1 | 会话落盘 | `~/.zhuye/sessions/YYYY/MM/DD/*.jsonl`;首行 `session_meta`;user/assistant 消息;`token_count` 带嵌套 `usage` |
+| P2 | prompt 历史落盘 | `~/.zhuye/prompt_history.jsonl` |
 | P3 | `-c` 恢复 | 「已恢复历史会话」+ 既往消息上屏 |
 | P4 | `--resume <id>` 恢复 | 同上 |
 | P5 | 非法 `--resume` id | 快速失败(非 0),不挂死 |
-| P6 | 会话名落盘 | `~/.reflect/sessions/_names/<id>.name` |
-| P7 | Plan 落盘 | `<workspace>/.reflect/plan/*.md` + 正文 |
+| P6 | 会话名落盘 | `~/.zhuye/sessions/_names/<id>.name` |
+| P7 | Plan 落盘 | `<workspace>/.zhuye/plan/*.md` + 正文 |
 | P8 | 旧日期会话恢复 + 续写原文件 | 会话文件挪进旧日期桶后 `--resume` 历史回填;新轮次追加进原文件,当天桶不另立新文件 |
 | P9 | 双 id 恢复(外部命名会话) | 文件名与首行 `SessionMeta.session_id` 脱钩后,按内部 id 恢复仍回填历史 |
 
@@ -245,7 +245,7 @@
 | W7c | `--resume` 跨天会话(完整 UUID) | `↩ 已恢复历史会话 <id> · 回放 1 条消息` |
 | W8 | 200 条消息大会话恢复 | 不挂死、可继续对话、无 panic(旧消息进原生 scrollback,pyte 视口不可见) |
 | W9 | 坏 config.toml | 终端给出显式告警(`解析失败` + 路径),并回落默认配置,TUI 照常启动 |
-| W10 | 非法 `REFLECT_MODEL` | 非 0 退出 + 错误含 `provider` |
+| W10 | 非法 `ZHUYE_MODEL` | 非 0 退出 + 错误含 `provider` |
 | W11 | SIGTERM | rc=-15(死于信号)+ 无 panic + 会话文件已落盘 |
 | W12 | stdin 非 tty(管道) | 非 0 退出 + `Error: Device not configured`,不挂死 |
 
@@ -291,7 +291,7 @@
 | H2 | 跨天会话 resume(真实 HTTP 产出) | 会话搬到 `2026/01/01` 桶后 `--resume` 仍回放既往消息 |
 | H3 | 确定性 busy 窗口下 Esc 中断 | 出现「已发送中断请求」,且连按 3 次只出现一次(去抖生效) |
 
-> **为什么要有这一组**:其余用例都用 `REFLECT_MODEL=mock/mock-1` —— 那是
+> **为什么要有这一组**:其余用例都用 `ZHUYE_MODEL=mock/mock-1` —— 那是
 > reflect-llm `ModelClient` 层的内置 provider,**完全绕过** HTTP 传输、
 > SSE 分帧与 Anthropic 协议形态;内置 mock 还「瞬时完成」,离线造不出
 > **确定性 busy 窗口**(这正是 §6 里「Ctrl+C busy 首按中断」等条目长期
@@ -339,10 +339,10 @@
 | Session note 工具 | `bootstrap_wiring.rs:332-334` | 工具行 |
 | 子代理 `call_<role>` | `bootstrap_wiring.rs:487-511` | `/subagents` 面板 + `[子代理 <role>]` 通知 |
 | MCP 资源 / Prompts 工具 | `bootstrap.rs:392-407` | `/mcp` 面板 |
-| Plan 工具组 | `bootstrap.rs:130-140` | Plan 审批条 + `.reflect/plan/*.md` |
+| Plan 工具组 | `bootstrap.rs:130-140` | Plan 审批条 + `.zhuye/plan/*.md` |
 | LSP 工具 | `bootstrap_wiring.rs:691-693` | `LSP server 'x' started` 通知 |
 | 插件能力 | `bootstrap.rs:409-426` | `Plugin 'x' loaded (…)` 通知 + `/plugin` 面板 |
-| Telemetry | `bootstrap_wiring.rs:75-129` | `~/.reflect/traces/` 产物 + `traces spans` |
+| Telemetry | `bootstrap_wiring.rs:75-129` | `~/.zhuye/traces/` 产物 + `traces spans` |
 | 压缩 | `bootstrap.rs` + `reflect-compact` | `🗜 已压缩上下文:…` 通知 |
 | 权限模式 | `Op::CyclePermissionMode` | HUD `[plan]` / `[accept_edits]` 段 |
 | 工具参数流(`ToolCallArgsDelta`) | `tui/conversion.rs` + `adapter.rs` | 调用行参数摘要 `✓ glob (…) · *.rs` |

@@ -44,7 +44,7 @@ impl AllowScope {
 /// 要求所有段都命中,用第一段派生必然更保守。
 /// 其它工具 → 整个工具(引擎的 `PermissionRule` 没有路径维度,不编造)。
 pub fn derive_allow_scope(pending: &PendingApproval) -> AllowScope {
-    let reflect_protocol::ApprovalKind::Tool { tool_name, args } = &pending.kind else {
+    let zhuye_protocol::ApprovalKind::Tool { tool_name, args } = &pending.kind else {
         return AllowScope::WholeTool;
     };
     if !tool_name.eq_ignore_ascii_case("bash") {
@@ -54,7 +54,7 @@ pub fn derive_allow_scope(pending: &PendingApproval) -> AllowScope {
     // cmd → command → cmdline 顺序解析别名,与 BashTool::execute 一致。
     // 直接 args.get("cmd") 会在模型发 {"command": ...} 时取空,
     // 进而派生出放行范围错误的规则。
-    let Some(cmd) = reflect_protocol::resolve_bash_command(args) else {
+    let Some(cmd) = zhuye_protocol::resolve_bash_command(args) else {
         return AllowScope::WholeTool;
     };
     let Some(pattern) = shell_pattern_for(cmd) else {
@@ -68,7 +68,7 @@ pub fn derive_allow_scope(pending: &PendingApproval) -> AllowScope {
 /// 取第一段(`&&` 等分隔符之前)的前两个 token + ` *`。单 token 命令
 /// (如 `ls`)派生 `ls *`。返回 `None` 表示不值得收窄(空命令 / 只有通配符)。
 fn shell_pattern_for(cmd: &str) -> Option<String> {
-    let first_segment = reflect_protocol::split_shell_segments(cmd)
+    let first_segment = zhuye_protocol::split_shell_segments(cmd)
         .into_iter()
         .map(str::trim)
         .find(|s| !s.is_empty())?
@@ -129,7 +129,7 @@ pub fn approval_hint(is_bash: bool) -> Line<'static> {
 pub fn is_bash_approval(pending: &PendingApproval) -> bool {
     matches!(
         &pending.kind,
-        reflect_protocol::ApprovalKind::Tool { tool_name, .. }
+        zhuye_protocol::ApprovalKind::Tool { tool_name, .. }
             if tool_name.eq_ignore_ascii_case("bash")
     )
 }
@@ -142,7 +142,7 @@ mod tests {
         PendingApproval {
             id: "a1".into(),
             summary: format!("Bash: {cmd}"),
-            kind: reflect_protocol::ApprovalKind::Tool {
+            kind: zhuye_protocol::ApprovalKind::Tool {
                 tool_name: "bash".into(),
                 args: serde_json::json!({ "cmd": cmd }),
             },
@@ -179,7 +179,7 @@ mod tests {
         let p = PendingApproval {
             id: "a2".into(),
             summary: "Bash: rm -rf /".into(),
-            kind: reflect_protocol::ApprovalKind::Tool {
+            kind: zhuye_protocol::ApprovalKind::Tool {
                 tool_name: "bash".into(),
                 args: serde_json::json!({ "command": "rm -rf /" }),
             },
@@ -201,7 +201,7 @@ mod tests {
         let p = PendingApproval {
             id: "a3".into(),
             summary: "Write: foo.txt".into(),
-            kind: reflect_protocol::ApprovalKind::Tool {
+            kind: zhuye_protocol::ApprovalKind::Tool {
                 tool_name: "write".into(),
                 args: serde_json::json!({ "path": "foo.txt" }),
             },

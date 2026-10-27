@@ -199,10 +199,10 @@ fn theme_picker_subtitle_uses_fallback_text_in_94x35_terminal() {
     let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
     let tx = AppEventSender::new(tx_raw);
     let home = dirs::home_dir().expect("home directory should be available");
-    let reflect_home = home.join(".reflect");
+    let zhuye_home = home.join(".reflect");
     let params = crate::theme_picker::build_theme_picker_params(
         /*current_name*/ None,
-        Some(&reflect_home),
+        Some(&zhuye_home),
         Some(94),
     );
     let view = new_view(params, tx);
@@ -215,7 +215,7 @@ fn theme_picker_subtitle_uses_fallback_text_in_94x35_terminal() {
 fn theme_picker_enables_side_content_background_preservation() {
     let params = crate::theme_picker::build_theme_picker_params(
         /*current_name*/ None,
-        /*reflect_home*/ None,
+        /*zhuye_home*/ None,
         Some(120),
     );
     assert!(

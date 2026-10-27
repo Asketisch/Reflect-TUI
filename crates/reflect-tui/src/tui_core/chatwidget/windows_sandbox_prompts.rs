@@ -25,7 +25,7 @@ impl ChatWidget {
                 .source
                 .is_some()
             && !crate::tui_core::windows_sandbox::sandbox_setup_is_complete(
-                self.config.reflect_home.as_path(),
+                self.config.zhuye_home.as_path(),
             )
     }
 
@@ -52,11 +52,11 @@ impl ChatWidget {
             return None;
         };
         match crate::tui_core::windows_sandbox::apply_world_writable_scan_and_denies_for_permissions(
-            self.config.reflect_home.as_path(),
+            self.config.zhuye_home.as_path(),
             cwd.as_path(),
             &env_map,
             &permissions,
-            Some(self.config.reflect_home.as_path()),
+            Some(self.config.zhuye_home.as_path()),
         ) {
             Ok(_) => None,
             Err(_) => Some((Vec::new(), 0, true)),

@@ -1,7 +1,7 @@
 //! 为 TUI 构建 `/theme` 选择器对话框。
 //!
 //! 该选择器列出所有捆绑主题以及在
-//! `{REFLECT_HOME}/themes/` 下找到的自定义 `.tmTheme` 文件。它提供：
+//! `{ZHUYE_HOME}/themes/` 下找到的自定义 `.tmTheme` 文件。它提供：
 //!
 //! - **实时预览**：`on_selection_changed` 回调在用户导航时
 //!   切换运行时语法主题，在预览面板和任何可见的
@@ -280,8 +280,8 @@ fn subtitle_available_width(terminal_width: Option<u16>) -> usize {
     }
 }
 
-fn theme_picker_subtitle(reflect_home: Option<&Path>, terminal_width: Option<u16>) -> String {
-    let themes_dir = reflect_home.map(|home| home.join("themes"));
+fn theme_picker_subtitle(zhuye_home: Option<&Path>, terminal_width: Option<u16>) -> String {
+    let themes_dir = zhuye_home.map(|home| home.join("themes"));
     let themes_dir_display = themes_dir
         .as_deref()
         .map(|path| format_directory_display(path, /*max_width*/ None));
@@ -311,14 +311,14 @@ fn theme_picker_subtitle(reflect_home: Option<&Path>, terminal_width: Option<u16
 /// 仍会高亮最可能想要的条目。
 pub(crate) fn build_theme_picker_params(
     current_name: Option<&str>,
-    reflect_home: Option<&Path>,
+    zhuye_home: Option<&Path>,
     terminal_width: Option<u16>,
 ) -> SelectionViewParams {
     // 截取当前主题快照，以便取消时恢复。
     let original_theme = highlight::current_syntax_theme();
 
-    let entries = highlight::list_available_themes(reflect_home);
-    let reflect_home_owned = reflect_home.map(Path::to_path_buf);
+    let entries = highlight::list_available_themes(zhuye_home);
+    let zhuye_home_owned = zhuye_home.map(Path::to_path_buf);
 
     // 解析有效的主题名称：仅当显式配置
     // 当前可用时才采用；否则回退到已配置/默认选择，
@@ -367,7 +367,7 @@ pub(crate) fn build_theme_picker_params(
     // 以便在条目构造/排序变化时预览顺序保持对齐。
     let preview_theme_names: Vec<Option<String>> =
         items.iter().map(|item| item.search_value.clone()).collect();
-    let preview_home = reflect_home_owned.clone();
+    let preview_home = zhuye_home_owned.clone();
     let on_selection_changed = Some(Box::new(
         move |idx: usize, tx: &crate::tui_core::app_event_sender::AppEventSender| {
             if let Some(Some(name)) = preview_theme_names.get(idx)
@@ -393,7 +393,7 @@ pub(crate) fn build_theme_picker_params(
     SelectionViewParams {
         title: Some("Select Syntax Theme".to_string()),
         subtitle: Some(theme_picker_subtitle(
-            reflect_home_owned.as_deref(),
+            zhuye_home_owned.as_deref(),
             terminal_width,
         )),
         footer_hint: Some(standard_popup_hint_line()),
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn theme_picker_uses_half_width_with_stacked_fallback_preview() {
         let params = build_theme_picker_params(
-            /*current_name*/ None, /*reflect_home*/ None, /*terminal_width*/ None,
+            /*current_name*/ None, /*zhuye_home*/ None, /*terminal_width*/ None,
         );
         assert_eq!(params.side_content_width, SideContentWidth::Half);
         assert_eq!(params.side_content_min_width, WIDE_PREVIEW_MIN_WIDTH);
@@ -493,7 +493,7 @@ mod tests {
     #[test]
     fn theme_picker_items_include_search_values_for_preview_mapping() {
         let params = build_theme_picker_params(
-            /*current_name*/ None, /*reflect_home*/ None, /*terminal_width*/ None,
+            /*current_name*/ None, /*zhuye_home*/ None, /*terminal_width*/ None,
         );
         assert!(
             params.items.iter().all(|item| item.search_value.is_some()),
@@ -603,9 +603,9 @@ mod tests {
     #[test]
     fn subtitle_uses_tilde_path_when_reflect_home_under_home_directory() {
         let home = dirs::home_dir().expect("home directory should be available");
-        let reflect_home = home.join(".reflect");
+        let zhuye_home = home.join(".reflect");
 
-        let subtitle = theme_picker_subtitle(Some(&reflect_home), Some(200));
+        let subtitle = theme_picker_subtitle(Some(&zhuye_home), Some(200));
 
         assert!(subtitle.contains("~"));
         assert!(subtitle.contains("directory"));
@@ -615,9 +615,9 @@ mod tests {
     fn subtitle_falls_back_when_tilde_path_subtitle_is_too_wide() {
         let home = dirs::home_dir().expect("home directory should be available");
         let long_segment = "a".repeat(120);
-        let reflect_home = home.join(long_segment).join(".reflect");
+        let zhuye_home = home.join(long_segment).join(".reflect");
 
-        let subtitle = theme_picker_subtitle(Some(&reflect_home), Some(140));
+        let subtitle = theme_picker_subtitle(Some(&zhuye_home), Some(140));
 
         assert_eq!(subtitle, PREVIEW_FALLBACK_SUBTITLE);
     }
@@ -625,16 +625,16 @@ mod tests {
     #[test]
     fn subtitle_falls_back_to_preview_instructions_without_tilde_path() {
         let subtitle =
-            theme_picker_subtitle(/*reflect_home*/ None, /*terminal_width*/ None);
+            theme_picker_subtitle(/*zhuye_home*/ None, /*terminal_width*/ None);
         assert_eq!(subtitle, PREVIEW_FALLBACK_SUBTITLE);
     }
 
     #[test]
     fn subtitle_falls_back_for_94_column_terminal_side_by_side_layout() {
         let home = dirs::home_dir().expect("home directory should be available");
-        let reflect_home = home.join(".reflect");
+        let zhuye_home = home.join(".reflect");
 
-        let subtitle = theme_picker_subtitle(Some(&reflect_home), Some(94));
+        let subtitle = theme_picker_subtitle(Some(&zhuye_home), Some(94));
 
         assert_eq!(subtitle, PREVIEW_FALLBACK_SUBTITLE);
     }
@@ -644,7 +644,7 @@ mod tests {
         let configured_or_default_theme = highlight::configured_theme_name();
         let params = build_theme_picker_params(
             Some("not-a-real-theme"),
-            /*reflect_home*/ None,
+            /*zhuye_home*/ None,
             Some(120),
         );
         let selected_idx = params

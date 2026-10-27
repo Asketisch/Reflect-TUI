@@ -46,7 +46,7 @@ enum Command {
         #[command(subcommand)]
         action: SessionAction,
     },
-    /// 列 / 看本地 LLM 调用记录(`~/.reflect/traces/`)。
+    /// 列 / 看本地 LLM 调用记录(`~/.zhuye/traces/`)。
     Traces {
         #[command(subcommand)]
         action: TracesAction,

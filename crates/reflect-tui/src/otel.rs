@@ -1,4 +1,4 @@
-//! reflect_otel crate 的桩。
+//! zhuye_otel crate 的桩。
 
 #[derive(Debug, Clone, Default)]
 pub struct SessionTelemetry;

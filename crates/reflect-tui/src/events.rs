@@ -20,7 +20,7 @@ use tokio::task::JoinSet;
 pub struct PendingApproval {
     pub id: String,
     pub summary: String,
-    pub kind: reflect_protocol::ApprovalKind,
+    pub kind: zhuye_protocol::ApprovalKind,
 }
 
 /// v1.x Plan mode：agent 产出 plan markdown 后请求用户审批。
@@ -37,7 +37,7 @@ pub struct PlanApprovalState {
     pub task: String,
     /// 完整 plan markdown（供 history 兜底与 transcript overlay 取用）。
     pub markdown: String,
-    /// plan markdown 落盘路径（`<workspace>/.reflect/plan/<plan_id>.md`）。
+    /// plan markdown 落盘路径（`<workspace>/.zhuye/plan/<plan_id>.md`）。
     /// 让 plan 成为可引用的持久产物；core 写盘失败时为 `None`。
     pub path: Option<std::path::PathBuf>,
 }
@@ -85,7 +85,7 @@ pub struct QuestionPromptState {
     /// 必须回填这个值。
     pub request_id: String,
     /// 问题列表(1-4 题,协议校验过 options 2-4 个)。
-    pub questions: Vec<reflect_protocol::Question>,
+    pub questions: Vec<zhuye_protocol::Question>,
     /// 当前作答的题号(逐题作答,Enter 前进)。
     pub current: usize,
     /// 每题已勾选的 option 下标(与 questions 等长;单选至多 1 个,多选任意)。
@@ -96,7 +96,7 @@ pub struct QuestionPromptState {
 
 impl QuestionPromptState {
     /// 构造一个新问题面板状态(全部题未作答、高亮第 0 项)。
-    pub fn new(request_id: String, questions: Vec<reflect_protocol::Question>) -> Self {
+    pub fn new(request_id: String, questions: Vec<zhuye_protocol::Question>) -> Self {
         let n = questions.len();
         Self {
             request_id,
@@ -237,15 +237,15 @@ pub struct UiState {
     /// M2:确认后置位,主循环退出时执行删除(同上,退出后动手避免写竞争)。
     pub delete_session_on_exit: bool,
     /// M3:`/model` 切换前的可用性校验(run_async 启动期注入)。
-    pub model_registry: Option<std::sync::Arc<reflect_llm::ModelRegistry>>,
+    pub model_registry: Option<std::sync::Arc<zhuye_llm::ModelRegistry>>,
     /// M3:启动期完整 config(`/model <name>` 缺 provider 时按 active 拼接)。
-    pub reflect_config: Option<reflect_config::ReflectConfig>,
+    pub zhuye_config: Option<zhuye_config::ReflectConfig>,
     /// M3:文件权限存储(审批选 always-allow 时写 Allow 规则,跨重启生效)。
-    pub persistent_permissions: Option<std::sync::Arc<dyn reflect_permissions::PermissionStore>>,
+    pub persistent_permissions: Option<std::sync::Arc<dyn zhuye_permissions::PermissionStore>>,
     /// 插件运行时句柄(run_async 启动期注入)。SubmitAsUser / /loop 提交
     /// 前用它展开 `/plugin:ns:name` 形式的插件 slash 命令;未装插件时为
     /// 空句柄(展开恒未命中,行为等同直通)。
-    pub plugin_runtime: reflect_plugin::runtime::SharedPluginRuntime,
+    pub plugin_runtime: zhuye_plugin::runtime::SharedPluginRuntime,
     /// M4:正在运行的工具的输出流(v1.4 `ToolCallOutputDelta`)。live 区
     /// 实时显示其 tail;`ToolCompleted` / 新回合时清空(完整输出走既有
     /// ToolCompleted 落 scrollback 路径)。
@@ -258,17 +258,17 @@ pub struct UiState {
     /// v1.x:LSP 诊断注册表(bootstrap 期连上语言服务后注入)。`/lsp` 用它
     /// 展示「几个文档 / 几条诊断」—— 此前 manager 被直接丢弃,server 推的
     /// `publishDiagnostics` 缓存永远读不到。
-    pub lsp_diagnostics: Option<std::sync::Arc<reflect_lsp::DiagnosticRegistry>>,
+    pub lsp_diagnostics: Option<std::sync::Arc<zhuye_lsp::DiagnosticRegistry>>,
     /// v1.x:`[notifications.tui]` 段(终端通知开关 + 通道)。
     /// 此前 TUI 不读该段 —— 四个开关与 `channels` 全是死配置。
-    pub notify_section: Option<reflect_config::TuiNotificationsSection>,
+    pub notify_section: Option<zhuye_config::TuiNotificationsSection>,
     /// 从 SessionConfigured 获取的模型名,显示在状态栏。
     /// `None` 时 fallback 到环境变量(REFLECT_MODEL_DISPLAY / OPENAI_MODEL / ANTHROPIC_MODEL)。
     pub status_model: Option<String>,
     /// v1.x:当前会话级 `PermissionMode`(Plan / Auto / Prompt / AcceptEdits …)。
     /// 启动期从 `thread.config().permission_mode()` 读初值,后续由
     /// `PermissionModeChanged` 事件回流更新。驱动 HUD mode 段与 composer 占位符。
-    pub permission_mode: reflect_protocol::PermissionMode,
+    pub permission_mode: zhuye_protocol::PermissionMode,
     /// v1.x Plan mode:`PlanReady` 到来时填入,打开审批弹窗;
     /// 用户 `1/2/3/Esc` 或 `PlanApproved/Rejected` 后清空。
     pub plan_approval: Option<PlanApprovalState>,
@@ -323,14 +323,14 @@ pub struct UiState {
     pub(crate) background_tasks: Arc<Mutex<JoinSet<()>>>,
     /// v1.x fork 接线:当前会话的 ThreadId(从 `thread.config().session_id`
     /// 读初值)。fork overlay 用它作 `fork_with_history` 的 parent_id。
-    pub session_id: Option<reflect_protocol::ThreadId>,
+    pub session_id: Option<zhuye_protocol::ThreadId>,
     /// v1.x fork 接线:最近一次 `TurnStarted` 的 turn_id。fork overlay 选定
     /// user prompt 后,据此查 `user_prompt_turns` 得到截断 turn。
-    pub(crate) current_turn_id: Option<reflect_protocol::TurnId>,
+    pub(crate) current_turn_id: Option<zhuye_protocol::TurnId>,
     /// v1.x fork 接线:每条 user prompt 对应的 turn_id(与 history 中
     /// `UiHistoryItem::User` 项同序)。fork overlay 用 `user_prompt_turns[selected]`
     /// 作 `fork_with_history` 的 `up_to_turn_id`(在该 turn 含处截断)。
-    pub(crate) user_prompt_turns: Vec<reflect_protocol::TurnId>,
+    pub(crate) user_prompt_turns: Vec<zhuye_protocol::TurnId>,
     /// 最近一次「picker/overlay 打开时」按下的 Ctrl+C 时刻。
     ///
     /// 因为 9 个 picker 打开时第一次 Ctrl+C 只关 picker(走各自 handle_key),
@@ -652,15 +652,15 @@ impl Default for UiState {
             archive_session_on_exit: false,
             delete_session_on_exit: false,
             model_registry: None,
-            reflect_config: None,
+            zhuye_config: None,
             persistent_permissions: None,
-            plugin_runtime: reflect_plugin::runtime::empty_plugin_runtime(),
+            plugin_runtime: zhuye_plugin::runtime::empty_plugin_runtime(),
             tool_live: None,
             tool_args: Vec::new(),
             lsp_diagnostics: None,
             notify_section: None,
             status_model: None,
-            permission_mode: reflect_protocol::PermissionMode::default(),
+            permission_mode: zhuye_protocol::PermissionMode::default(),
             plan_approval: None,
             pending_question: None,
             pending_ask_user: None,

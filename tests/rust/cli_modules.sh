@@ -6,7 +6,7 @@
 #   session show    —— 元数据 + 消息预览 / 前缀解析 / 不存在 id 报错
 #   session rm      —— --yes 删除 / 无 --yes 时交互确认(取消)
 #   session fork    —— 生成子会话 + 打印续作提示
-#   session rename  —— 写 `~/.reflect/sessions/_names/<id>.name`
+#   session rename  —— 写 `~/.zhuye/sessions/_names/<id>.name`
 #   session export  —— stdout markdown / --out 文件落盘(原子写)
 #   session stats   —— per-model 用量表 / --workspace 过滤 / TOTAL 行
 #   traces ls       —— 表头 / 空目录占位
@@ -28,13 +28,13 @@ trap 'rm -rf "$TMP"' EXIT
 
 BIN="$REFLECT_TUI_BIN"
 HOME_DIR="$TMP/home"
-SESS_DIR="$HOME_DIR/.reflect/sessions"
+SESS_DIR="$HOME_DIR/.zhuye/sessions"
 TODAY="$(date -u +%Y/%m/%d)"
 SESSION_ID="11111111-2222-4333-8444-555555555555"
 SESSION_FILE="$SESS_DIR/$TODAY/$SESSION_ID.jsonl"
 
-mkdir -p "$HOME_DIR/.reflect" "$(dirname "$SESSION_FILE")"
-printf '# 测试用最小配置:空配置。\n' > "$HOME_DIR/.reflect/config.toml"
+mkdir -p "$HOME_DIR/.zhuye" "$(dirname "$SESSION_FILE")"
+printf '# 测试用最小配置:空配置。\n' > "$HOME_DIR/.zhuye/config.toml"
 
 # seed_session:写一条含 user + assistant 的会话 JSONL。
 #
@@ -65,7 +65,7 @@ seed_session() {
 # 否则后续 `$?` 拿到的是上一条断言(grep)的返回码,形成恒过的伪断言。
 run_cli() {
     local out="$1"; shift
-    HOME="$HOME_DIR" REFLECT_MODEL=mock/mock-1 "$BIN" "$@" > "$out" 2>&1
+    HOME="$HOME_DIR" ZHUYE_MODEL=mock/mock-1 "$BIN" "$@" > "$out" 2>&1
     LAST_RC=$?
 }
 
@@ -125,7 +125,7 @@ assert_contains "session show 非法 id 有前缀诊断" "no session matches pre
 
 run_cli "$TMP/rename.txt" session rename "$SESSION_ID" "probe-renamed"
 assert_contains "session rename 打印成功行" "Renamed session" "$TMP/rename.txt"
-ok "session rename 写 .name 文件" "$([ -f "$HOME_DIR/.reflect/sessions/_names/$SESSION_ID.name" ] && echo 0 || echo 1)"
+ok "session rename 写 .name 文件" "$([ -f "$HOME_DIR/.zhuye/sessions/_names/$SESSION_ID.name" ] && echo 0 || echo 1)"
 run_cli "$TMP/show_after_rename.txt" session show "$SESSION_ID"
 assert_contains "session show 显示名称" "probe-renamed" "$TMP/show_after_rename.txt"
 
@@ -187,7 +187,7 @@ ok "session rm --yes 删除文件" "$([ ! -f "$SESSION_FILE" ] && echo 0 || echo
 run_cli "$TMP/traces_ls_empty.txt" traces ls
 assert_contains "traces ls 空目录给占位文案" "no traces found" "$TMP/traces_ls_empty.txt"
 
-TRACE_DIR="$HOME_DIR/.reflect/traces/model-io"
+TRACE_DIR="$HOME_DIR/.zhuye/traces/model-io"
 mkdir -p "$TRACE_DIR"
 TRACE_ID="22222222-3333-4444-8555-666666666666"
 cat > "$TRACE_DIR/model-io-sess_$TRACE_ID.jsonl" <<EOF
@@ -212,10 +212,10 @@ run_cli "$TMP/traces_show_missing.txt" traces show "00000000-0000-4000-8000-0000
 assert_exit_nonzero "traces show 不存在 id 时非 0 退出" "$LAST_RC"
 assert_contains "traces show 不存在 id 报 no trace session" "no trace session" "$TMP/traces_show_missing.txt"
 
-SPAN_DIR="$HOME_DIR/.reflect/traces/log"
+SPAN_DIR="$HOME_DIR/.zhuye/traces/log"
 mkdir -p "$SPAN_DIR"
 SPAN_DAY="$(date -u +%Y-%m-%d)"
-cat > "$SPAN_DIR/reflect-$SPAN_DAY.jsonl" <<EOF
+cat > "$SPAN_DIR/zhuye-$SPAN_DAY.jsonl" <<EOF
 {"timestamp":"2026-01-01T00:00:00Z","level":"info","event":"turn.started","module":"m","trace_id":"t1","span_id":"s1","session_id":"$TRACE_ID"}
 EOF
 

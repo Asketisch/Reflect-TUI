@@ -5,8 +5,8 @@
 键盘交互、渲染与视觉、审批 / AskUser 工作流、容错与信号、会话持久化、
 headless CLI,以及 Rust 编译面。
 
-全程**离线**(`REFLECT_MODEL=mock/mock-1`,零网络、零 API key)+
-**隔离 HOME**(mktemp,不污染真实 `~/.reflect`)。
+全程**离线**(`ZHUYE_MODEL=mock/mock-1`,零网络、零 API key)+
+**隔离 HOME**(mktemp,不污染真实 `~/.zhuye`)。
 
 ## 快速开始
 
@@ -84,12 +84,12 @@ make coverage-audit    # = 覆盖自审(有未覆盖命令即失败)
 - **屏幕断言带超时**:所有「等待某段文字出现」的断言都有墙钟上限
   (默认 30s),回归时**断言失败**并回显屏幕尾部与原始输出,而不是
   拖死整个套件。
-- **mock provider 的语义**:`REFLECT_MOCK_SCRIPT` 是 JSONL,**每次模型
+- **mock provider 的语义**:`ZHUYE_MOCK_SCRIPT` 是 JSONL,**每次模型
   调用消费一行**;脚本耗尽回退 `Hello from mock LLM!`。一次用户提交
   会被引擎调用模型多次(实测 4 次),所以落盘的 assistant 消息是
   **最后一轮**的回复 —— 断言不要写死脚本行与消息的对应关系。
 - **隔离 HOME**:每个用例一份 `mktemp` HOME + 独立 cwd,用例结束自动
-  删除。`~/.reflect/config.toml` 预写为空配置(显式成立,不依赖宿主机
+  删除。`~/.zhuye/config.toml` 预写为空配置(显式成立,不依赖宿主机
   残留配置)。
 - **覆盖自审是门禁**:`tools/coverage_audit.py` 从 Rust 源码解析出
   `SlashCommand` 枚举 + legacy 通道白名单 + 实现臂,与

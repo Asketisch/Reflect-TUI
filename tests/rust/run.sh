@@ -9,7 +9,7 @@
 # `REFLECT_SKIP_WORKSPACE=1` 时跳过第 1 步 —— CI 的功能门禁入口用此模式:
 # 那部分由既有 CI job 覆盖,避免重复消耗 CI 时间。
 #
-# 全程离线(REFLECT_MODEL=mock/mock-1)+ 隔离 HOME,不污染真实 ~/.reflect。
+# 全程离线(ZHUYE_MODEL=mock/mock-1)+ 隔离 HOME,不污染真实 ~/.zhuye。
 # 退出码 0 = 全部通过。
 
 set -u

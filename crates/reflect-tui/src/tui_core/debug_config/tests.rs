@@ -48,9 +48,9 @@ use toml::Value as TomlValue;
 
 #[tokio::test]
 async fn debug_config_output_lists_agents_fields() {
-    let reflect_home = tempfile::tempdir().expect("create temp dir");
+    let zhuye_home = tempfile::tempdir().expect("create temp dir");
     std::fs::write(
-        reflect_home
+        zhuye_home
             .path()
             .join(crate::config_compat::CONFIG_TOML_FILE),
         r#"[agents]
@@ -64,8 +64,8 @@ interrupt_message = false
     )
     .expect("write config");
     let config = ConfigBuilder::default()
-        .reflect_home(reflect_home.path().to_path_buf())
-        .fallback_cwd(Some(reflect_home.path().to_path_buf()))
+        .zhuye_home(zhuye_home.path().to_path_buf())
+        .fallback_cwd(Some(zhuye_home.path().to_path_buf()))
         .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
         .build()
         .await
@@ -279,7 +279,7 @@ fn debug_config_output_lists_requirement_sources() {
     let user_file = if cfg!(windows) {
         absolute_path("C:\\users\\alice\\.reflect\\config.toml")
     } else {
-        absolute_path("/home/alice/.reflect/config.toml")
+        absolute_path("/home/alice/.zhuye/config.toml")
     };
     let stack = ConfigLayerStack::new(
         vec![ConfigLayerEntry::new(

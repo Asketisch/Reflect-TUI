@@ -10,7 +10,7 @@
 //! reflect-tui models pick --free-only          # 脚本用:只打印一个 model id
 //! ```
 //!
-//! 「免费」的判定走规则(见 `reflect_llm::FreeModelRules`):provider 显式
+//! 「免费」的判定走规则(见 `zhuye_llm::FreeModelRules`):provider 显式
 //! 标记 → 白名单 → id 模式。**判定规则不硬编码模型清单** —— 模型本身
 //! 永远来自 provider 的清单端点。
 //!
@@ -20,8 +20,8 @@
 
 use std::sync::Arc;
 
-use reflect_config::{ReflectConfig, fetch_catalog, pick_free_model};
-use reflect_llm::ModelRegistry;
+use zhuye_config::{ReflectConfig, fetch_catalog, pick_free_model};
+use zhuye_llm::ModelRegistry;
 
 /// `reflect-tui models` 子命令的退出码约定。
 ///
@@ -62,7 +62,7 @@ pub struct PickArgs {
 
 /// 加载配置并注册 provider(与其他子命令一致的口径)。
 fn load_registry() -> anyhow::Result<(ReflectConfig, Arc<ModelRegistry>)> {
-    let cfg = reflect_config::load_default();
+    let cfg = zhuye_config::load_default();
     let registry = Arc::new(ModelRegistry::new());
     cfg.apply_to_registry(&registry)
         .map_err(|e| anyhow::anyhow!("failed to build provider from config: {e}"))?;
@@ -85,7 +85,7 @@ fn resolve_timeout(cfg: &ReflectConfig, explicit: Option<u64>) -> u64 {
         cfg.model_discovery
             .as_ref()
             .and_then(|d| d.timeout_secs)
-            .unwrap_or(reflect_config::DEFAULT_DISCOVERY_TIMEOUT_SECS),
+            .unwrap_or(zhuye_config::DEFAULT_DISCOVERY_TIMEOUT_SECS),
     )
 }
 
@@ -197,7 +197,7 @@ pub async fn pick(args: PickArgs) -> anyhow::Result<i32> {
     let picked = if args.free_only {
         // 复用配置里的规则段(`always_free` / `free_id_patterns`)。
         let section = cfg.model_discovery.clone().unwrap_or_default();
-        let section = reflect_config::ModelDiscoverySection {
+        let section = zhuye_config::ModelDiscoverySection {
             prefer: args.prefer.clone().or(section.prefer),
             ..section
         };
@@ -209,7 +209,7 @@ pub async fn pick(args: PickArgs) -> anyhow::Result<i32> {
         match sorted.into_iter().next() {
             Some(info) => Ok(info),
             // 清单为空 → 与「无匹配」同义。
-            None => Err(reflect_config::ConfigError::Build(format!(
+            None => Err(zhuye_config::ConfigError::Build(format!(
                 "provider '{}' 的模型清单为空",
                 provider
             ))),

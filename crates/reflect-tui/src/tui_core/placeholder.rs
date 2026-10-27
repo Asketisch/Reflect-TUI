@@ -1,7 +1,7 @@
 //! `crate::utils_string::normalize_markdown_hash_location_suffix` 的内置替代实现。
 //!
 //! Reflect 用可链接的 `#fragment` 后缀渲染 markdown 标题。上游
-//! `reflect_utils_string` crate 会把原始标题标签归一化为稳定的
+//! `zhuye_utils_string` crate 会把原始标题标签归一化为稳定的
 //! 空格连接片段。我们在此复制最小化行为，使
 //! 工作区无需依赖该 crate。
 

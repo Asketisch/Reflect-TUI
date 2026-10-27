@@ -1,4 +1,4 @@
-//! reflect_utils_absolute_path crate 的桩。
+//! zhuye_utils_absolute_path crate 的桩。
 
 use std::path::Path;
 use std::path::PathBuf;

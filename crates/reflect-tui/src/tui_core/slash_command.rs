@@ -73,7 +73,7 @@ pub enum SlashCommand {
     #[strum(to_string = "plugins", serialize = "plugin")]
     Plugins,
     /// v1.6 `/prompt [list|reload]` —— 提示词层管理：列出可用层/当前生效层，
-    /// 或改完 `.reflect/prompts/*.md` 后重扫即时生效（发 `Op::PromptCommand`，
+    /// 或改完 `.zhuye/prompts/*.md` 后重扫即时生效（发 `Op::PromptCommand`，
     /// 不开 turn，应答 `PromptList`/`PromptSwitched` 回流为 Notice）。
     Prompt,
     Logout,

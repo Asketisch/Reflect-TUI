@@ -328,7 +328,7 @@ impl ChatWidget {
                 {
                     let preset = preset.clone();
                     if crate::tui_core::windows_sandbox::sandbox_setup_is_complete(
-                        self.config.reflect_home.as_path(),
+                        self.config.zhuye_home.as_path(),
                     ) {
                         return vec![Box::new(move |tx| {
                             tx.send(AppEvent::EnableWindowsSandboxForAgentMode {

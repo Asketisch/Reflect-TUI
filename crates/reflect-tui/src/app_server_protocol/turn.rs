@@ -37,7 +37,7 @@ pub enum TurnStatus {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TurnError {
     pub message: String,
-    pub reflect_error_info: Option<ReflectErrorInfo>,
+    pub zhuye_error_info: Option<ReflectErrorInfo>,
     pub additional_details: Option<String>,
 }
 

@@ -1,6 +1,6 @@
 //! `/plugin` overlay — 显示真实已安装插件列表。
 //!
-//! 数据源:`reflect_plugin::PluginManager::load(default_plugins_root())`
+//! 数据源:`zhuye_plugin::PluginManager::load(default_plugins_root())`
 //! 读取 `installed_plugins.json`,enabled 标志来自 config
 //! `[plugins].enabled_plugins`(TUI 当前不接 `[plugins]` 热重载,
 //! config 的 enabled 集合与 bootstrap 挂载的运行时状态一致)。
@@ -10,12 +10,12 @@ use std::collections::HashSet;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
-fn scope_str(scope: reflect_plugin::PluginScope) -> &'static str {
+fn scope_str(scope: zhuye_plugin::PluginScope) -> &'static str {
     match scope {
-        reflect_plugin::PluginScope::Managed => "managed",
-        reflect_plugin::PluginScope::User => "user",
-        reflect_plugin::PluginScope::Project => "project",
-        reflect_plugin::PluginScope::Local => "local",
+        zhuye_plugin::PluginScope::Managed => "managed",
+        zhuye_plugin::PluginScope::User => "user",
+        zhuye_plugin::PluginScope::Project => "project",
+        zhuye_plugin::PluginScope::Local => "local",
     }
 }
 
@@ -35,8 +35,8 @@ pub fn load_plugins(enabled_plugins: &[String]) -> Vec<Line<'static>> {
 
     let enabled_set: HashSet<String> = enabled_plugins.iter().cloned().collect();
 
-    let installed = reflect_plugin::default_plugins_root()
-        .and_then(|root| reflect_plugin::PluginManager::load(root).ok())
+    let installed = zhuye_plugin::default_plugins_root()
+        .and_then(|root| zhuye_plugin::PluginManager::load(root).ok())
         .map(|manager| manager.list_with_enabled(&enabled_set));
 
     let Some(installed) = installed else {
@@ -58,7 +58,7 @@ pub fn load_plugins(enabled_plugins: &[String]) -> Vec<Line<'static>> {
             Style::default().fg(Color::DarkGray),
         )));
         lines.push(Line::from(Span::styled(
-            "  ~/.reflect/config.toml 的 [plugins].enabled_plugins。",
+            "  ~/.zhuye/config.toml 的 [plugins].enabled_plugins。",
             Style::default().fg(Color::DarkGray),
         )));
         lines.push(Line::from(Span::styled(

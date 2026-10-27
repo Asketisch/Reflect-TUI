@@ -6,7 +6,7 @@
 
 ## 为什么需要它
 
-仓库既有的能力覆盖层用 `REFLECT_MODEL=mock/mock-1` —— 那是 reflect-llm
+仓库既有的能力覆盖层用 `ZHUYE_MODEL=mock/mock-1` —— 那是 reflect-llm
 `ModelClient` 层的内置 provider,**完全绕过** HTTP 传输、SSE 解析与
 Anthropic 协议形态。本 mock server 补上那一层:请求构造(URL / header /
 body)、SSE 事件分帧(`content_block_start` / `content_block_delta` /

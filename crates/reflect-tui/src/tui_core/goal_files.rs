@@ -32,7 +32,7 @@ pub(crate) type GoalFilePath = AppServerPath;
 
 pub(crate) async fn materialize_goal_draft(
     app_server: &mut AppServerSession,
-    reflect_home: Option<&GoalFilePath>,
+    zhuye_home: Option<&GoalFilePath>,
     draft: GoalDraft,
 ) -> Result<(String, Option<GoalFilePath>)> {
     let mut objective = draft.objective;
@@ -66,7 +66,7 @@ pub(crate) async fn materialize_goal_draft(
             continue;
         };
         active_placeholders.swap_remove(active_idx);
-        let path = ensure_goal_output_dir(app_server, reflect_home, &mut output_dir)
+        let path = ensure_goal_output_dir(app_server, zhuye_home, &mut output_dir)
             .await?
             .join(format!("pasted-text-{}.txt", replacements.len() + 1));
         write_goal_file(app_server, path.clone(), text.as_bytes().to_vec()).await?;
@@ -89,7 +89,7 @@ pub(crate) async fn materialize_goal_draft(
             active_placeholders.swap_remove(active_idx);
         }
         let extension = image_extension(&image.path);
-        let path = ensure_goal_output_dir(app_server, reflect_home, &mut output_dir)
+        let path = ensure_goal_output_dir(app_server, zhuye_home, &mut output_dir)
             .await?
             .join(format!("image-{}.{}", idx + 1, extension));
         let bytes = fs::read(&image.path)
@@ -119,7 +119,7 @@ pub(crate) async fn materialize_goal_draft(
     );
 
     if objective.chars().count() > MAX_THREAD_GOAL_OBJECTIVE_CHARS {
-        let path = ensure_goal_output_dir(app_server, reflect_home, &mut output_dir)
+        let path = ensure_goal_output_dir(app_server, zhuye_home, &mut output_dir)
             .await?
             .join(GOAL_FILE_NAME);
         let reference = match objective_file_reference(&path) {
@@ -139,10 +139,10 @@ pub(crate) async fn materialize_goal_draft(
 
 pub(crate) async fn objective_text_for_edit(
     app_server: &mut AppServerSession,
-    reflect_home: Option<&GoalFilePath>,
+    zhuye_home: Option<&GoalFilePath>,
     objective: &str,
 ) -> Result<String> {
-    let Some(path) = objective_file_path(objective, reflect_home) else {
+    let Some(path) = objective_file_path(objective, zhuye_home) else {
         return Ok(objective.to_string());
     };
     let bytes = app_server
@@ -156,7 +156,7 @@ pub(crate) async fn objective_text_for_edit(
 
 pub(crate) fn objective_file_path(
     objective: &str,
-    reflect_home: Option<&GoalFilePath>,
+    zhuye_home: Option<&GoalFilePath>,
 ) -> Option<GoalFilePath> {
     let path = objective
         .strip_prefix(GOAL_FILE_PREFIX)
@@ -165,7 +165,7 @@ pub(crate) fn objective_file_path(
     let path_str = path.as_ref().to_string_lossy();
     let parts: Vec<_> = path_str.split('/').collect();
     let attachment_id = parts.get(parts.len().checked_sub(2)?)?;
-    let expected = reflect_home?
+    let expected = zhuye_home?
         .join(GOAL_ATTACHMENT_DIR)
         .join(attachment_id.to_string())
         .join(GOAL_FILE_NAME);
@@ -188,15 +188,15 @@ pub(crate) fn objective_file_reference(path: &GoalFilePath) -> Result<String> {
 
 async fn ensure_goal_output_dir(
     app_server: &mut AppServerSession,
-    reflect_home: Option<&GoalFilePath>,
+    zhuye_home: Option<&GoalFilePath>,
     output_dir: &mut Option<GoalFilePath>,
 ) -> Result<GoalFilePath> {
     if let Some(output_dir) = output_dir {
         return Ok(output_dir.clone());
     }
-    let reflect_home = reflect_home
-        .context("App server did not report $REFLECT_HOME; cannot materialize goal files")?;
-    let path = reflect_home
+    let zhuye_home = zhuye_home
+        .context("App server did not report $ZHUYE_HOME; cannot materialize goal files")?;
+    let path = zhuye_home
         .join(GOAL_ATTACHMENT_DIR)
         .join(Uuid::new_v4().to_string());
     app_server

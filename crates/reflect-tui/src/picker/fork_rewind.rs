@@ -120,8 +120,8 @@ pub fn get_selected_text(
 /// (fallback 到全量 fork)。
 pub fn get_selected_turn_id(
     state: &ForkRewindState,
-    user_prompt_turns: &[reflect_protocol::TurnId],
-) -> Option<reflect_protocol::TurnId> {
+    user_prompt_turns: &[zhuye_protocol::TurnId],
+) -> Option<zhuye_protocol::TurnId> {
     user_prompt_turns.get(state.selected).copied()
 }
 

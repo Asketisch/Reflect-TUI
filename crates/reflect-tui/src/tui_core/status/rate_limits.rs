@@ -93,7 +93,7 @@ impl RateLimitWindowDisplay {
 
 #[derive(Debug, Clone)]
 pub(crate) struct RateLimitSnapshotDisplay {
-    /// 规范的限额标识符（例如：`reflect` 或 `reflect_other`）。
+    /// 规范的限额标识符（例如：`reflect` 或 `zhuye_other`）。
     pub limit_name: String,
     /// 表示此展示快照捕获时刻的本地时间戳。
     pub captured_at: DateTime<Local>,

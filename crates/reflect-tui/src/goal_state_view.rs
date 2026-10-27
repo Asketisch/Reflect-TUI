@@ -1,14 +1,14 @@
 //! 目标模式状态的人读渲染(v1.5 目标状态快照读口接线)。
 //!
 //! 背景:submodule 的 `AgentThread::goal_snapshot()` 返回
-//! `reflect_goal::GoalState` —— 目标文本、状态、累计 token、goal turn 数、
+//! `zhuye_goal::GoalState` —— 目标文本、状态、累计 token、goal turn 数、
 //! 连续 blocked 计数、每轮 LLM 判定历史。协议侧文档明写这是给 GUI 用的
 //! 「权威读口」:此前 GUI 只能靠前端投影猜「目标模式是否活跃」,答不出
 //! 「跑到第几轮 / LM 判定是什么 / 累计多少 token / 被什么卡住」。
 //!
 //! 本模块只做纯格式化(无 IO、无全局状态),便于单测覆盖。
 
-use reflect_goal::{GoalState, GoalStatus, GoalTurnRecord, GoalVerdict};
+use zhuye_goal::{GoalState, GoalStatus, GoalTurnRecord, GoalVerdict};
 
 /// `/goal` 的用法提示(两条分发通道共用)。
 pub const GOAL_USAGE: &str =
@@ -136,7 +136,7 @@ pub fn format_goal_state(state: &GoalState) -> String {
         out.push_str(&format!(
             "\n  阻塞: 连 {} 回合受阻(阈值 {})",
             state.consecutive_blocked_turns,
-            reflect_goal::BLOCKED_THRESHOLD
+            zhuye_goal::BLOCKED_THRESHOLD
         ));
     }
     // 最近一轮判定:给出「LM 认为还差什么」。

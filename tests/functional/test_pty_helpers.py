@@ -31,7 +31,7 @@ def test_sandbox_isolates_home_and_cwd(tmp_path: Path) -> None:
     try:
         assert a.home != b.home, "两个沙箱的 HOME 必须不同"
         assert a.cwd != b.cwd, "两个沙箱的 cwd 必须不同"
-        cfg = a.home / ".reflect" / "config.toml"
+        cfg = a.home / ".zhuye" / "config.toml"
         assert cfg.is_file(), "应预写 config.toml"
         assert cfg.read_text().strip().startswith("#"), "config 应是空配置(注释)"
     finally:
@@ -43,9 +43,9 @@ def test_sandbox_env_points_home_at_isolation(tmp_path: Path) -> None:
     """U3 Sandbox.env() 把 HOME 指向隔离目录,其余继承。"""
     sb = Sandbox.create(prefix="u3-")
     try:
-        env = sb.env({"REFLECT_MODEL": "mock/mock-1"})
+        env = sb.env({"ZHUYE_MODEL": "mock/mock-1"})
         assert env["HOME"] == str(sb.home), "HOME 应指向隔离目录"
-        assert env["REFLECT_MODEL"] == "mock/mock-1"
+        assert env["ZHUYE_MODEL"] == "mock/mock-1"
         assert env["TERM"] not in (None, "", "dumb"), "TERM 应是可渲染的"
         # 宿主 HOME 不应泄漏进子进程 env。
         assert env["HOME"] != os.environ.get("HOME")
@@ -67,7 +67,7 @@ def test_sandbox_session_file_globbing(tmp_path: Path) -> None:
     sb = Sandbox.create(prefix="u5-")
     try:
         assert sb.session_files() == []
-        target = sb.home / ".reflect" / "sessions" / "2026" / "01" / "01" / "abc.jsonl"
+        target = sb.home / ".zhuye" / "sessions" / "2026" / "01" / "01" / "abc.jsonl"
         target.parent.mkdir(parents=True)
         target.write_text("{}\n")
         found = sb.session_files()

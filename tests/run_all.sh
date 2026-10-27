@@ -11,7 +11,7 @@
 # `functional` 是 CI 的门禁入口:跳过 cargo test / clippy / fmt / doc
 # (那部分由既有 CI job 覆盖),跑真正的功能覆盖。
 #
-# 全程离线(REFLECT_MODEL=mock/mock-1)+ 隔离 HOME,不污染真实 ~/.reflect。
+# 全程离线(ZHUYE_MODEL=mock/mock-1)+ 隔离 HOME,不污染真实 ~/.zhuye。
 # 退出码 0 = 全部通过。
 
 set -u

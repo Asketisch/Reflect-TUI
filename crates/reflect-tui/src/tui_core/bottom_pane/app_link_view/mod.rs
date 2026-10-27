@@ -37,7 +37,7 @@ use crate::tui_core::style::user_message_style;
 use crate::tui_core::wrapping::RtOptions;
 use crate::tui_core::wrapping::adaptive_wrap_lines;
 
-const MCP_REFLECT_APPS_SERVER_NAME: &str = "reflect_apps";
+const MCP_REFLECT_APPS_SERVER_NAME: &str = "zhuye_apps";
 const MCP_TOOL_REFLECT_APPS_META_KEY: &str = "_reflect_apps";
 const CONNECTOR_AUTH_FAILURE_META_KEY: &str = "connector_auth_failure";
 const CONNECTOR_AUTH_FAILURE_IS_AUTH_FAILURE_KEY: &str = "is_auth_failure";

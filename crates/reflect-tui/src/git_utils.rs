@@ -1,4 +1,4 @@
-//! reflect_git_utils crate 的桩代码。
+//! zhuye_git_utils crate 的桩代码。
 //!
 //! 提供被内嵌的 tui_compat UI 代码使用的 git 相关工具。
 //! 大多数函数是返回空/默认值的桩函数；Reflect

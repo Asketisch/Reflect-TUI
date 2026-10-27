@@ -1,13 +1,13 @@
 //! `--resume` / `-c` / `-r N` 会话恢复:定位本地 rollout 记录并回放。
 //!
-//! 与 `reflect_core::resume::records_to_preload` 的分工:后者负责
+//! 与 `zhuye_core::resume::records_to_preload` 的分工:后者负责
 //! **记录 → LLM 消息**的映射(单一事实源,在 submodule 内);本模块只负责
 //! **定位与回放** —— 找到某会话的全部记录文件,按时间正序读出
 //! [`RolloutRecord`]。
 //!
 //! ## 为什么回放直接走 submodule 共享 API
 //!
-//! submodule `reflect_rollout::reader::replay` 升级后(7912323 → e4560bc)
+//! submodule `zhuye_rollout::reader::replay` 升级后(7912323 → e4560bc)
 //! 已具备全盘定位能力:任意日期目录、轮转副本(`<id>.1.jsonl` 编号越大越
 //! 旧,活跃文件殿后)合并、以及「文件名 thread id / 首行内部 session id」
 //! 双入口。本仓库此前因共享 API 只扫近 3 天而维护的本地全盘扫描
@@ -21,7 +21,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use reflect_protocol::{RolloutRecord, ThreadId};
+use zhuye_protocol::{RolloutRecord, ThreadId};
 
 /// 回放某会话的全部记录(跨日期桶 + 轮转副本,时间正序)。
 ///
@@ -30,7 +30,7 @@ use reflect_protocol::{RolloutRecord, ThreadId};
 /// - 文件首行的 `SessionMeta.session_id` == `tid`(**内部 id**,UI 与索引
 ///   展示的就是它,来自其它客户端写入的会话两者可能不同)。
 pub async fn replay_all(base: &Path, tid: &ThreadId) -> Result<Vec<RolloutRecord>> {
-    let records = reflect_rollout::reader::replay(base, *tid)
+    let records = zhuye_rollout::reader::replay(base, *tid)
         .await
         .with_context(|| format!("回放 session {tid} 失败"))?;
     if records.is_empty() {
@@ -59,15 +59,15 @@ pub fn resolve_thread_id(id_or_prefix: &str) -> Result<ThreadId> {
     if id_or_prefix.len() < 4 {
         anyhow::bail!("session id 前缀过短(至少 4 个字符)");
     }
-    let base = reflect_rollout::path::default_base();
+    let base = zhuye_rollout::path::default_base();
     let mut hits: Vec<ThreadId> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    for path in reflect_rollout::index::find_files_by_name_prefix(&base, id_or_prefix)
+    for path in zhuye_rollout::index::find_files_by_name_prefix(&base, id_or_prefix)
         .map_err(|e| anyhow::anyhow!("扫描 session 目录失败: {e}"))?
     {
         // 内部 id 优先(UI 展示的就是它);文件首行无 SessionMeta 时退回文件名 stem。
         let tid =
-            reflect_rollout::index::first_line_session_id(&path).or_else(|| stem_thread_id(&path));
+            zhuye_rollout::index::first_line_session_id(&path).or_else(|| stem_thread_id(&path));
         if let Some(t) = tid
             && seen.insert(t.to_string())
         {

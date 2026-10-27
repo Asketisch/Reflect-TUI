@@ -1,4 +1,4 @@
-//! reflect_app_server_client crate 的桩实现。
+//! zhuye_app_server_client crate 的桩实现。
 
 pub const DEFAULT_IN_PROCESS_CHANNEL_CAPACITY: usize = 64;
 

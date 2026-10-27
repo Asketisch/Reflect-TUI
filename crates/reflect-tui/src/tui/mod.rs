@@ -29,14 +29,14 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use reflect_core::AgentThread;
-use reflect_protocol::{ContentBlock, Submission};
 use std::env;
 use std::io::stdout;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::{broadcast, mpsc};
+use zhuye_core::AgentThread;
+use zhuye_protocol::{ContentBlock, Submission};
 
 use crate::tui_core::bottom_pane::slash_commands::PluginCommandEntry;
 
@@ -99,12 +99,12 @@ pub async fn run_async(
         });
     }
 
-    // v1.x:配置热重载 —— 监听 `~/.reflect/config.toml` 变更,重建 provider
+    // v1.x:配置热重载 —— 监听 `~/.zhuye/config.toml` 变更,重建 provider
     // client、必要时切 model,并把「哪些段变了」推一条 Notice 回对话流。
     // 此前 TUI 完全没有 watcher:改 `[routing] fallbacks` / `[model]` 之类
     // 的配置必须重启 TUI 才生效(headless `reflect-exec` 有)。
-    if let Some(path) = reflect_config::default_config_path() {
-        match reflect_config::ConfigWatcher::spawn(path.clone(), runtime.config.clone()) {
+    if let Some(path) = zhuye_config::default_config_path() {
+        match zhuye_config::ConfigWatcher::spawn(path.clone(), runtime.config.clone()) {
             Ok(watcher) => {
                 crate::config_reload::spawn_config_reload_task(
                     watcher,
@@ -143,7 +143,7 @@ pub async fn run_async(
     // M3:注入 /model 切换校验(registry + config)与 always-allow 持久化
     // 目标(文件权限存储)。运行时句柄在 bootstrap 装配,这里只借用。
     state.model_registry = Some(runtime.registry.clone());
-    state.reflect_config = Some(runtime.config.clone());
+    state.zhuye_config = Some(runtime.config.clone());
     state.persistent_permissions = runtime.persistent_permissions.clone();
     // v1.x:LSP 诊断注册表 —— `/lsp` 读它展示语言服务诊断状态。
     state.lsp_diagnostics = runtime.lsp_manager.as_ref().map(|m| m.diagnostics());
@@ -192,12 +192,12 @@ pub async fn run_async(
         let mut restored = 0usize;
         for msg in &runtime.prior_messages {
             match msg {
-                reflect_llm::ChatMessage::User(um) => {
+                zhuye_llm::ChatMessage::User(um) => {
                     let text = um
                         .blocks
                         .iter()
                         .filter_map(|b| match b {
-                            reflect_llm::ContentBlock::Text { text } => Some(text.as_str()),
+                            zhuye_llm::ContentBlock::Text { text } => Some(text.as_str()),
                             _ => None,
                         })
                         .collect::<Vec<_>>()
@@ -207,7 +207,7 @@ pub async fn run_async(
                         restored += 1;
                     }
                 }
-                reflect_llm::ChatMessage::Assistant(am) => {
+                zhuye_llm::ChatMessage::Assistant(am) => {
                     if let Some(t) = am.text.as_deref() {
                         if !t.trim().is_empty() {
                             state
@@ -222,7 +222,7 @@ pub async fn run_async(
                             .push(adapter::UiHistoryItem::Notice(format!("⚒ {}", tc.name)));
                     }
                 }
-                reflect_llm::ChatMessage::Tool(_) | reflect_llm::ChatMessage::System(_) => {}
+                zhuye_llm::ChatMessage::Tool(_) | zhuye_llm::ChatMessage::System(_) => {}
             }
         }
         let resumed_id = state
@@ -629,12 +629,12 @@ pub async fn run_async(
     // 已停止写 JSONL,文件可安全改名/删除。结果打回真实终端(scrollback 已交还)。
     if state.archive_session_on_exit {
         if let Some(tid) = state.session_id {
-            let base = reflect_rollout::path::default_base();
-            let cur = reflect_rollout::index::read_session_name(&base, tid)
+            let base = zhuye_rollout::path::default_base();
+            let cur = zhuye_rollout::index::read_session_name(&base, tid)
                 .ok()
                 .flatten();
             let new_name = format!("[archived] {}", cur.as_deref().unwrap_or("session"));
-            match reflect_rollout::index::rename_session(&base, tid, &new_name) {
+            match zhuye_rollout::index::rename_session(&base, tid, &new_name) {
                 Ok(()) => println!("archived session {tid} → \"{new_name}\""),
                 Err(e) => eprintln!("archive failed: {e}"),
             }
@@ -776,7 +776,7 @@ fn handle_event(
                 && state.plan_approval.is_none()
                 && state.pending_approval.is_none()
             {
-                emit_op(thread, event_tx, reflect_protocol::Op::CyclePermissionMode);
+                emit_op(thread, event_tx, zhuye_protocol::Op::CyclePermissionMode);
                 return Ok(false);
             }
             // 全局快捷键经 keymap 解析(单一事实来源);未命中 fallthrough 到 composer。
@@ -844,7 +844,7 @@ fn handle_event(
                         emit_op(
                             thread,
                             event_tx,
-                            reflect_protocol::Op::Interrupt { child_id: None },
+                            zhuye_protocol::Op::Interrupt { child_id: None },
                         );
                         state.history.push(adapter::UiHistoryItem::Notice(
                             "⏹ 已发送中断请求,正在停止当前回合… (再按 Ctrl-C 强制退出)".into(),
@@ -899,7 +899,7 @@ fn handle_event(
                         return Ok(false);
                     }
                     crate::keymap::KeyAction::CycleMode => {
-                        emit_op(thread, event_tx, reflect_protocol::Op::CyclePermissionMode);
+                        emit_op(thread, event_tx, zhuye_protocol::Op::CyclePermissionMode);
                         return Ok(false);
                     }
                     // v1.x Tier 3:
@@ -984,7 +984,7 @@ fn open_transcript(state: &mut UiState) {
 fn emit_op(
     thread: &Arc<AgentThread>,
     event_tx: &mpsc::UnboundedSender<UiEvent>,
-    op: reflect_protocol::Op,
+    op: zhuye_protocol::Op,
 ) {
     let thread = Arc::clone(thread);
     let tx = event_tx.clone();
@@ -1006,7 +1006,7 @@ fn emit_op(
 /// 标注 `source_command`;未命中任何命令原样提交;命中但命令文件不可读时
 /// warn 后原样提交(交互式 TUI 不吞用户输入,与 serve 的降级语义一致)。
 async fn expand_plugin_submission(
-    plugin_runtime: &reflect_plugin::runtime::SharedPluginRuntime,
+    plugin_runtime: &zhuye_plugin::runtime::SharedPluginRuntime,
     text: String,
 ) -> Submission {
     if !text.starts_with('/') {
@@ -1020,7 +1020,7 @@ async fn expand_plugin_submission(
             None => return Submission::user_input(text),
         }
     };
-    match reflect_plugin::expand_user_input(&text, &registry) {
+    match zhuye_plugin::expand_user_input(&text, &registry) {
         None => Submission::user_input(text),
         Some(Ok(expanded)) => {
             tracing::info!(command = %expanded.name, "tui: plugin command expanded");
@@ -1041,10 +1041,10 @@ fn terminal_title_for(
     model: &str,
     cwd: &str,
     git_branch: Option<&str>,
-    permission_mode: reflect_protocol::PermissionMode,
+    permission_mode: zhuye_protocol::PermissionMode,
 ) -> String {
     let mut title = format!("Reflect · {model}");
-    if permission_mode != reflect_protocol::PermissionMode::Auto {
+    if permission_mode != zhuye_protocol::PermissionMode::Auto {
         title.push_str(&format!(" · [{permission_mode:?}]"));
     }
     if let Some(branch) = git_branch {
@@ -1066,7 +1066,7 @@ fn terminal_title_for(
 /// 边框 / HUD mode 段分别由 composer 渲染层与 `render_identity_line` 处理,这里只管占位符。
 /// 放在事件 drain 之后与启动期调用,保证 mode 切换即时反映。
 fn sync_plan_mode_visuals(state: &mut UiState) {
-    use reflect_protocol::PermissionMode as Pm;
+    use zhuye_protocol::PermissionMode as Pm;
     let placeholder = match state.permission_mode {
         Pm::Plan => "describe the task or /exit-plan to leave plan mode",
         _ => "Send a message… (shift+enter for newline)",
@@ -1496,14 +1496,14 @@ fn show_branch(state: &mut UiState, arg: Option<&str>) {
 
 /// 列出 config.toml 中已注册的 MCP servers。
 ///
-/// `/mcp` 命令的本地实现：直接扫描 `~/.reflect/config.toml` 的 `[mcp_servers.XXX]`
-/// 段，提取 server 名。不依赖外部 `reflect_config` 的富类型，保证 reflect-tui
+/// `/mcp` 命令的本地实现：直接扫描 `~/.zhuye/config.toml` 的 `[mcp_servers.XXX]`
+/// 段，提取 server 名。不依赖外部 `zhuye_config` 的富类型，保证 reflect-tui
 /// 这一层可独立编译。连接状态与工具清单由后端 agent 运行时管理，故仅展示
 /// 配置态并给出 `/debug-config` 指引。
 fn format_configured_mcp_servers() -> String {
     use crate::utils_home_dir::find_reflect_home;
     let Some(home) = find_reflect_home() else {
-        return "/mcp: 无法定位 Reflect 配置目录（REFLECT_HOME / HOME 均未设置）".into();
+        return "/mcp: 无法定位 Reflect 配置目录（ZHUYE_HOME / HOME 均未设置）".into();
     };
     let path = home.join("config.toml");
     let Ok(content) = std::fs::read_to_string(&path) else {
@@ -1558,7 +1558,7 @@ fn dispatch_slash_command(
 ) -> bool {
     match cmd {
         SlashCommand::Compact => {
-            emit_op(thread, event_tx, reflect_protocol::Op::Compact);
+            emit_op(thread, event_tx, zhuye_protocol::Op::Compact);
             state.history.push(UiHistoryItem::Notice(
                 "/compact: Context compaction requested. Next turn will compact.".into(),
             ));
@@ -1630,10 +1630,10 @@ fn dispatch_slash_command(
                 .map(|w| format!("{w} tokens"))
                 .unwrap_or_else(|| "N/A".to_string());
             // v1.x 接线:OS 级沙箱状态(Seatbelt / Landlock / 未启用)。
-            // 此前 TUI 只在 bootstrap 期设 `REFLECT_SANDBOX_OS_LEVEL` 环境变量,
-            // 用户无从知道命令到底跑没跑在沙箱里 —— `reflect_sandbox::OsSandbox`
+            // 此前 TUI 只在 bootstrap 期设 `ZHUYE_SANDBOX_OS_LEVEL` 环境变量,
+            // 用户无从知道命令到底跑没跑在沙箱里 —— `zhuye_sandbox::OsSandbox`
             // 的 `status_line()` 正是为此准备的。
-            let sandbox = reflect_sandbox::OsSandbox::from_env().status_line();
+            let sandbox = zhuye_sandbox::OsSandbox::from_env().status_line();
 
             let status = format!(
                 "/status:\n  model: {}\n  cwd: {}\n  git: {}\n  mode: {}\n  vim: {}\n  cost: {}\n  tokens: {}\n  context window: {}\n  sandbox: {}\n  busy: {}",
@@ -1715,7 +1715,7 @@ fn dispatch_slash_command(
         SlashCommand::Lsp => {
             // /lsp — 语言服务诊断状态(文档数 / 诊断条数)。
             // 数据来自 bootstrap 期连上的 LSP server 推送的
-            // `publishDiagnostics` 缓存(`reflect_lsp::DiagnosticRegistry`)。
+            // `publishDiagnostics` 缓存(`zhuye_lsp::DiagnosticRegistry`)。
             state
                 .history
                 .push(UiHistoryItem::Notice(format_lsp_diagnostics(state)));
@@ -1738,12 +1738,13 @@ fn dispatch_slash_command(
         }
         SlashCommand::Hooks => {
             state.history.push(UiHistoryItem::Notice(
-                "/hooks: 生命周期 hooks 浏览未接入当前构建。配置见 ~/.reflect/config.toml [hooks]。".into(),
+                "/hooks: 生命周期 hooks 浏览未接入当前构建。配置见 ~/.zhuye/config.toml [hooks]。"
+                    .into(),
             ));
         }
         SlashCommand::Permissions => {
             // /permissions — 循环切换权限模式（Plan → Prompt → AcceptEdits → Auto）。
-            emit_op(thread, event_tx, reflect_protocol::Op::CyclePermissionMode);
+            emit_op(thread, event_tx, zhuye_protocol::Op::CyclePermissionMode);
         }
         _ => {
             // 兜底：明确告知「未实现」，不再用「try typing it directly」误导
@@ -1783,16 +1784,12 @@ fn dispatch_slash_command_with_args(
                 ));
                 return;
             }
-            emit_op(
-                thread,
-                event_tx,
-                reflect_protocol::Op::EnterPlanMode { task },
-            );
+            emit_op(thread, event_tx, zhuye_protocol::Op::EnterPlanMode { task });
         }
         SlashCommand::Goal => {
             let goal = args.trim().to_string();
             if goal.is_empty() || goal.eq_ignore_ascii_case("clear") {
-                emit_op(thread, event_tx, reflect_protocol::Op::ExitGoalMode);
+                emit_op(thread, event_tx, zhuye_protocol::Op::ExitGoalMode);
                 state
                     .history
                     .push(UiHistoryItem::Notice("/goal: Goal mode cleared.".into()));
@@ -1815,7 +1812,7 @@ fn dispatch_slash_command_with_args(
             emit_op(
                 thread,
                 event_tx,
-                reflect_protocol::Op::EnterGoalMode {
+                zhuye_protocol::Op::EnterGoalMode {
                     goal: objective,
                     verify_command: verify_command.clone(),
                     token_budget,
@@ -1901,7 +1898,7 @@ fn dispatch_slash_command_with_args(
             }
             // v1.5:带参 → 与 legacy 通道对齐成**真切换**(此前枚举通道只
             // 回显一句「display only」,两条通道行为不一致)。
-            let outcome = match (state.model_registry.as_ref(), state.reflect_config.as_ref()) {
+            let outcome = match (state.model_registry.as_ref(), state.zhuye_config.as_ref()) {
                 (Some(reg), Some(cfg)) => match resolve_model_switch(reg, cfg, &model) {
                     Some(spec) => {
                         thread.config().set_model(spec.clone());
@@ -1923,7 +1920,7 @@ fn dispatch_slash_command_with_args(
                     .history
                     .push(UiHistoryItem::Notice("/side: 用法 /side <message>".into()));
             } else {
-                // 后端 StartSide 事件尚未在 reflect_protocol::Op 暴露，
+                // 后端 StartSide 事件尚未在 zhuye_protocol::Op 暴露，
                 // 当前仅回显，避免静默丢弃用户输入（此前会落到误导兜底）。
                 state.history.push(UiHistoryItem::Notice(format!(
                     "/side: 侧边对话「{msg}」已收到，但后端 StartSide 通道未接入当前构建。\
@@ -1940,8 +1937,8 @@ fn dispatch_slash_command_with_args(
             tokio::spawn(async move {
                 let sub = Submission::with_id(
                     uuid::Uuid::new_v4().to_string(),
-                    reflect_protocol::Op::PromptCommand {
-                        action: reflect_protocol::PromptAction::List,
+                    zhuye_protocol::Op::PromptCommand {
+                        action: zhuye_protocol::PromptAction::List,
                     },
                 );
                 drop(thread.submit(sub).await);
@@ -2036,7 +2033,7 @@ fn open_tasks_overlay(state: &mut UiState) {
 /// 与运行时挂载状态一致)。
 fn open_plugin_overlay(state: &mut UiState) {
     let enabled = state
-        .reflect_config
+        .zhuye_config
         .as_ref()
         .map(|c| c.plugins.enabled_plugins.clone())
         .unwrap_or_default();
@@ -2146,13 +2143,13 @@ fn open_rewind_select(state: &mut UiState) {
 }
 
 /// 填充 `state.session_entries`:读 rollout 索引的真实会话列表
-/// (`~/.reflect/sessions/**` 按 session_id 去重,最新在前),名字优先
+/// (`~/.zhuye/sessions/**` 按 session_id 去重,最新在前),名字优先
 /// 用户 `/rename` 设置的 `.name` 文件,回退 `SessionMeta.title`。
 /// 每次打开 overlay 都刷新(会话文件可能新增/删除)。失败静默(空列表)。
 fn seed_session_entries(state: &mut UiState) {
     state.session_entries.clear();
-    let base = reflect_rollout::path::default_base();
-    let sessions = match reflect_rollout::index::list_sessions(&base) {
+    let base = zhuye_rollout::path::default_base();
+    let sessions = match zhuye_rollout::index::list_sessions(&base) {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!(error = %e, "list_sessions 失败,session overlay 置空");
@@ -2163,7 +2160,7 @@ fn seed_session_entries(state: &mut UiState) {
     let now = chrono::Utc::now();
     for s in sessions.iter().take(50) {
         let id = s.session_id.to_string();
-        let name = reflect_rollout::index::read_session_name(&base, s.session_id)
+        let name = zhuye_rollout::index::read_session_name(&base, s.session_id)
             .ok()
             .flatten()
             .or_else(|| s.title.clone())
@@ -2194,9 +2191,9 @@ fn seed_session_entries(state: &mut UiState) {
 /// M2:删除一个 session 的全部落盘文件 —— JSONL 主文件 + 轮转副本
 /// (`<uuid>[.N].jsonl`)+ `<base>/_names/<uuid>.name`。
 /// 仅在主循环退出后调用(recorder 已停写,无写竞争)。
-fn delete_session_files(tid: &reflect_protocol::ThreadId) -> anyhow::Result<usize> {
-    let base = reflect_rollout::path::default_base();
-    let path = reflect_rollout::index::find_session_path(&base, *tid)
+fn delete_session_files(tid: &zhuye_protocol::ThreadId) -> anyhow::Result<usize> {
+    let base = zhuye_rollout::path::default_base();
+    let path = zhuye_rollout::index::find_session_path(&base, *tid)
         .ok_or_else(|| anyhow::anyhow!("session file not found for {tid}"))?;
     let stem = path
         .file_stem()
@@ -2242,7 +2239,7 @@ fn format_todo_checklist(thread: &Arc<AgentThread>) -> String {
 
 /// `/lsp` 命令的本地实现:展示语言服务诊断状态。
 ///
-/// v1.x 接线:`reflect_lsp::DiagnosticRegistry` 缓存 server 推来的
+/// v1.x 接线:`zhuye_lsp::DiagnosticRegistry` 缓存 server 推来的
 /// `publishDiagnostics`。此前 TUI 把 LSP manager 直接丢弃,这份数据
 /// 永远读不到 —— 用户只能看到「有 LSP server 起来了」,看不到类型错误。
 fn format_lsp_diagnostics(state: &UiState) -> String {
@@ -2267,8 +2264,8 @@ fn format_lsp_diagnostics(state: &UiState) -> String {
 /// 输入含 `/` 视为完整 spec;否则按 active provider 拼接。校验失败 → None
 /// (保持当前模型)。
 fn resolve_model_switch(
-    registry: &reflect_llm::ModelRegistry,
-    cfg: &reflect_config::ReflectConfig,
+    registry: &zhuye_llm::ModelRegistry,
+    cfg: &zhuye_config::ReflectConfig,
     input: &str,
 ) -> Option<String> {
     let spec = if input.contains('/') {
@@ -2283,15 +2280,14 @@ fn resolve_model_switch(
 
 /// `/model`(无参)—— 后台拉取 provider 的真实模型清单,结果经事件回流。
 ///
-/// v1.5 接线:submodule 的 `reflect_config::fetch_catalog` 打 provider 的
-/// `/models` 端点取清单,`reflect_llm::model_catalog::FreeModelRules` 负责
+/// v1.5 接线:submodule 的 `zhuye_config::fetch_catalog` 打 provider 的
+/// `/models` 端点取清单,`zhuye_llm::model_catalog::FreeModelRules` 负责
 /// 免费判定(显式标记 → 白名单 → id 模式三通道)。此前 TUI 没有任何真实
 /// 模型清单,用户看不到 provider 实际支持哪些模型、哪些是免费的。
 ///
 /// 拉清单是网络 IO —— 必须放后台任务,否则会卡住事件循环(渲染线程)。
 fn spawn_model_catalog_listing(state: &UiState, event_tx: &mpsc::UnboundedSender<UiEvent>) {
-    let (Some(reg), Some(cfg)) = (state.model_registry.clone(), state.reflect_config.clone())
-    else {
+    let (Some(reg), Some(cfg)) = (state.model_registry.clone(), state.zhuye_config.clone()) else {
         let _ = event_tx.send(UiEvent {
             kind: UiEventKind::Notice("/model: 未加载模型注册表 / 配置,无法列出模型清单。".into()),
         });
@@ -2301,12 +2297,12 @@ fn spawn_model_catalog_listing(state: &UiState, event_tx: &mpsc::UnboundedSender
     let section = cfg.model_discovery.clone().unwrap_or_default();
     let timeout_secs = section
         .timeout_secs
-        .unwrap_or(reflect_config::DEFAULT_DISCOVERY_TIMEOUT_SECS);
+        .unwrap_or(zhuye_config::DEFAULT_DISCOVERY_TIMEOUT_SECS);
     let rules = section.rules();
     let current = state.status_model.clone();
     let tx = event_tx.clone();
     tokio::spawn(async move {
-        let text = match reflect_config::fetch_catalog(reg.as_ref(), provider, timeout_secs).await {
+        let text = match zhuye_config::fetch_catalog(reg.as_ref(), provider, timeout_secs).await {
             Ok(catalog) => crate::model_list::format_catalog(
                 provider,
                 &catalog.models,
@@ -2325,7 +2321,7 @@ fn spawn_model_catalog_listing(state: &UiState, event_tx: &mpsc::UnboundedSender
 /// `Answer` = 整组作答完成或取消,携带逐题答案(`cancelled=true` 时全部为空)。
 enum QuestionPanelAction {
     None,
-    Answer(Vec<reflect_protocol::Answer>, bool),
+    Answer(Vec<zhuye_protocol::Answer>, bool),
 }
 
 /// v1.x:问题面板按键 → 动作。↑/↓ 移动高亮;空格 / 数字键 1-9 勾选
@@ -2354,7 +2350,7 @@ fn question_panel_key(key: KeyEvent, state: &mut UiState) -> QuestionPanelAction
     }
     match key.code {
         KeyCode::Esc => {
-            let answers = vec![reflect_protocol::Answer::default(); q.questions.len()];
+            let answers = vec![zhuye_protocol::Answer::default(); q.questions.len()];
             QuestionPanelAction::Answer(answers, true)
         }
         KeyCode::Up => {
@@ -2396,9 +2392,9 @@ fn question_panel_key(key: KeyEvent, state: &mut UiState) -> QuestionPanelAction
                     .zip(&q.selections)
                     .map(|(question, sel)| {
                         if question.multi_select {
-                            reflect_protocol::Answer::multi(sel.clone())
+                            zhuye_protocol::Answer::multi(sel.clone())
                         } else {
-                            reflect_protocol::Answer::single(sel[0])
+                            zhuye_protocol::Answer::single(sel[0])
                         }
                     })
                     .collect();
@@ -2427,9 +2423,9 @@ fn handle_key(
                     emit_op(
                         thread,
                         event_tx,
-                        reflect_protocol::Op::AskUserQuestionResponse {
+                        zhuye_protocol::Op::AskUserQuestionResponse {
                             id: q.request_id,
-                            answers: reflect_protocol::AskUserAnswer { answers },
+                            answers: zhuye_protocol::AskUserAnswer { answers },
                         },
                     );
                     let n = q.questions.len();
@@ -2458,7 +2454,7 @@ fn handle_key(
             emit_op(
                 thread,
                 event_tx,
-                reflect_protocol::Op::AskUserInputResponse {
+                zhuye_protocol::Op::AskUserInputResponse {
                     id: pending.request_id,
                     text: String::new(),
                 },
@@ -2472,16 +2468,16 @@ fn handle_key(
     // v1.x Plan mode 审批弹窗:1/2/3/Esc + 滚动键 优先拦截(plan_approval 打开时)。
     if let Some(plan) = state.plan_approval.clone() {
         let choice = match key.code {
-            KeyCode::Char('1') => Some(reflect_protocol::PlanApprovalChoice::AutoMode),
-            KeyCode::Char('2') => Some(reflect_protocol::PlanApprovalChoice::ManualApprove),
-            KeyCode::Char('3') | KeyCode::Esc => Some(reflect_protocol::PlanApprovalChoice::Revise),
+            KeyCode::Char('1') => Some(zhuye_protocol::PlanApprovalChoice::AutoMode),
+            KeyCode::Char('2') => Some(zhuye_protocol::PlanApprovalChoice::ManualApprove),
+            KeyCode::Char('3') | KeyCode::Esc => Some(zhuye_protocol::PlanApprovalChoice::Revise),
             _ => None,
         };
         if let Some(choice) = choice {
             emit_op(
                 thread,
                 event_tx,
-                reflect_protocol::Op::PlanApproval {
+                zhuye_protocol::Op::PlanApproval {
                     id: plan.plan_id,
                     choice,
                 },
@@ -2489,7 +2485,7 @@ fn handle_key(
             // 乐观关闭弹窗;若 runtime reject(Revise),PlanRejected 事件会重新置位。
             // 对 AutoMode/ManualApprove,PlanApproved 事件会清空 plan_approval。
             // 为避免 Revise 时弹窗闪一下又开,这里仅在非 Revise 时乐观关闭。
-            if !matches!(choice, reflect_protocol::PlanApprovalChoice::Revise) {
+            if !matches!(choice, zhuye_protocol::PlanApprovalChoice::Revise) {
                 state.plan_approval = None;
             }
             return Ok(false);
@@ -2502,22 +2498,22 @@ fn handle_key(
     // 的前置确认,core 的 spawn_plan_enter_waiter 阻塞在对应 plan_id 上。
     if let Some(req) = state.plan_enter_request.clone() {
         let choice = match key.code {
-            KeyCode::Char('1') => Some(reflect_protocol::PlanApprovalChoice::AutoMode),
-            KeyCode::Char('3') | KeyCode::Esc => Some(reflect_protocol::PlanApprovalChoice::Revise),
+            KeyCode::Char('1') => Some(zhuye_protocol::PlanApprovalChoice::AutoMode),
+            KeyCode::Char('3') | KeyCode::Esc => Some(zhuye_protocol::PlanApprovalChoice::Revise),
             _ => None,
         };
         if let Some(choice) = choice {
             emit_op(
                 thread,
                 event_tx,
-                reflect_protocol::Op::PlanApproval {
+                zhuye_protocol::Op::PlanApproval {
                     id: req.plan_id,
                     choice,
                 },
             );
             // 乐观关闭;Revise 时 core 会留在当前模式,无需重开。
             state.plan_enter_request = None;
-            if matches!(choice, reflect_protocol::PlanApprovalChoice::AutoMode) {
+            if matches!(choice, zhuye_protocol::PlanApprovalChoice::AutoMode) {
                 state
                     .history
                     .push(UiHistoryItem::Notice("✓ Entering plan mode…".into()));
@@ -2532,15 +2528,13 @@ fn handle_key(
     if let Some(ref pending) = state.pending_approval.clone() {
         let decision = match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                Some(reflect_protocol::ReviewDecision::Approve)
+                Some(zhuye_protocol::ReviewDecision::Approve)
             }
-            KeyCode::Char('n') | KeyCode::Char('N') => {
-                Some(reflect_protocol::ReviewDecision::Deny {
-                    reason: "denied by user".to_string(),
-                })
-            }
+            KeyCode::Char('n') | KeyCode::Char('N') => Some(zhuye_protocol::ReviewDecision::Deny {
+                reason: "denied by user".to_string(),
+            }),
             KeyCode::Char('a') | KeyCode::Char('A') => {
-                Some(reflect_protocol::ReviewDecision::ApproveForSession)
+                Some(zhuye_protocol::ReviewDecision::ApproveForSession)
             }
             // bash 审批的收窄版 always-allow:只放行本次这条命令的同类,
             // 而不是整个 bash 工具。决策本身仍是 ApproveForSession(引擎侧
@@ -2548,7 +2542,7 @@ fn handle_key(
             KeyCode::Char('s') | KeyCode::Char('S')
                 if crate::approval_scope::is_bash_approval(pending) =>
             {
-                Some(reflect_protocol::ReviewDecision::ApproveForSession)
+                Some(zhuye_protocol::ReviewDecision::ApproveForSession)
             }
             _ => None,
         };
@@ -2557,54 +2551,50 @@ fn handle_key(
             && crate::approval_scope::is_bash_approval(pending);
         if let Some(decision) = decision {
             // M3:decision 会 move 进 Op,是否 always-allow 先行判定。
-            let always_allow = matches!(
-                decision,
-                reflect_protocol::ReviewDecision::ApproveForSession
-            );
+            let always_allow =
+                matches!(decision, zhuye_protocol::ReviewDecision::ApproveForSession);
             // Plan 审批走 Op::PlanApproval（由 plan_approval 弹窗处理），
             // 不应触达此分支；防御性只记 Notice。
             let label = match decision {
-                reflect_protocol::ReviewDecision::Approve => "Approved",
-                reflect_protocol::ReviewDecision::Deny { .. } => "Denied",
-                reflect_protocol::ReviewDecision::ApproveForSession => "Always allow",
+                zhuye_protocol::ReviewDecision::Approve => "Approved",
+                zhuye_protocol::ReviewDecision::Deny { .. } => "Denied",
+                zhuye_protocol::ReviewDecision::ApproveForSession => "Always allow",
             };
             state.history.push(adapter::UiHistoryItem::Notice(format!(
                 "{label}: {}",
                 pending.summary
             )));
             match &pending.kind {
-                reflect_protocol::ApprovalKind::Tool { .. } => {
+                zhuye_protocol::ApprovalKind::Tool { .. } => {
                     emit_op(
                         thread,
                         event_tx,
-                        reflect_protocol::Op::ToolApproval {
+                        zhuye_protocol::Op::ToolApproval {
                             id: pending.id.clone(),
                             decision,
                         },
                     );
                 }
-                reflect_protocol::ApprovalKind::Hook { .. } => {
+                zhuye_protocol::ApprovalKind::Hook { .. } => {
                     emit_op(
                         thread,
                         event_tx,
-                        reflect_protocol::Op::HookApproval {
+                        zhuye_protocol::Op::HookApproval {
                             id: pending.id.clone(),
                             decision,
                         },
                     );
                 }
-                reflect_protocol::ApprovalKind::Plan { .. } => {
+                zhuye_protocol::ApprovalKind::Plan { .. } => {
                     // plan 审批由 plan_approval 弹窗处理；此处仅清空本地状态。
                 }
             }
             // M3:always-allow 持久化 —— ApproveForSession 时把 Allow 规则
-            // 写入文件权限存储(~/.reflect/permissions.toml),重启后同类
+            // 写入文件权限存储(~/.zhuye/permissions.toml),重启后同类
             // 工具调用继续免审批。add 是 async trait 方法,挂后台任务执行。
             if always_allow {
                 let tool_name = match &pending.kind {
-                    reflect_protocol::ApprovalKind::Tool { tool_name, .. } => {
-                        Some(tool_name.clone())
-                    }
+                    zhuye_protocol::ApprovalKind::Tool { tool_name, .. } => Some(tool_name.clone()),
                     _ => None,
                 };
                 // 收窄范围:`[S]cope` 派生 shell_pattern,`[A]ll` 保持整工具放行。
@@ -2624,9 +2614,9 @@ fn handle_key(
                 {
                     state.background_tasks.lock().unwrap().spawn(async move {
                         if let Err(e) = store
-                            .add(reflect_permissions::PermissionRule {
+                            .add(zhuye_permissions::PermissionRule {
                                 tool: tool.clone(),
-                                action: reflect_permissions::PermissionAction::Allow,
+                                action: zhuye_permissions::PermissionAction::Allow,
                                 tool_glob: None,
                                 shell_pattern,
                             })
@@ -2638,7 +2628,7 @@ fn handle_key(
                     // Notice 必须说清放行范围 —— 这是用户唯一能核对自己
                     // 到底授了什么权的地方。
                     state.history.push(adapter::UiHistoryItem::Notice(format!(
-                        "always-allow: persisted to ~/.reflect/permissions.toml — {}",
+                        "always-allow: persisted to ~/.zhuye/permissions.toml — {}",
                         scope.describe()
                     )));
                 }
@@ -2743,7 +2733,7 @@ fn handle_key(
                 emit_op(
                     thread,
                     event_tx,
-                    reflect_protocol::Op::Interrupt { child_id: None },
+                    zhuye_protocol::Op::Interrupt { child_id: None },
                 );
                 state.interrupt_requested = true;
                 state.history.push(adapter::UiHistoryItem::Notice(
@@ -2839,7 +2829,7 @@ fn handle_key(
                 let text = crate::picker::fork_rewind::get_selected_text(&overlay, &state.history);
                 match overlay.mode {
                     crate::picker::fork_rewind::ForkRewindMode::Fork => {
-                        // v1.x fork 接线:调 reflect_rollout::index::fork_with_history
+                        // v1.x fork 接线:调 zhuye_rollout::index::fork_with_history
                         // 创建子会话(原样复制父 records 截至选中 turn),然后提示用
                         // --resume 切换。与 reflect-cli session fork 语义一致,
                         // 不做进程内 thread 切换(避免重构 run_async)。
@@ -2856,8 +2846,8 @@ fn handle_key(
                             &overlay,
                             &state.user_prompt_turns,
                         );
-                        let base = reflect_rollout::path::default_base();
-                        match reflect_rollout::index::fork_with_history(
+                        let base = zhuye_rollout::path::default_base();
+                        match zhuye_rollout::index::fork_with_history(
                             &base,
                             parent_id,
                             "tui-fork",
@@ -2889,7 +2879,7 @@ fn handle_key(
                             emit_op(
                                 thread,
                                 event_tx,
-                                reflect_protocol::Op::Rewind { to_turn_id: None },
+                                zhuye_protocol::Op::Rewind { to_turn_id: None },
                             );
                             state.history.push(adapter::UiHistoryItem::Notice(
                                 "/rewind: loaded prompt — edit and Enter to re-send.".into(),
@@ -3084,7 +3074,7 @@ fn handle_key(
                 emit_op(
                     thread,
                     event_tx,
-                    reflect_protocol::Op::AskUserInputResponse {
+                    zhuye_protocol::Op::AskUserInputResponse {
                         id: pending.request_id,
                         text: text.clone(),
                     },
@@ -3101,9 +3091,9 @@ fn handle_key(
             // 否则图片只是 composer 里的占位符,永远不会进模型上下文。
             let images = state.composer.attached_image_paths();
             if !images.is_empty() && !text.starts_with('/') {
-                let mut items = vec![reflect_protocol::UserInputItem::Text { text: text.clone() }];
+                let mut items = vec![zhuye_protocol::UserInputItem::Text { text: text.clone() }];
                 for p in &images {
-                    items.push(reflect_protocol::UserInputItem::LocalImage { path: p.clone() });
+                    items.push(zhuye_protocol::UserInputItem::LocalImage { path: p.clone() });
                 }
                 let names: Vec<String> = images
                     .iter()
@@ -3120,7 +3110,7 @@ fn handle_key(
                 let thread = Arc::clone(thread);
                 let tx = event_tx.clone();
                 tokio::spawn(async move {
-                    let sub = reflect_protocol::Submission::user_input_items(items);
+                    let sub = zhuye_protocol::Submission::user_input_items(items);
                     let mut handle = thread.submit(sub).await;
                     while let Some(protocol_event) = handle.next().await {
                         if let Some(ui_event) = conversion::convert_event(protocol_event) {
@@ -3218,9 +3208,9 @@ fn handle_key(
                     return Ok(false);
                 }
                 SlashOutcome::Compact => {
-                    // v1.2 P1-12: `Op::Compact` 通过 reflect_protocol::Submission
+                    // v1.2 P1-12: `Op::Compact` 通过 zhuye_protocol::Submission
                     // 发送到 agent thread,触发 force_compact_next 标志。
-                    use reflect_protocol::{Op, Submission};
+                    use zhuye_protocol::{Op, Submission};
                     let thread = Arc::clone(thread);
                     let tx = event_tx.clone();
                     tokio::spawn(async move {
@@ -3285,10 +3275,8 @@ fn handle_key(
                     // M3:真切换 —— 解析/校验 spec 后 thread.config().set_model()
                     // (引擎共享 Arc<RwLock>,下一轮 model_call 即生效)。
                     // 校验失败仅提示,保持当前模型。
-                    let outcome = match (
-                        state.model_registry.as_ref(),
-                        state.reflect_config.as_ref(),
-                    ) {
+                    let outcome = match (state.model_registry.as_ref(), state.zhuye_config.as_ref())
+                    {
                         (Some(reg), Some(cfg)) => match resolve_model_switch(reg, cfg, &model) {
                             Some(spec) => {
                                 thread.config().set_model(spec.clone());
@@ -3306,28 +3294,24 @@ fn handle_key(
                 }
                 SlashOutcome::EnterPlan { task } => {
                     // v1.x:/plan <task> → Op::EnterPlanMode。
-                    emit_op(
-                        thread,
-                        event_tx,
-                        reflect_protocol::Op::EnterPlanMode { task },
-                    );
+                    emit_op(thread, event_tx, zhuye_protocol::Op::EnterPlanMode { task });
                     return Ok(false);
                 }
                 SlashOutcome::ExitPlan => {
                     // v1.x:/exit-plan → Op::ExitPlanMode。
-                    emit_op(thread, event_tx, reflect_protocol::Op::ExitPlanMode);
+                    emit_op(thread, event_tx, zhuye_protocol::Op::ExitPlanMode);
                     return Ok(false);
                 }
                 SlashOutcome::SetMode { mode } => {
                     emit_op(
                         thread,
                         event_tx,
-                        reflect_protocol::Op::SetPermissionMode { mode },
+                        zhuye_protocol::Op::SetPermissionMode { mode },
                     );
                     return Ok(false);
                 }
                 SlashOutcome::CycleMode => {
-                    emit_op(thread, event_tx, reflect_protocol::Op::CyclePermissionMode);
+                    emit_op(thread, event_tx, zhuye_protocol::Op::CyclePermissionMode);
                     return Ok(false);
                 }
                 SlashOutcome::Prompt { action } => {
@@ -3337,7 +3321,7 @@ fn handle_key(
                     // 会话泵(subscribe_session)已在消费 —— 因此 per-submission
                     // handle 必须立即 drop,否则同一条 Notice 会重复入列
                     // (emit_op 的排空路径与本路径二选一,这里选会话泵)。
-                    use reflect_protocol::{Op, Submission};
+                    use zhuye_protocol::{Op, Submission};
                     let thread = Arc::clone(thread);
                     tokio::spawn(async move {
                         let sub = Submission::with_id(
@@ -3421,7 +3405,7 @@ fn handle_key(
                     emit_op(
                         thread,
                         event_tx,
-                        reflect_protocol::Op::SetEffort { effort: mirror },
+                        zhuye_protocol::Op::SetEffort { effort: mirror },
                     );
                     state.history.push(adapter::UiHistoryItem::Notice(format!(
                         "/effort: reasoning effort set to {}.",
@@ -3466,7 +3450,7 @@ fn handle_key(
                     emit_op(
                         thread,
                         event_tx,
-                        reflect_protocol::Op::EnterGoalMode {
+                        zhuye_protocol::Op::EnterGoalMode {
                             goal,
                             verify_command,
                             token_budget,
@@ -3478,7 +3462,7 @@ fn handle_key(
                     return Ok(false);
                 }
                 SlashOutcome::ExitGoal => {
-                    emit_op(thread, event_tx, reflect_protocol::Op::ExitGoalMode);
+                    emit_op(thread, event_tx, zhuye_protocol::Op::ExitGoalMode);
                     state.history.push(adapter::UiHistoryItem::Notice(
                         "/goal: Goal mode cleared.".into(),
                     ));
@@ -3633,13 +3617,13 @@ fn handle_key(
                     return Ok(false);
                 }
                 SlashOutcome::Rename { name } => {
-                    // v1.x fork 接线:`/rename <name>` 接通 reflect_rollout rename_session,
+                    // v1.x fork 接线:`/rename <name>` 接通 zhuye_rollout rename_session,
                     // 直接重命名当前 session(不再 apply pending)。无 name 时打开 overlay。
                     if let Some(n) = name {
                         match state.session_id {
                             Some(tid) => {
-                                let base = reflect_rollout::path::default_base();
-                                match reflect_rollout::index::rename_session(&base, tid, &n) {
+                                let base = zhuye_rollout::path::default_base();
+                                match zhuye_rollout::index::rename_session(&base, tid, &n) {
                                     Ok(()) => state.history.push(adapter::UiHistoryItem::Notice(
                                         format!("/rename: renamed current session → '{n}'."),
                                     )),
@@ -4287,7 +4271,7 @@ fn draw_fullscreen(
 /// v1.x Plan mode：进入 plan 模式前的确认弹窗 widget。
 ///
 /// 标题 `Enter Plan Mode`；body 解释 Plan mode 行为（只读 + bash Safe + 写入
-/// `.reflect/plan/`）+ Task 摘要；底部两段键位 `[1]` 进入 / `[3]/[Esc]` 取消。
+/// `.zhuye/plan/`）+ Task 摘要；底部两段键位 `[1]` 进入 / `[3]/[Esc]` 取消。
 ///
 /// 设计要点：
 /// - 与 plan_approval_block 互斥：plan_approval 优先。
@@ -4341,7 +4325,7 @@ fn plan_enter_request_block(
     rules.push(Line::from(vec![
         Span::styled("  - ", Style::default().fg(Color::Green)),
         Span::styled(
-            "write to .reflect/plan/ for the plan file",
+            "write to .zhuye/plan/ for the plan file",
             Style::default().fg(Color::White),
         ),
     ]));
@@ -4425,7 +4409,7 @@ mod draw_tests {
     use crate::tui_core::custom_terminal::Terminal as ReflectTerminal;
     use crate::tui_core::test_backend::VT100Backend;
     use crate::viewport::prepare_bottom_viewport;
-    use reflect_protocol::EventMsg;
+    use zhuye_protocol::EventMsg;
 
     #[test]
     fn draw_does_not_panic() {
@@ -4681,7 +4665,7 @@ mod draw_tests {
             &mut state,
             UiEvent {
                 kind: UiEventKind::TurnStarted {
-                    turn_id: reflect_protocol::TurnId::default(),
+                    turn_id: zhuye_protocol::TurnId::default(),
                 },
             },
         );
@@ -5096,10 +5080,10 @@ mod draw_tests {
 
     #[test]
     fn event_mapping_turn_started() {
-        let tid = reflect_protocol::TurnId::default();
-        let ev = reflect_protocol::Event::new(
+        let tid = zhuye_protocol::TurnId::default();
+        let ev = zhuye_protocol::Event::new(
             "id-1",
-            EventMsg::TurnStarted(reflect_protocol::TurnStartedEvent {
+            EventMsg::TurnStarted(zhuye_protocol::TurnStartedEvent {
                 turn_id: tid,
                 user_message_id: None,
             }),
@@ -5113,9 +5097,9 @@ mod draw_tests {
 
     #[test]
     fn event_mapping_agent_delta() {
-        let ev = reflect_protocol::Event::new(
+        let ev = zhuye_protocol::Event::new(
             "id-1",
-            EventMsg::AgentMessageDelta(reflect_protocol::AgentMessageDelta {
+            EventMsg::AgentMessageDelta(zhuye_protocol::AgentMessageDelta {
                 delta: "hello".into(),
             }),
         );
@@ -5126,9 +5110,9 @@ mod draw_tests {
     #[test]
     fn session_configured_sets_context_window() {
         // SessionConfigured(走 subscribe_session)携带 context_window_size。
-        let ev = reflect_protocol::Event::new(
+        let ev = zhuye_protocol::Event::new(
             "id-sc",
-            EventMsg::SessionConfigured(reflect_protocol::SessionConfiguredEvent::new(
+            EventMsg::SessionConfigured(zhuye_protocol::SessionConfiguredEvent::new(
                 "reflect".to_string(),
                 "openai".to_string(),
             )),
@@ -5151,10 +5135,9 @@ mod draw_tests {
 
     #[test]
     fn session_configured_with_window_sets_state() {
-        let mut sc =
-            reflect_protocol::SessionConfiguredEvent::new("m".to_string(), "p".to_string());
+        let mut sc = zhuye_protocol::SessionConfiguredEvent::new("m".to_string(), "p".to_string());
         sc.context_window_size = Some(128_000);
-        let ev = reflect_protocol::Event::new("id-sc2", EventMsg::SessionConfigured(sc));
+        let ev = zhuye_protocol::Event::new("id-sc2", EventMsg::SessionConfigured(sc));
         let ui = conversion::convert_event(ev).unwrap();
         let mut state = UiState::default();
         let _ = adapter::apply_event(&mut state, ui);
@@ -5165,9 +5148,9 @@ mod draw_tests {
     fn session_configured_sets_status_model() {
         // SessionConfigured 携带的 model 名应写入 state.status_model,
         // 供状态栏 /status 显示(覆盖启动期从 config 读的初值)。
-        let ev = reflect_protocol::Event::new(
+        let ev = zhuye_protocol::Event::new(
             "id-sc-model",
-            EventMsg::SessionConfigured(reflect_protocol::SessionConfiguredEvent::new(
+            EventMsg::SessionConfigured(zhuye_protocol::SessionConfiguredEvent::new(
                 "minimax/minimax-m3".to_string(),
                 "minimax".to_string(),
             )),
@@ -5185,7 +5168,7 @@ mod draw_tests {
 
     #[test]
     fn token_count_sets_usage() {
-        let tc = reflect_protocol::TokenCountEvent {
+        let tc = zhuye_protocol::TokenCountEvent {
             input_tokens: 5000,
             output_tokens: 200,
             cached_tokens: 1000,
@@ -5197,7 +5180,7 @@ mod draw_tests {
             // v1.x:模型级 token 统计字段(本次调用命中的模型 spec)。
             model: None,
         };
-        let ev = reflect_protocol::Event::new("id-tc", EventMsg::TokenCount(tc));
+        let ev = zhuye_protocol::Event::new("id-tc", EventMsg::TokenCount(tc));
         let ui = conversion::convert_event(ev).unwrap();
         let mut state = UiState::default();
         let _ = adapter::apply_event(&mut state, ui);
@@ -5209,7 +5192,7 @@ mod draw_tests {
     fn token_count_records_model_level_usage() {
         // v1.x:TokenCount 带 model 字段 → 状态里记录实际命中的模型,
         // 并按模型累计调用次数与 input token。
-        let tc = reflect_protocol::TokenCountEvent {
+        let tc = zhuye_protocol::TokenCountEvent {
             input_tokens: 1000,
             output_tokens: 100,
             cached_tokens: 0,
@@ -5220,7 +5203,7 @@ mod draw_tests {
             credential_label: None,
             model: Some("openai/gpt-4o".into()),
         };
-        let ev = reflect_protocol::Event::new("id-tc-model", EventMsg::TokenCount(tc));
+        let ev = zhuye_protocol::Event::new("id-tc-model", EventMsg::TokenCount(tc));
         let ui = conversion::convert_event(ev).unwrap();
         let mut state = UiState::default();
         let _ = adapter::apply_event(&mut state, ui);
@@ -5237,7 +5220,7 @@ mod draw_tests {
     #[test]
     fn token_count_without_model_leaves_per_model_empty() {
         // 旧事件无 model 字段 → 不进 per-model 表(但总量照常更新)。
-        let tc = reflect_protocol::TokenCountEvent {
+        let tc = zhuye_protocol::TokenCountEvent {
             input_tokens: 200,
             output_tokens: 20,
             cached_tokens: 0,
@@ -5248,7 +5231,7 @@ mod draw_tests {
             credential_label: None,
             model: None,
         };
-        let ev = reflect_protocol::Event::new("id-tc-nomodel", EventMsg::TokenCount(tc));
+        let ev = zhuye_protocol::Event::new("id-tc-nomodel", EventMsg::TokenCount(tc));
         let ui = conversion::convert_event(ev).unwrap();
         let mut state = UiState::default();
         let _ = adapter::apply_event(&mut state, ui);
@@ -5277,7 +5260,7 @@ mod draw_tests {
             false,
             &usage,
             false,
-            reflect_protocol::PermissionMode::Auto,
+            zhuye_protocol::PermissionMode::Auto,
             false,
         );
         let s: String = line.spans.iter().map(|s| s.content.clone()).collect();
@@ -5317,13 +5300,13 @@ mod draw_tests {
 
     #[test]
     fn plan_step_event_updates_state() {
-        let ev = reflect_protocol::Event::new(
+        let ev = zhuye_protocol::Event::new(
             "id-ps",
-            reflect_protocol::event_msg::EventMsg::PlanStep(reflect_protocol::PlanStepEvent {
+            zhuye_protocol::event_msg::EventMsg::PlanStep(zhuye_protocol::PlanStepEvent {
                 plan_id: Default::default(),
                 index: 0,
                 total: 2,
-                status: reflect_protocol::PlanStepStatus::Done,
+                status: zhuye_protocol::PlanStepStatus::Done,
                 title: Some("step one".into()),
             }),
         );
@@ -5340,10 +5323,10 @@ mod draw_tests {
 
     #[test]
     fn collab_started_adds_agents() {
-        let ev = reflect_protocol::Event::new(
+        let ev = zhuye_protocol::Event::new(
             "id-cs",
-            reflect_protocol::event_msg::EventMsg::CollabStarted(
-                reflect_protocol::CollabStartedEvent {
+            zhuye_protocol::event_msg::EventMsg::CollabStarted(
+                zhuye_protocol::CollabStartedEvent {
                     id: "team1".into(),
                     participants: vec!["alice".into(), "bob".into()],
                     mode: "discuss".into(),
@@ -5607,23 +5590,17 @@ mod draw_tests {
     fn permission_mode_changed_updates_state() {
         // PermissionModeChanged{from,to} → state.permission_mode = to。
         let mut state = UiState::default();
-        assert_eq!(
-            state.permission_mode,
-            reflect_protocol::PermissionMode::Auto
-        );
+        assert_eq!(state.permission_mode, zhuye_protocol::PermissionMode::Auto);
         let _ = adapter::apply_event(
             &mut state,
             UiEvent {
                 kind: UiEventKind::PermissionModeChanged {
-                    from: reflect_protocol::PermissionMode::Auto,
-                    to: reflect_protocol::PermissionMode::Plan,
+                    from: zhuye_protocol::PermissionMode::Auto,
+                    to: zhuye_protocol::PermissionMode::Plan,
                 },
             },
         );
-        assert_eq!(
-            state.permission_mode,
-            reflect_protocol::PermissionMode::Plan
-        );
+        assert_eq!(state.permission_mode, zhuye_protocol::PermissionMode::Plan);
     }
 
     #[test]
@@ -5737,7 +5714,7 @@ mod draw_tests {
     fn sync_plan_mode_visuals_sets_placeholder() {
         // plan 模式 → 占位符含 /exit-plan;auto → 默认占位符。
         let mut state = UiState::default();
-        state.permission_mode = reflect_protocol::PermissionMode::Plan;
+        state.permission_mode = zhuye_protocol::PermissionMode::Plan;
         sync_plan_mode_visuals(&mut state);
         // 占位符无法直接读取(ComposerInput 无 getter),但 draw 不应 panic,
         // 且状态切换后 composer 仍能正常渲染。这里用 draw 不 panic 间接验证。
@@ -5748,7 +5725,7 @@ mod draw_tests {
             .draw(|frame| draw(frame, &mut state, frame.area().height, &[], 0))
             .unwrap();
 
-        state.permission_mode = reflect_protocol::PermissionMode::Auto;
+        state.permission_mode = zhuye_protocol::PermissionMode::Auto;
         sync_plan_mode_visuals(&mut state);
         terminal
             .draw(|frame| draw(frame, &mut state, frame.area().height, &[], 0))
@@ -5758,7 +5735,7 @@ mod draw_tests {
     // ── v1.x:结构化问题面板按键逻辑 ─────────────────────────────────
 
     use crate::events::QuestionPromptState;
-    use reflect_protocol::{Question, QuestionOption};
+    use zhuye_protocol::{Question, QuestionOption};
 
     fn panel_question(multi: bool) -> Question {
         Question::new(

@@ -112,12 +112,12 @@ def test_resize_rerenders_without_panic(tui) -> None:
 
 
 def test_missing_provider_exits_with_error(sandbox: Sandbox) -> None:
-    """B10 未配置 provider 且无 REFLECT_MODEL 时,报清晰错误并退出(非 0)。"""
+    """B10 未配置 provider 且无 ZHUYE_MODEL 时,报清晰错误并退出(非 0)。"""
     from tui_pty import TuiSession
 
     # 显式清掉 provider 变量:boot 需要 provider,缺配置应快速失败而不是挂死。
     env = sandbox.env()
-    env.pop("REFLECT_MODEL", None)
+    env.pop("ZHUYE_MODEL", None)
     env.pop("OPENAI_API_KEY", None)
     env.pop("ANTHROPIC_API_KEY", None)
     with TuiSession(sandbox, env=env, cols=100, rows=30) as s:
@@ -164,14 +164,14 @@ def test_fullscreen_exit_restores_main_screen(tui) -> None:
 
 
 def _write_config(sandbox: Sandbox, body: str) -> None:
-    """把配置写进隔离 HOME 的 `~/.reflect/config.toml`。"""
-    (sandbox.home / ".reflect" / "config.toml").write_text(body)
+    """把配置写进隔离 HOME 的 `~/.zhuye/config.toml`。"""
+    (sandbox.home / ".zhuye" / "config.toml").write_text(body)
 
 
 def _boot_env(sandbox: Sandbox) -> dict[str, str]:
     """启动 env:清掉 provider/model 相关变量,让 TOML 说了算。"""
     env = sandbox.env()
-    for key in ("REFLECT_MODEL", "REFLECT_PROVIDER", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+    for key in ("ZHUYE_MODEL", "ZHUYE_PROVIDER", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
         env.pop(key, None)
     return env
 

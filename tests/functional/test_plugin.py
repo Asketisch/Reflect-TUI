@@ -10,7 +10,7 @@
 **前置**:submodule 构建出的 `reflect` CLI(用于安装示例插件)。
 缺失则整组 SKIP(不算失败)—— 插件 e2e 是增强项,不阻塞基础回归。
 
-离线(`REFLECT_MODEL=mock/mock-1`,零网络)。
+离线(`ZHUYE_MODEL=mock/mock-1`,零网络)。
 """
 
 from __future__ import annotations
@@ -24,10 +24,10 @@ import pytest
 
 from tui_pty import ROOT
 
-# submodule 构建出的 reflect-cli(bin 名是 `reflect`)。
+# submodule 构建出的 reflect-cli(bin 名是 `zhuye`(烛夜更名后))。
 _CLI_CANDIDATES = [
-    ROOT / "reflect-agent" / "target" / "release" / "reflect",
-    ROOT / "reflect-agent" / "target" / "debug" / "reflect",
+    ROOT / "reflect-agent" / "target" / "release" / "zhuye",
+    ROOT / "reflect-agent" / "target" / "debug" / "zhuye",
 ]
 _EXAMPLE_PLUGIN = ROOT / "reflect-agent" / "examples" / "plugin-demo"
 
@@ -71,7 +71,7 @@ def plugin_home(tmp_path_factory) -> str:
 def _plugin_env(home: str) -> dict[str, str]:
     return {
         "HOME": home,
-        "REFLECT_MODEL": "mock/mock-1",
+        "ZHUYE_MODEL": "mock/mock-1",
         "REFLECT_TUI_UPDATE_CHECK": "0",
     }
 

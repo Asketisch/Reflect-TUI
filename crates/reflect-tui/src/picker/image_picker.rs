@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn scan_cwd_finds_supported_images() {
         // 在 std::env::temp_dir() 下建一个 png + 一个 txt,扫描应只含 png。
-        let tmp = std::env::temp_dir().join("reflect_image_picker_test");
+        let tmp = std::env::temp_dir().join("zhuye_image_picker_test");
         let _ = std::fs::create_dir_all(&tmp);
         let png_path = tmp.join("test.png");
         let txt_path = tmp.join("test.txt");

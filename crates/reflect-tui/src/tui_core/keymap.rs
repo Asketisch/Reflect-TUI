@@ -1670,7 +1670,7 @@ impl RuntimeKeymap {
                     }
                     return Err(format!(
                         "Ambiguous approval overlay keymap bindings: `{previous}` and `{action}` use the same key. \
-Set unique keys in `~/.reflect/config.toml` and retry. \
+Set unique keys in `~/.zhuye/config.toml` and retry. \
 See the Reflect keymap documentation for supported actions and examples."
                     ));
                 }

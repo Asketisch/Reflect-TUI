@@ -8,21 +8,21 @@
 //! `reflect exec --resume` 语义一致,但二进制名不同)。
 
 use anyhow::{Context, anyhow};
-use reflect_protocol::{ModelUsage, RolloutRecord, SessionInfo, SessionStats, ThreadId};
-use reflect_rollout::index::list_sessions;
-use reflect_rollout::path::{default_base, session_path_at};
+use zhuye_protocol::{ModelUsage, RolloutRecord, SessionInfo, SessionStats, ThreadId};
+use zhuye_rollout::index::list_sessions;
+use zhuye_rollout::path::{default_base, session_path_at};
 // v1.x:接入此前孤儿的 rename/read_name/to_markdown + fork_with_history。
-use reflect_rollout::index::{fork_with_history, read_session_name, rename_session};
+use zhuye_rollout::index::{fork_with_history, read_session_name, rename_session};
 // v1.x:会话文件定位走 `reflect-rollout` 的共享 API —— 文件名是 thread id,
 // 与首行 `SessionMeta.session_id`(内部 id)可能不同(生产中一致,历史文件
 // / 外部 recorder 可能分歧),共享 API 同时按两种 id 匹配。
-use reflect_rollout::index::{
+use zhuye_rollout::index::{
     find_file_by_session_id, find_files_by_name_prefix, first_line_session_id,
 };
 // v1.x:统一统计聚合(与 reflect-cli 同款)—— 不在 TUI 侧复刻 token 聚合
 // 逻辑,改为直接消费 `reflect-rollout` 的读取侧 API。
-use reflect_rollout::{all_model_usage, session_stats, to_markdown};
 use uuid::Uuid;
+use zhuye_rollout::{all_model_usage, session_stats, to_markdown};
 
 /// `reflect-tui session ls [-n <limit>] [--model <substr>]` —— 列出本地 session。
 ///
@@ -78,7 +78,7 @@ pub fn ls(limit: usize, model_filter: Option<&str>) -> anyhow::Result<()> {
 /// 整 session 累计 token / cost + per-model 用量表。`id` 可以是完整
 /// UUID 或前缀。
 ///
-/// v1.x:统计统一走 `reflect_rollout::session_stats`(全量扫描活跃 +
+/// v1.x:统计统一走 `zhuye_rollout::session_stats`(全量扫描活跃 +
 /// 轮转文件),不再在 TUI 侧复刻聚合逻辑。
 pub fn show(id: &str) -> anyhow::Result<()> {
     let base = default_base();
@@ -438,10 +438,10 @@ pub fn export(id: &str, out: Option<&std::path::Path>) -> anyhow::Result<()> {
 /// 搜索输出。
 pub fn search(query: &str, limit: usize, json: bool) -> anyhow::Result<()> {
     let base = default_base();
-    let hits = reflect_rollout::search_sessions(
+    let hits = zhuye_rollout::search_sessions(
         &base,
         query,
-        &reflect_rollout::SearchOptions {
+        &zhuye_rollout::SearchOptions {
             max_hits: limit.max(1),
             ..Default::default()
         },
@@ -725,10 +725,10 @@ fn format_with_thousands(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reflect_protocol::{RolloutRecord, ThreadId};
-    use reflect_rollout::path::session_path_at;
     use std::fs;
     use tempfile::tempdir;
+    use zhuye_protocol::{RolloutRecord, ThreadId};
+    use zhuye_rollout::path::session_path_at;
 
     fn write_session(
         base: &std::path::Path,
@@ -1018,7 +1018,7 @@ mod tests {
 
     #[test]
     fn session_stats_sums_tokens_and_cost() {
-        // v1.x:统计统一走 `reflect_rollout::session_stats`(不再在 TUI 侧
+        // v1.x:统计统一走 `zhuye_rollout::session_stats`(不再在 TUI 侧
         // 复刻聚合逻辑)。
         let tmp = tempdir().unwrap();
         let base = tmp.path();

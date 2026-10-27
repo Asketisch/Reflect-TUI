@@ -7,14 +7,14 @@ use super::*;
 
 impl ChatWidget {
     pub(super) fn open_theme_picker(&mut self) {
-        let reflect_home = crate::utils_home_dir::find_reflect_home();
+        let zhuye_home = crate::utils_home_dir::find_reflect_home();
         let terminal_width = self
             .last_rendered_width
             .get()
             .and_then(|width| u16::try_from(width).ok());
         let params = crate::tui_core::theme_picker::build_theme_picker_params(
             self.config.tui_theme.as_deref(),
-            reflect_home.as_deref(),
+            zhuye_home.as_deref(),
             terminal_width,
         );
         self.bottom_pane.show_selection_view(params);

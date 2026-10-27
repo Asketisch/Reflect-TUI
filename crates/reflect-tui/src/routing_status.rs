@@ -1,6 +1,6 @@
 //! 路由事件的人读格式化(v1.0 多 Provider 路由 / v1.7 跨模型降级)。
 //!
-//! 背景:`reflect_protocol::EventMsg::Routing` 描述「换 credential / 进冷却 /
+//! 背景:`zhuye_protocol::EventMsg::Routing` 描述「换 credential / 进冷却 /
 //! 全部失败 / 跨模型降级」。协议侧文档明写「TUI 收到后画一行 status」,
 //! 但本 TUI 此前把整个变体丢弃 —— 于是用户配了 `[routing] fallbacks` 后,
 //! provider 挂了自动降级到备用模型,**界面上零提示**,看起来像
@@ -8,7 +8,7 @@
 //!
 //! 本模块只做纯格式化(无 IO、无全局状态),便于单测覆盖。
 
-use reflect_protocol::event_msg::{RoutingEvent, RoutingEventKind};
+use zhuye_protocol::event_msg::{RoutingEvent, RoutingEventKind};
 
 /// 把一条路由事件格式化成一行人读文本(进对话流的 Notice 行)。
 ///

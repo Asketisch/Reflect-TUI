@@ -1,6 +1,6 @@
 //! `reflect-tui workspace ...` —— Git 克隆 / 工作区同步。
 //!
-//! v1.x 接线:submodule 的 `reflect_stream::workspace_sync` 提供
+//! v1.x 接线:submodule 的 `zhuye_stream::workspace_sync` 提供
 //! `clone_repo` / `sync_status_line`(`git clone` 包装 + 状态行)。此前 TUI
 //! 既没有这个子命令,`reflect-stream` 依赖也是**声明了但零引用** —— 用户
 //! 想把远程工作区拉到本地只能绕开 TUI。
@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use reflect_stream::workspace_sync::{WorkspaceSyncOptions, clone_repo, sync_status_line};
+use zhuye_stream::workspace_sync::{WorkspaceSyncOptions, clone_repo, sync_status_line};
 
 /// `reflect-tui workspace clone <url> [--dest DIR] [--branch B] [--depth N]`
 /// —— 克隆远程仓库到本地目录。

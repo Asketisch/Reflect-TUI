@@ -14,7 +14,7 @@ pub(super) fn load_ambient_pet(
 
     crate::tui_core::pets::AmbientPet::load(
         Some(selected_pet),
-        &config.reflect_home,
+        &config.zhuye_home,
         frame_requester,
         config.animations,
     )
@@ -34,14 +34,14 @@ pub(super) fn start_configured_pet_load_if_needed(
         return;
     }
 
-    let reflect_home = config.reflect_home.clone();
+    let zhuye_home = config.zhuye_home.clone();
     let animations_enabled = config.animations;
     spawn_pet_load(move || {
-        let result = crate::tui_core::pets::ensure_builtin_pack_for_pet(&pet_id, &reflect_home)
+        let result = crate::tui_core::pets::ensure_builtin_pack_for_pet(&pet_id, &zhuye_home)
             .and_then(|()| {
                 crate::tui_core::pets::AmbientPet::load(
                     Some(&pet_id),
-                    &reflect_home,
+                    &zhuye_home,
                     frame_requester,
                     animations_enabled,
                 )
@@ -140,7 +140,7 @@ impl ChatWidget {
         self.pet_picker_preview_pet = None;
         let params = crate::tui_core::pets::build_pet_picker_params(
             self.config.tui_pet.as_deref(),
-            &self.config.reflect_home,
+            &self.config.zhuye_home,
             self.pet_picker_preview_state.clone(),
         );
         self.bottom_pane.show_selection_view(params);
@@ -231,15 +231,15 @@ impl ChatWidget {
         self.pet_picker_preview_state.set_loading();
         self.request_redraw();
 
-        let reflect_home = self.config.reflect_home.clone();
+        let zhuye_home = self.config.zhuye_home.clone();
         let frame_requester = self.frame_requester.clone();
         let tx = self.app_event_tx.clone();
         spawn_pet_load(move || {
-            let result = crate::tui_core::pets::ensure_builtin_pack_for_pet(&pet_id, &reflect_home)
+            let result = crate::tui_core::pets::ensure_builtin_pack_for_pet(&pet_id, &zhuye_home)
                 .and_then(|()| {
                     crate::tui_core::pets::AmbientPet::load(
                         Some(&pet_id),
-                        &reflect_home,
+                        &zhuye_home,
                         frame_requester,
                         /*animations_enabled*/ false,
                     )

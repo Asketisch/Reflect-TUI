@@ -1,3 +1,4 @@
 [submodule "reflect-agent"]
 	path = reflect-agent
 	url = https://github.com/Asketisch/Reflect-Agent.git
+	branch = main

@@ -41,11 +41,11 @@ struct PetPickerEntry {
 /// 受支持的变更路径；绕过它们会跳过预览加载与选择专属的事件接线。
 pub(crate) fn build_pet_picker_params(
     current_pet: Option<&str>,
-    reflect_home: &Path,
+    zhuye_home: &Path,
     preview_state: PetPickerPreviewState,
 ) -> SelectionViewParams {
     let preferred_pet = current_pet.unwrap_or(DEFAULT_PET_ID);
-    let mut entries = available_pet_entries(reflect_home);
+    let mut entries = available_pet_entries(zhuye_home);
     entries.sort_by(|left, right| left.display_name.cmp(&right.display_name));
     if let Some(disabled_idx) = entries
         .iter()
@@ -132,7 +132,7 @@ pub(crate) fn build_pet_picker_params(
     }
 }
 
-fn available_pet_entries(reflect_home: &Path) -> Vec<PetPickerEntry> {
+fn available_pet_entries(zhuye_home: &Path) -> Vec<PetPickerEntry> {
     let mut entries = catalog::BUILTIN_PETS
         .iter()
         .map(|pet| PetPickerEntry {
@@ -148,14 +148,14 @@ fn available_pet_entries(reflect_home: &Path) -> Vec<PetPickerEntry> {
         display_name: "Disable terminal pets".to_string(),
         description: None,
     });
-    entries.extend(custom_pet_entries(reflect_home));
+    entries.extend(custom_pet_entries(zhuye_home));
     entries
 }
 
-fn custom_pet_entries(reflect_home: &Path) -> Vec<PetPickerEntry> {
+fn custom_pet_entries(zhuye_home: &Path) -> Vec<PetPickerEntry> {
     let mut entries_by_selector = HashMap::new();
     for (directory_name, manifest_file) in [("avatars", "avatar.json"), ("pets", "pet.json")] {
-        let Ok(children) = fs::read_dir(reflect_home.join(directory_name)) else {
+        let Ok(children) = fs::read_dir(zhuye_home.join(directory_name)) else {
             continue;
         };
         for child in children.flatten() {
@@ -171,7 +171,7 @@ fn custom_pet_entries(reflect_home: &Path) -> Vec<PetPickerEntry> {
             }
             let selector = custom_pet_selector(id);
             let Ok(pet) =
-                Pet::load_with_reflect_home(&selector, /*reflect_home*/ Some(reflect_home))
+                Pet::load_with_reflect_home(&selector, /*zhuye_home*/ Some(zhuye_home))
             else {
                 continue;
             };
@@ -231,12 +231,12 @@ mod tests {
 
     #[test]
     fn picker_lists_app_bundled_and_custom_pets() {
-        let reflect_home = tempfile::tempdir().unwrap();
-        write_pet(reflect_home.path(), "chefito", "Chefito");
+        let zhuye_home = tempfile::tempdir().unwrap();
+        write_pet(zhuye_home.path(), "chefito", "Chefito");
 
         let params = build_pet_picker_params(
             Some("chefito"),
-            reflect_home.path(),
+            zhuye_home.path(),
             PetPickerPreviewState::default(),
         );
 
@@ -268,29 +268,29 @@ mod tests {
 
     #[test]
     fn picker_preselects_reflect_without_marking_it_current_when_no_pet_is_configured() {
-        let reflect_home = tempfile::tempdir().unwrap();
+        let zhuye_home = tempfile::tempdir().unwrap();
         let params = build_pet_picker_params(
             /*current_pet*/ None,
-            reflect_home.path(),
+            zhuye_home.path(),
             PetPickerPreviewState::default(),
         );
 
-        let reflect_idx = params
+        let zhuye_idx = params
             .items
             .iter()
             .position(|item| item.name == "Reflect")
             .expect("Reflect pet should be present");
-        assert_eq!(params.initial_selected_idx, Some(reflect_idx));
-        assert_eq!(params.items[reflect_idx].name, "Reflect");
-        assert!(!params.items[reflect_idx].is_current);
+        assert_eq!(params.initial_selected_idx, Some(zhuye_idx));
+        assert_eq!(params.items[zhuye_idx].name, "Reflect");
+        assert!(!params.items[zhuye_idx].is_current);
     }
 
     #[test]
     fn picker_marks_disabled_pet_as_current() {
-        let reflect_home = tempfile::tempdir().unwrap();
+        let zhuye_home = tempfile::tempdir().unwrap();
         let params = build_pet_picker_params(
             Some(DISABLED_PET_ID),
-            reflect_home.path(),
+            zhuye_home.path(),
             PetPickerPreviewState::default(),
         );
 
@@ -306,12 +306,12 @@ mod tests {
 
     #[test]
     fn picker_imports_legacy_avatar_manifests() {
-        let reflect_home = tempfile::tempdir().unwrap();
-        write_legacy_avatar(reflect_home.path(), "legacy", "Legacy");
+        let zhuye_home = tempfile::tempdir().unwrap();
+        write_legacy_avatar(zhuye_home.path(), "legacy", "Legacy");
 
         let params = build_pet_picker_params(
             Some("custom:legacy"),
-            reflect_home.path(),
+            zhuye_home.path(),
             PetPickerPreviewState::default(),
         );
         let legacy = params
