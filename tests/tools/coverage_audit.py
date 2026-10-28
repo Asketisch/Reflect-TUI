@@ -48,7 +48,7 @@ def parse_enum_commands(path: Path) -> dict[str, str]:
       - `#[strum(to_string = "X", serialize = "Y")]` → X(主名),Y(别名);
       - 否则变体名 kebab-case。
     """
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     m = re.search(r"pub enum SlashCommand\s*\{(.*?)\n\}", text, re.S)
     if not m:
         raise SystemExit(f"解析失败:在 {path} 找不到 `pub enum SlashCommand`")
@@ -115,14 +115,14 @@ def _extract_fn_body(text: str, sig: str) -> str:
 
 def parse_legacy_whitelist(path: Path) -> set[str]:
     """`is_legacy_passthrough_slash` 的白名单命令名(不含前导 `/`)。"""
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     body = _extract_fn_body(text, "pub fn is_legacy_passthrough_slash(name: &str) -> bool")
     return {n.lstrip("/") for n in re.findall(r'"([^"]+)"', body)}
 
 
 def parse_dispatch_arms(path: Path) -> set[str]:
     """`dispatch_slash` 里实现的 legacy 命令名(match 臂的字面量,不含前导 `/`)。"""
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     body = _extract_fn_body(text, "pub fn dispatch_slash(text: &str) -> SlashOutcome")
     arms: set[str] = set()
     # match 臂形态:`"/help" | "/?" => ...`;也可能是裸标识符臂(变量绑定)。
@@ -139,7 +139,7 @@ def parse_dispatch_arms(path: Path) -> set[str]:
 
 def parse_popup_legacy(path: Path) -> set[str]:
     """`legacy_popup_commands()` 里列出的命令(会在命令弹窗里展示)。"""
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     m = re.search(
         r"pub fn legacy_popup_commands\(\) -> &'static \[\(&'static str, &'static str\)\]\s*\{(.*?)\n\}",
         text,
@@ -162,7 +162,7 @@ def parse_picker_titles(picker_dir: Path) -> dict[str, str]:
     for rs in sorted(picker_dir.glob("*.rs")):
         if rs.name == "mod.rs":
             continue
-        text = rs.read_text()
+        text = rs.read_text(encoding="utf-8")
         found: list[str] = []
         # 居中框标题:形如 `let title = " 🎨  Theme ";` 或 `format!(" ...")`.
         for m in re.finditer(r'"([^"\n]{3,60})"', text):
@@ -180,7 +180,7 @@ def parse_picker_titles(picker_dir: Path) -> dict[str, str]:
 
 def parse_test_matrix(path: Path) -> set[str]:
     """`tests/functional/test_slash.py` 的 `MATRIX` 里已覆盖的命令名。"""
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     m = re.search(r"MATRIX[^=]*=\s*\[(.*?)\n\]", text, re.S)
     if not m:
         raise SystemExit(f"解析失败:在 {path} 找不到 MATRIX 表")
