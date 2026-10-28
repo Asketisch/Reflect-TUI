@@ -27,6 +27,13 @@ import argparse
 import json
 import re
 import sys
+
+# Windows 控制台默认 cp1252,输出中文会 UnicodeEncodeError;强制 UTF-8。
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except AttributeError:  # Py < 3.7 无 reconfigure
+    pass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
